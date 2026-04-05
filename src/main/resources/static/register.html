@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducaT — Registrarse</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Jost:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+        :root{
+            --navy:#0B1F3A;
+            --navy-mid:#122A50;
+            --navy-light:#1A3A6B;
+            --teal:#1E6B74;
+            --gold:#C8962E;
+            --gold-light:#E8B84B;
+            --cream:#F5F0E8;
+            --cream-dark:#EDE5D8;
+            --white:#FFFFFF;
+            --text-dark:#0B1F3A;
+            --text-muted:#6B7A8D;
+            --error:#C0392B;
+            --error-bg:#FDEDEC;
+            --success:#27AE60;
+            --success-bg:#EAFAF1;
+            --radius:12px;
+            --shadow:0 8px 32px rgba(11,31,58,0.12);
+            --shadow-lg:0 20px 60px rgba(11,31,58,0.2);
+        }
+        html{font-size:16px;height:100%}
+        body{
+            font-family:'Jost',sans-serif;
+            background:var(--cream);
+            color:var(--text-dark);
+            min-height:100vh;
+            display:flex;
+            overflow-x:hidden;
+        }
+        ::-webkit-scrollbar{width:6px}
+        ::-webkit-scrollbar-thumb{background:var(--gold);border-radius:3px}
+
+        /* ─── SPLIT LAYOUT ──────────────────────────────── */
+        .auth-left{
+            flex:0 0 45%;
+            background:linear-gradient(165deg,var(--teal) 0%,var(--navy-mid) 40%,var(--navy) 100%);
+            position:relative;
+            overflow:hidden;
+            display:flex;flex-direction:column;
+            justify-content:space-between;
+            padding:48px;
+        }
+        .auth-left-bg{
+            position:absolute;inset:0;
+            background-image:
+                    radial-gradient(circle at 70% 20%,rgba(200,150,46,0.1),transparent 50%),
+                    radial-gradient(circle at 10% 80%,rgba(30,107,116,0.12),transparent 50%);
+        }
+        .auth-left-grid{
+            position:absolute;inset:0;
+            background-image:
+                    linear-gradient(rgba(255,255,255,0.04) 1px,transparent 1px),
+                    linear-gradient(90deg,rgba(255,255,255,0.04) 1px,transparent 1px);
+            background-size:50px 50px;
+        }
+        .auth-deco{
+            position:absolute;
+            border-radius:50%;
+            border:1px solid rgba(200,150,46,0.15);
+        }
+        .auth-deco:nth-child(1){width:400px;height:400px;top:-100px;left:-100px}
+        .auth-deco:nth-child(2){width:250px;height:250px;top:-50px;left:-50px;border-color:rgba(200,150,46,0.08)}
+
+        .auth-left-header{position:relative;z-index:2}
+        .auth-brand{
+            display:flex;align-items:center;gap:12px;
+            text-decoration:none;
+        }
+        .auth-logo{
+            width:44px;height:44px;
+            background:linear-gradient(135deg,var(--gold),var(--gold-light));
+            border-radius:9px;
+            display:flex;align-items:center;justify-content:center;
+            font-family:'Cormorant Garamond',serif;
+            font-size:22px;font-weight:700;
+            color:var(--navy);
+        }
+        .auth-brand-name{
+            font-family:'Cormorant Garamond',serif;
+            font-size:26px;font-weight:600;
+            color:var(--white);
+        }
+        .auth-brand-name span{color:var(--gold)}
+
+        .auth-left-content{
+            position:relative;z-index:2;
+            flex:1;display:flex;flex-direction:column;
+            justify-content:center;padding:60px 0;
+        }
+        .auth-tagline{
+            font-family:'Cormorant Garamond',serif;
+            font-size:clamp(32px,3.5vw,48px);
+            font-weight:700;color:var(--white);
+            line-height:1.15;margin-bottom:20px;
+        }
+        .auth-tagline em{font-style:italic;color:var(--gold)}
+        .auth-sub{
+            font-size:15px;font-weight:300;
+            color:rgba(255,255,255,0.55);
+            line-height:1.8;max-width:340px;
+            margin-bottom:36px;
+        }
+        .steps{display:flex;flex-direction:column;gap:20px}
+        .step{display:flex;align-items:flex-start;gap:14px}
+        .step-num{
+            width:28px;height:28px;min-width:28px;
+            border-radius:50%;
+            background:rgba(200,150,46,0.15);
+            border:1px solid rgba(200,150,46,0.3);
+            display:flex;align-items:center;justify-content:center;
+            font-size:12px;font-weight:600;
+            color:var(--gold);
+            margin-top:2px;
+        }
+        .step-text{font-size:14px;font-weight:300;color:rgba(255,255,255,0.65);line-height:1.5}
+        .step-text strong{color:rgba(255,255,255,0.9);font-weight:500}
+
+        .auth-left-footer{position:relative;z-index:2}
+        .auth-left-footer a{color:rgba(255,255,255,0.35);font-size:13px;text-decoration:none;transition:color .2s}
+        .auth-left-footer a:hover{color:var(--gold)}
+
+        /* ─── RIGHT PANEL ───────────────────────────────── */
+        .auth-right{
+            flex:1;
+            display:flex;align-items:flex-start;justify-content:center;
+            padding:48px 5%;
+            background:var(--cream);
+            overflow-y:auto;
+        }
+        .auth-form-wrapper{
+            width:100%;max-width:460px;
+            padding:16px 0 48px;
+            animation:slideIn .5s ease;
+        }
+        @keyframes slideIn{
+            from{opacity:0;transform:translateY(20px)}
+            to{opacity:1;transform:translateY(0)}
+        }
+        .auth-form-title{
+            font-family:'Cormorant Garamond',serif;
+            font-size:36px;font-weight:700;
+            color:var(--text-dark);margin-bottom:6px;
+        }
+        .auth-form-subtitle{
+            font-size:14px;font-weight:300;color:var(--text-muted);
+            margin-bottom:32px;
+        }
+        .auth-form-subtitle a{color:var(--gold);font-weight:500;text-decoration:none}
+        .auth-form-subtitle a:hover{text-decoration:underline}
+
+        /* ─── FORM ──────────────────────────────────────── */
+        .form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+        .form-group{margin-bottom:18px}
+        .form-label{
+            display:block;font-size:12px;font-weight:600;
+            letter-spacing:1px;text-transform:uppercase;
+            color:var(--text-muted);margin-bottom:8px;
+        }
+        .form-input{
+            width:100%;padding:13px 16px;
+            background:var(--white);
+            border:1.5px solid rgba(11,31,58,0.12);
+            border-radius:8px;
+            font-family:'Jost',sans-serif;font-size:15px;font-weight:400;
+            color:var(--text-dark);
+            transition:all .2s ease;outline:none;
+            -webkit-appearance:none;appearance:none;
+        }
+        .form-input:focus{
+            border-color:var(--gold);
+            box-shadow:0 0 0 3px rgba(200,150,46,0.1);
+        }
+        .form-input::placeholder{color:rgba(107,122,141,0.55);font-size:14px}
+        .form-input.error{border-color:var(--error);background:var(--error-bg)}
+        .form-input-wrap{position:relative}
+        .form-input-icon{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:16px;pointer-events:none}
+        .form-input-wrap .form-input{padding-left:42px}
+        .toggle-password{
+            position:absolute;right:14px;top:50%;transform:translateY(-50%);
+            background:none;border:none;cursor:pointer;
+            color:var(--text-muted);font-size:16px;padding:2px;
+            transition:color .2s;
+        }
+        .toggle-password:hover{color:var(--text-dark)}
+        .form-error-msg{font-size:12px;color:var(--error);margin-top:6px;display:none}
+        .form-error-msg.show{display:block}
+
+        .password-strength{margin-top:8px}
+        .strength-bar{
+            height:4px;border-radius:2px;
+            background:rgba(11,31,58,0.1);
+            overflow:hidden;margin-bottom:4px;
+        }
+        .strength-fill{
+            height:100%;border-radius:2px;
+            width:0%;
+            transition:width .3s ease,background .3s ease;
+        }
+        .strength-label{font-size:11px;color:var(--text-muted)}
+
+        .role-selector{
+            display:grid;grid-template-columns:repeat(3,1fr);
+            gap:10px;margin-top:0;
+        }
+        .role-option{
+            position:relative;
+        }
+        .role-option input[type=radio]{
+            position:absolute;opacity:0;width:0;height:0;
+        }
+        .role-label{
+            display:flex;flex-direction:column;align-items:center;gap:6px;
+            padding:14px 8px;
+            border:1.5px solid rgba(11,31,58,0.12);
+            border-radius:8px;
+            cursor:pointer;
+            transition:all .2s;
+            background:var(--white);
+            text-align:center;
+        }
+        .role-label:hover{border-color:rgba(200,150,46,0.4);background:rgba(200,150,46,0.03)}
+        .role-option input:checked+.role-label{
+            border-color:var(--gold);
+            background:rgba(200,150,46,0.06);
+            box-shadow:0 0 0 2px rgba(200,150,46,0.15);
+        }
+        .role-emoji{font-size:24px}
+        .role-name{font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px}
+        .role-option input:checked+.role-label .role-name{color:var(--gold)}
+
+        .form-terms{
+            display:flex;align-items:flex-start;gap:10px;
+            margin-bottom:24px;
+            cursor:pointer;
+        }
+        .form-terms input[type=checkbox]{
+            width:16px;height:16px;min-width:16px;
+            accent-color:var(--gold);cursor:pointer;margin-top:2px;
+        }
+        .form-terms-text{font-size:13px;color:var(--text-muted);line-height:1.5}
+        .form-terms-text a{color:var(--gold);font-weight:500;text-decoration:none}
+        .form-terms-text a:hover{text-decoration:underline}
+
+        .btn-submit{
+            width:100%;padding:14px;
+            background:linear-gradient(135deg,var(--teal),var(--navy));
+            border:none;border-radius:8px;
+            color:var(--white);
+            font-family:'Jost',sans-serif;font-size:15px;font-weight:600;
+            cursor:pointer;letter-spacing:0.5px;
+            transition:all .25s ease;
+            display:flex;align-items:center;justify-content:center;gap:8px;
+        }
+        .btn-submit:hover{
+            opacity:.92;transform:translateY(-1px);
+            box-shadow:0 8px 24px rgba(11,31,58,0.25);
+        }
+        .btn-submit:disabled{opacity:.6;cursor:not-allowed;transform:none;box-shadow:none}
+        .btn-loader{
+            width:18px;height:18px;
+            border:2px solid rgba(255,255,255,0.3);
+            border-top-color:var(--white);
+            border-radius:50%;
+            animation:spin .8s linear infinite;display:none;
+        }
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .btn-submit.loading .btn-text{display:none}
+        .btn-submit.loading .btn-loader{display:block}
+
+        .alert{
+            padding:12px 16px;border-radius:8px;font-size:13px;
+            margin-bottom:20px;display:none;
+            align-items:flex-start;gap:10px;
+            border:1px solid;line-height:1.5;
+        }
+        .alert.show{display:flex}
+        .alert.error{background:var(--error-bg);border-color:rgba(192,57,43,0.2);color:var(--error)}
+        .alert.success{background:var(--success-bg);border-color:rgba(39,174,96,0.2);color:var(--success)}
+        .alert-icon{font-size:16px;flex-shrink:0;margin-top:1px}
+
+        .back-link{
+            display:inline-flex;align-items:center;gap:6px;
+            font-size:13px;color:var(--text-muted);
+            text-decoration:none;margin-bottom:28px;
+            transition:color .2s;
+        }
+        .back-link:hover{color:var(--text-dark)}
+        .back-link svg{transition:transform .2s}
+        .back-link:hover svg{transform:translateX(-3px)}
+
+        .section-label{
+            font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;
+            color:var(--text-muted);margin-bottom:14px;margin-top:8px;
+            display:flex;align-items:center;gap:10px;
+        }
+        .section-label::after{content:'';flex:1;height:1px;background:rgba(11,31,58,0.1)}
+
+        @media(max-width:768px){
+            body{flex-direction:column}
+            .auth-left{flex:none;padding:32px 24px;min-height:auto}
+            .auth-left-content{padding:32px 0}
+            .auth-tagline{font-size:28px}
+            .steps{display:none}
+            .auth-right{padding:36px 24px}
+            .form-row{grid-template-columns:1fr}
+            .role-selector{grid-template-columns:repeat(3,1fr)}
+        }
+        @media(max-width:480px){
+            .role-selector{grid-template-columns:1fr}
+        }
+    </style>
+</head>
+<body>
+
+<div class="auth-left">
+    <div class="auth-left-bg"></div>
+    <div class="auth-left-grid"></div>
+    <div class="auth-deco"></div>
+    <div class="auth-deco"></div>
+
+    <div class="auth-left-header">
+        <a href="index.html" class="auth-brand">
+            <div class="auth-logo">E</div>
+            <span class="auth-brand-name">Educa<span>T</span></span>
+        </a>
+    </div>
+
+    <div class="auth-left-content">
+        <h2 class="auth-tagline">
+            Tu <em>viaje</em><br>académico<br>comienza aquí.
+        </h2>
+        <p class="auth-sub">Crea tu cuenta y accede a todas las herramientas de la plataforma EducaT en minutos.</p>
+        <div class="steps">
+            <div class="step">
+                <div class="step-num">1</div>
+                <span class="step-text"><strong>Completa el formulario</strong> con tus datos personales y elige tu rol en la plataforma.</span>
+            </div>
+            <div class="step">
+                <div class="step-num">2</div>
+                <span class="step-text"><strong>Verifica tu cuenta</strong> y accede de inmediato a todos los recursos académicos.</span>
+            </div>
+            <div class="step">
+                <div class="step-num">3</div>
+                <span class="step-text"><strong>Explora la plataforma</strong> y comienza tu experiencia de aprendizaje digital.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="auth-left-footer">
+        <a href="index.html">← Volver al portal institucional</a>
+    </div>
+</div>
+
+<div class="auth-right">
+    <div class="auth-form-wrapper">
+        <a href="login.html" class="back-link">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            Volver a iniciar sesión
+        </a>
+
+        <h1 class="auth-form-title">Crear cuenta</h1>
+        <p class="auth-form-subtitle">¿Ya tienes cuenta? <a href="login.html">Inicia sesión</a></p>
+
+        <div class="alert error" id="errorAlert">
+            <span class="alert-icon">⚠️</span>
+            <span id="errorText">Error al crear la cuenta.</span>
+        </div>
+        <div class="alert success" id="successAlert">
+            <span class="alert-icon">✓</span>
+            <span>Cuenta creada exitosamente. Redirigiendo al inicio de sesión...</span>
+        </div>
+
+        <div class="section-label">Información personal</div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label" for="name">Nombre completo</label>
+                <div class="form-input-wrap">
+                    <span class="form-input-icon">👤</span>
+                    <input type="text" id="name" class="form-input" placeholder="Tu nombre" autocomplete="name">
+                </div>
+                <div class="form-error-msg" id="nameErr">Ingresa tu nombre completo.</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="email">Correo electrónico</label>
+                <div class="form-input-wrap">
+                    <span class="form-input-icon">✉️</span>
+                    <input type="email" id="email" class="form-input" placeholder="tu@correo.com" autocomplete="email">
+                </div>
+                <div class="form-error-msg" id="emailErr">Ingresa un correo válido.</div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="password">Contraseña</label>
+            <div class="form-input-wrap">
+                <span class="form-input-icon">🔒</span>
+                <input type="password" id="password" class="form-input" placeholder="Mínimo 8 caracteres" autocomplete="new-password">
+                <button type="button" class="toggle-password" id="togglePass">
+                    <svg id="eyeIcon" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+            </div>
+            <div class="password-strength">
+                <div class="strength-bar"><div class="strength-fill" id="strengthFill"></div></div>
+                <span class="strength-label" id="strengthLabel">Ingresa una contraseña</span>
+            </div>
+            <div class="form-error-msg" id="passErr">La contraseña debe tener al menos 8 caracteres.</div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="confirmPassword">Confirmar contraseña</label>
+            <div class="form-input-wrap">
+                <span class="form-input-icon">🔒</span>
+                <input type="password" id="confirmPassword" class="form-input" placeholder="Repite tu contraseña" autocomplete="new-password">
+                <button type="button" class="toggle-password" id="togglePassConfirm">
+                    <svg id="eyeIconConfirm" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+            </div>
+            <div class="form-error-msg" id="confirmErr">Las contraseñas no coinciden.</div>
+        </div>
+
+        <div class="section-label">Rol en la plataforma</div>
+
+        <div class="form-group">
+            <div class="role-selector" id="roleSelector">
+                <div class="role-option">
+                    <input type="radio" name="role" id="roleStudent" value="3" checked>
+                    <label class="role-label" for="roleStudent">
+                        <span class="role-emoji">🎓</span>
+                        <span class="role-name">Estudiante</span>
+                    </label>
+                </div>
+                <div class="role-option">
+                    <input type="radio" name="role" id="roleTeacher" value="2">
+                    <label class="role-label" for="roleTeacher">
+                        <span class="role-emoji">👨‍🏫</span>
+                        <span class="role-name">Docente</span>
+                    </label>
+                </div>
+                <div class="role-option">
+                    <input type="radio" name="role" id="roleAdmin" value="1">
+                    <label class="role-label" for="roleAdmin">
+                        <span class="role-emoji">⚙️</span>
+                        <span class="role-name">Admin</span>
+                    </label>
+                </div>
+            </div>
+            <div class="form-error-msg" id="roleErr">Selecciona un rol.</div>
+        </div>
+
+        <label class="form-terms">
+            <input type="checkbox" id="terms">
+            <span class="form-terms-text">Acepto los <a href="#">Términos de Uso</a> y la <a href="#">Política de Privacidad</a> de EducaT.</span>
+        </label>
+
+        <button class="btn-submit" id="registerBtn" type="button">
+            <span class="btn-text">Crear mi cuenta</span>
+            <div class="btn-loader"></div>
+        </button>
+    </div>
+</div>
+
+<script>
+    const API='http://localhost:8080';
+
+    function makeEyeToggle(btnId,inputId,iconId){
+        document.getElementById(btnId).addEventListener('click',()=>{
+            const inp=document.getElementById(inputId);
+            const isPass=inp.type==='password';
+            inp.type=isPass?'text':'password';
+            document.getElementById(iconId).innerHTML=isPass
+                ?'<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>'
+                :'<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+        });
+    }
+    makeEyeToggle('togglePass','password','eyeIcon');
+    makeEyeToggle('togglePassConfirm','confirmPassword','eyeIconConfirm');
+
+    document.getElementById('password').addEventListener('input',function(){
+        const val=this.value;
+        const fill=document.getElementById('strengthFill');
+        const label=document.getElementById('strengthLabel');
+        let score=0;
+        if(val.length>=8)score++;
+        if(/[A-Z]/.test(val))score++;
+        if(/[0-9]/.test(val))score++;
+        if(/[^A-Za-z0-9]/.test(val))score++;
+        const configs=[
+            {pct:'0%',color:'transparent',text:'Ingresa una contraseña'},
+            {pct:'25%',color:'#E74C3C',text:'Muy débil'},
+            {pct:'50%',color:'#E67E22',text:'Débil'},
+            {pct:'75%',color:'#F1C40F',text:'Media'},
+            {pct:'100%',color:'#27AE60',text:'Fuerte'},
+        ];
+        const cfg=configs[score];
+        fill.style.width=cfg.pct;
+        fill.style.background=cfg.color;
+        label.textContent=cfg.text;
+        label.style.color=score<2?'#E74C3C':score<4?'#E67E22':'#27AE60';
+        if(score===0)label.style.color='var(--text-muted)';
+    });
+
+    function setErr(id,show){document.getElementById(id).className='form-error-msg'+(show?' show':'')}
+    function setInputErr(id,show){document.getElementById(id).className='form-input'+(show?' error':'')}
+    function setAlert(type,show,msg=''){
+        const el=document.getElementById(type+'Alert');
+        if(msg)el.querySelector('span:last-child').textContent=msg;
+        el.className='alert '+type+(show?' show':'');
+    }
+
+    function validateEmail(v){return/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)}
+
+    document.getElementById('registerBtn').addEventListener('click',async()=>{
+        const name=document.getElementById('name').value.trim();
+        const email=document.getElementById('email').value.trim();
+        const password=document.getElementById('password').value;
+        const confirm=document.getElementById('confirmPassword').value;
+        const roleId=parseInt(document.querySelector('input[name=role]:checked').value);
+        const terms=document.getElementById('terms').checked;
+
+        let valid=true;
+        setErr('nameErr',false);setInputErr('name',false);
+        setErr('emailErr',false);setInputErr('email',false);
+        setErr('passErr',false);setInputErr('password',false);
+        setErr('confirmErr',false);setInputErr('confirmPassword',false);
+        setAlert('error',false);setAlert('success',false);
+
+        if(name.length<2){setErr('nameErr',true);setInputErr('name',true);valid=false}
+        if(!validateEmail(email)){setErr('emailErr',true);setInputErr('email',true);valid=false}
+        if(password.length<8){setErr('passErr',true);setInputErr('password',true);valid=false}
+        if(password!==confirm){setErr('confirmErr',true);setInputErr('confirmPassword',true);valid=false}
+        if(!terms){setAlert('error',true,'Debes aceptar los términos y condiciones.');valid=false}
+        if(!valid)return;
+
+        const btn=document.getElementById('registerBtn');
+        btn.classList.add('loading');btn.disabled=true;
+
+        try{
+            const body={
+                name:name,
+                email:email,
+                password:password,
+                roleId:roleId,
+                status:true
+            };
+            const res=await fetch(API+'/api/users',{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify(body)
+            });
+
+            if(res.status===201||res.ok){
+                setAlert('success',true);
+                setTimeout(()=>{window.location.href='login.html'},2200);
+            }else{
+                const data=await res.json().catch(()=>({}));
+                if(res.status===400&&data.errors){
+                    const msgs=Object.values(data.errors).join(' ');
+                    setAlert('error',true,msgs||'Datos inválidos. Verifica el formulario.');
+                }else if(res.status===401||res.status===403){
+                    setAlert('error',true,'No tienes permisos para registrarte. Contacta al administrador.');
+                }else if(res.status===409){
+                    setAlert('error',true,'Ya existe una cuenta con este correo electrónico.');
+                    setInputErr('email',true);
+                }else{
+                    setAlert('error',true,data.message||'Error al crear la cuenta. Intenta de nuevo.');
+                }
+            }
+        }catch(e){
+            setAlert('error',true,'No se pudo conectar con el servidor. Verifica tu conexión.');
+        }finally{
+            btn.classList.remove('loading');btn.disabled=false;
+        }
+    });
+</script>
+</body>
+</html>
