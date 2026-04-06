@@ -42,6 +42,10 @@
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
                 Mis Cursos
             </button>
+            <button class="nav-item" data-section="entregas">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                Entregas
+            </button>
             <button class="nav-item" data-section="calificaciones">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
                 Calificaciones
@@ -53,6 +57,10 @@
             <button class="nav-item" data-section="horarios">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
                 Horarios
+            </button>
+            <button class="nav-item" data-section="estudiantes">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+                Estudiantes
             </button>
         </div>
         <div class="nav-group">
@@ -85,15 +93,25 @@
                     <button class="topbar-breadcrumb-link" id="breadcrumbBack">Mis Cursos</button>
                     <span class="topbar-breadcrumb-sep">/</span>
                     <span id="breadcrumbCourseName" style="font-size:12px;color:var(--text-muted);font-weight:500"></span>
+                    <span class="topbar-breadcrumb-sep" id="breadcrumbActivitySep" style="display:none">/</span>
+                    <span id="breadcrumbActivityName" style="font-size:12px;color:var(--text-muted);font-weight:500;display:none"></span>
                 </div>
             </div>
         </div>
         <div class="topbar-right">
             <span class="topbar-date" id="currentDate"></span>
             <div id="courseTopbarActions" style="display:none;align-items:center;gap:8px">
+                <button class="btn btn-sm btn-outline" id="btnAddUnit">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Nueva Unidad
+                </button>
                 <button class="btn btn-sm btn-outline" id="btnEditCourse">
                     <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4z"/></svg>
                     Editar curso
+                </button>
+                <button class="btn btn-sm btn-teal" id="btnCourseSubmissions">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    Ver entregas
                 </button>
             </div>
         </div>
@@ -106,34 +124,80 @@
             <section class="section-panel active" id="panel-overview">
                 <div class="stats-row">
                     <div class="stat-card">
-                        <div class="stat-icon teal"><svg width="20" height="20" fill="none" stroke="var(--teal)" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg></div>
+                        <div class="stat-icon teal">
+                            <svg width="20" height="20" fill="none" stroke="var(--teal)" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+                        </div>
                         <div class="stat-value" id="statCursos">—</div>
                         <div class="stat-label">Cursos Activos</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-icon navy"><svg width="20" height="20" fill="none" stroke="var(--navy)" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg></div>
+                        <div class="stat-icon navy">
+                            <svg width="20" height="20" fill="none" stroke="var(--navy)" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+                        </div>
                         <div class="stat-value" id="statEstudiantes">—</div>
                         <div class="stat-label">Estudiantes</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-icon gold"><svg width="20" height="20" fill="none" stroke="var(--gold)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+                        <div class="stat-icon gold">
+                            <svg width="20" height="20" fill="none" stroke="var(--gold)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        </div>
                         <div class="stat-value" id="statActividades">—</div>
                         <div class="stat-label">Actividades</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-icon success"><svg width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
+                        <div class="stat-icon success">
+                            <svg width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        </div>
                         <div class="stat-value" id="statExamenes">—</div>
                         <div class="stat-label">Exámenes</div>
                     </div>
+                    <div class="stat-card">
+                        <div class="stat-icon" style="background:rgba(192,57,43,0.08)">
+                            <svg width="20" height="20" fill="none" stroke="var(--error)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                        </div>
+                        <div class="stat-value" id="statEntregasPendientes">—</div>
+                        <div class="stat-label">Entregas Pendientes</div>
+                    </div>
                 </div>
+
                 <div class="grid-2">
                     <div class="card">
-                        <div class="card-header"><span class="card-title">Mis Cursos</span></div>
-                        <div class="card-body" id="overviewCursos"><div class="loading"><div class="spinner"></div>Cargando...</div></div>
+                        <div class="card-header">
+                            <span class="card-title">Mis Cursos</span>
+                            <button class="btn btn-sm btn-outline" onclick="navigateTo('cursos')">Ver todos</button>
+                        </div>
+                        <div class="card-body" id="overviewCursos">
+                            <div class="loading"><div class="spinner"></div>Cargando...</div>
+                        </div>
                     </div>
                     <div class="card">
-                        <div class="card-header"><span class="card-title">Actividades Recientes</span></div>
-                        <div class="card-body" id="overviewActividades"><div class="loading"><div class="spinner"></div>Cargando...</div></div>
+                        <div class="card-header">
+                            <span class="card-title">Actividades Recientes</span>
+                            <button class="btn btn-sm btn-outline" onclick="navigateTo('entregas')">Ver entregas</button>
+                        </div>
+                        <div class="card-body" id="overviewActividades">
+                            <div class="loading"><div class="spinner"></div>Cargando...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Entregas sin calificar</span>
+                            <span class="badge badge-error" id="overviewPendingCount">0</span>
+                        </div>
+                        <div class="card-body" id="overviewPendingSubmissions">
+                            <div class="loading"><div class="spinner"></div>Cargando...</div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Próximas Evaluaciones</span>
+                        </div>
+                        <div class="card-body" id="overviewExams">
+                            <div class="loading"><div class="spinner"></div>Cargando...</div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -145,7 +209,54 @@
                         <span style="font-size:13px;color:var(--text-muted)">Haz clic en un curso para gestionar su contenido</span>
                     </div>
                     <div class="card-body">
-                        <div id="cursosGrid"><div class="loading"><div class="spinner"></div>Cargando cursos...</div></div>
+                        <div id="cursosGrid">
+                            <div class="loading"><div class="spinner"></div>Cargando cursos...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section-panel" id="panel-entregas">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Revisión de Entregas</span>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                            <select class="form-input" id="subCourseFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                                <option value="">Todos los cursos</option>
+                            </select>
+                            <select class="form-input" id="subActivityFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                                <option value="">Todas las actividades</option>
+                            </select>
+                            <select class="form-input" id="subStatusFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                                <option value="">Todos los estados</option>
+                                <option value="pending">Sin calificar</option>
+                                <option value="graded">Calificados</option>
+                                <option value="none">Sin entregar</option>
+                            </select>
+                            <button class="btn btn-teal btn-sm" id="btnLoadSubmissions">
+                                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+                                Actualizar
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body" id="entregasContainer">
+                        <div class="empty-state">
+                            <div class="empty-state-title">Selecciona un curso</div>
+                            <div class="empty-state-text">Filtra por curso y actividad para revisar las entregas de los estudiantes.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="submissionDetailView" style="display:none">
+                    <div class="card">
+                        <div class="card-header" id="submissionDetailHeader">
+                            <span class="card-title" id="submissionDetailTitle">Detalle de Entrega</span>
+                            <button class="btn btn-sm btn-outline" id="btnBackToList">
+                                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+                                Volver a la lista
+                            </button>
+                        </div>
+                        <div class="card-body" id="submissionDetailBody"></div>
                     </div>
                 </div>
             </section>
@@ -155,15 +266,42 @@
                     <div class="card-header">
                         <span class="card-title">Calificaciones</span>
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                            <select class="form-input" id="gradeCourseFilter" style="width:auto;padding:7px 12px;font-size:13px"><option value="">Selecciona un curso</option></select>
+                            <select class="form-input" id="gradeCourseFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                                <option value="">Selecciona un curso</option>
+                            </select>
                             <button class="btn btn-teal btn-sm" id="btnNewGrade">
                                 <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                                 Agregar Nota
                             </button>
+                            <button class="btn btn-sm btn-outline" id="btnExportGrades">
+                                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                Exportar
+                            </button>
+                        </div>
+                    </div>
+                    <div id="gradesSummaryBar" style="display:none;padding:12px 22px;border-bottom:1px solid rgba(11,31,58,0.06);display:flex;gap:24px;flex-wrap:wrap">
+                        <div style="text-align:center">
+                            <div style="font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:700;color:var(--text-dark)" id="gradeAvg">—</div>
+                            <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)">Promedio</div>
+                        </div>
+                        <div style="text-align:center">
+                            <div style="font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:700;color:var(--success)" id="gradeMax">—</div>
+                            <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)">Máxima</div>
+                        </div>
+                        <div style="text-align:center">
+                            <div style="font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:700;color:var(--error)" id="gradeMin">—</div>
+                            <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)">Mínima</div>
+                        </div>
+                        <div style="text-align:center">
+                            <div style="font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:700;color:var(--gold)" id="gradeApproval">—</div>
+                            <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)">% Aprobación</div>
                         </div>
                     </div>
                     <div class="card-body" id="calificacionesContainer">
-                        <div class="empty-state"><div class="empty-state-title">Selecciona un curso</div><div class="empty-state-text">Elige un curso para gestionar las calificaciones de sus estudiantes.</div></div>
+                        <div class="empty-state">
+                            <div class="empty-state-title">Selecciona un curso</div>
+                            <div class="empty-state-text">Elige un curso para gestionar las calificaciones de sus estudiantes.</div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -173,13 +311,33 @@
                     <div class="card-header">
                         <span class="card-title">Control de Asistencia</span>
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                            <select class="form-input" id="attCourseFilter" style="width:auto;padding:7px 12px;font-size:13px"><option value="">Selecciona un curso</option></select>
+                            <select class="form-input" id="attCourseFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                                <option value="">Selecciona un curso</option>
+                            </select>
                             <input type="date" class="form-input" id="attDate" style="width:auto;padding:7px 12px;font-size:13px">
                             <button class="btn btn-teal btn-sm" id="btnLoadAtt">Cargar Lista</button>
                         </div>
                     </div>
                     <div class="card-body" id="asistenciaContainer">
-                        <div class="empty-state"><div class="empty-state-title">Selecciona curso y fecha</div><div class="empty-state-text">Elige el curso y la fecha para registrar la asistencia.</div></div>
+                        <div class="empty-state">
+                            <div class="empty-state-title">Selecciona curso y fecha</div>
+                            <div class="empty-state-text">Elige el curso y la fecha para registrar la asistencia.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top:0">
+                    <div class="card-header">
+                        <span class="card-title">Resumen de Asistencia</span>
+                        <select class="form-input" id="attSummaryCourse" style="width:auto;padding:7px 12px;font-size:13px">
+                            <option value="">Selecciona un curso</option>
+                        </select>
+                    </div>
+                    <div class="card-body" id="asistenciaResumen">
+                        <div class="empty-state" style="padding:24px 0">
+                            <div class="empty-state-title">Sin datos</div>
+                            <div class="empty-state-text">Selecciona un curso para ver el resumen de asistencia.</div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -193,16 +351,47 @@
                             Nuevo Horario
                         </button>
                     </div>
-                    <div class="card-body" id="horariosContainer"><div class="loading"><div class="spinner"></div>Cargando...</div></div>
+                    <div class="card-body" id="horariosContainer">
+                        <div class="loading"><div class="spinner"></div>Cargando...</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Vista Semanal</span>
+                    </div>
+                    <div class="card-body" id="horariosWeekView">
+                        <div class="week-grid" id="weekGrid"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section-panel" id="panel-estudiantes">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Gestión de Estudiantes</span>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                            <select class="form-input" id="studentCourseFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                                <option value="">Todos los cursos</option>
+                            </select>
+                            <div style="position:relative">
+                                <svg width="14" height="14" fill="none" stroke="var(--text-muted)" stroke-width="2" viewBox="0 0 24 24" style="position:absolute;left:10px;top:50%;transform:translateY(-50%)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                                <input type="text" class="form-input" id="studentSearch" placeholder="Buscar estudiante..." style="padding-left:32px;width:200px;font-size:13px">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body" id="estudiantesContainer">
+                        <div class="loading"><div class="spinner"></div>Cargando estudiantes...</div>
+                    </div>
                 </div>
             </section>
 
             <section class="section-panel" id="panel-perfil">
-                <div class="card" style="max-width:640px">
-                    <div class="card-header"><span class="card-title">Mi Perfil Docente</span></div>
-                    <div class="card-body">
-                        <div class="alert alert-success" id="profileAlert" style="display:none"></div>
-                        <div class="form-row">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px;max-width:900px">
+                    <div class="card" style="margin-bottom:0">
+                        <div class="card-header"><span class="card-title">Datos Personales</span></div>
+                        <div class="card-body">
+                            <div class="alert alert-success" id="profileAlert" style="display:none"></div>
                             <div class="form-group">
                                 <label class="form-label">Nombre Completo</label>
                                 <input type="text" class="form-input" id="profName">
@@ -211,12 +400,10 @@
                                 <label class="form-label">Correo Electrónico</label>
                                 <input type="email" class="form-input" id="profEmail">
                             </div>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Especialización</label>
-                            <input type="text" class="form-input" id="profSpecialization" placeholder="Área de especialización">
-                        </div>
-                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Especialización</label>
+                                <input type="text" class="form-input" id="profSpecialization" placeholder="Área de especialización">
+                            </div>
                             <div class="form-group">
                                 <label class="form-label">Nueva Contraseña</label>
                                 <input type="password" class="form-input" id="profPassword" placeholder="Dejar en blanco para mantener">
@@ -225,11 +412,26 @@
                                 <label class="form-label">Confirmar Contraseña</label>
                                 <input type="password" class="form-input" id="profConfirm">
                             </div>
+                            <button class="btn btn-teal" id="saveProfileBtn">
+                                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                                Guardar Cambios
+                            </button>
                         </div>
-                        <button class="btn btn-teal" id="saveProfileBtn">
-                            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                            Guardar Cambios
-                        </button>
+                    </div>
+
+                    <div style="display:flex;flex-direction:column;gap:22px">
+                        <div class="card" style="margin-bottom:0">
+                            <div class="card-header"><span class="card-title">Resumen Docente</span></div>
+                            <div class="card-body" id="profSummary">
+                                <div class="loading"><div class="spinner"></div>Cargando...</div>
+                            </div>
+                        </div>
+                        <div class="card" style="margin-bottom:0">
+                            <div class="card-header"><span class="card-title">Cursos Asignados</span></div>
+                            <div class="card-body" id="profCourses">
+                                <div class="loading"><div class="spinner"></div>Cargando...</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -237,14 +439,66 @@
         </div>
 
         <div class="course-view" id="courseView">
+            <div class="course-view-back-bar">
+                <button class="cv-back-btn" id="cvBackBtn">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+                    Volver a Mis Cursos
+                </button>
+                <div class="cv-course-info" id="cvCourseInfo">
+                    <span class="cv-course-name" id="cvCourseName"></span>
+                    <span class="cv-course-meta" id="cvCourseMeta"></span>
+                </div>
+            </div>
+
             <div class="unit-tabs-bar" id="unitTabsBar">
                 <div class="loading" style="padding:0 20px;font-size:13px;min-height:52px">
                     <div class="spinner" style="width:16px;height:16px;border-width:2px"></div>
                     Cargando unidades...
                 </div>
             </div>
+
             <div class="unit-content-area" id="unitContentArea">
                 <div class="loading"><div class="spinner"></div>Cargando contenido...</div>
+            </div>
+        </div>
+
+        <div class="submissions-view" id="submissionsView">
+            <div class="course-view-back-bar">
+                <button class="cv-back-btn" id="submissionsBackBtn">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+                    Volver al curso
+                </button>
+                <div class="cv-course-info">
+                    <span class="cv-course-name" id="submissionsActivityName"></span>
+                    <span class="cv-course-meta" id="submissionsActivityMeta"></span>
+                </div>
+                <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+                    <span class="badge badge-error" id="submissionsPendingBadge">0 sin calificar</span>
+                    <span class="badge badge-success" id="submissionsGradedBadge">0 calificados</span>
+                </div>
+            </div>
+
+            <div style="padding:24px;overflow-y:auto;flex:1">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Entregas de Estudiantes</span>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <select class="form-input" id="submissionsFilter" style="width:auto;padding:6px 10px;font-size:12px">
+                                <option value="all">Todos</option>
+                                <option value="pending">Sin calificar</option>
+                                <option value="graded">Calificados</option>
+                                <option value="missing">Sin entregar</option>
+                            </select>
+                            <button class="btn btn-sm btn-teal" id="btnGradeAll">
+                                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                                Calificar todos
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body" style="padding:0" id="submissionsListBody">
+                        <div class="loading"><div class="spinner"></div>Cargando entregas...</div>
+                    </div>
+                </div>
             </div>
         </div>
 

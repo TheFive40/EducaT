@@ -414,3 +414,66 @@ textarea.form-input{resize:vertical;min-height:100px}
     .submission-grade-display{flex-direction:column;gap:12px}
     .submission-grade-sep{display:none}
 }
+.course-view-back-bar{background:var(--white);border-bottom:1px solid rgba(11,31,58,0.08);padding:10px 24px;display:flex;align-items:center;gap:14px;flex-shrink:0;box-shadow:var(--shadow)}
+.cv-back-btn{display:inline-flex;align-items:center;gap:7px;background:none;border:1.5px solid rgba(11,31,58,0.12);border-radius:7px;padding:6px 12px;font-family:'Jost',sans-serif;font-size:12.5px;font-weight:500;color:var(--text-body);cursor:pointer;transition:all var(--transition);flex-shrink:0}
+.cv-back-btn:hover{border-color:var(--navy);color:var(--navy);background:rgba(11,31,58,0.03)}
+.cv-course-info{display:flex;flex-direction:column;gap:2px}
+.cv-course-name{font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:600;color:var(--text-dark);line-height:1.2}
+.cv-course-meta{font-size:11px;color:var(--text-muted)}
+
+.submissions-view{display:none;flex-direction:column;flex:1;overflow:hidden;background:var(--cream)}
+.submissions-view.show{display:flex}
+
+.submission-row{display:flex;align-items:center;gap:14px;padding:14px 22px;border-bottom:1px solid rgba(11,31,58,0.05);transition:background var(--transition)}
+.submission-row:last-child{border-bottom:none}
+.submission-row:hover{background:rgba(11,31,58,0.015)}
+.submission-student-avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--navy-light),var(--teal));display:flex;align-items:center;justify-content:center;font-family:'Cormorant Garamond',serif;font-size:14px;font-weight:700;color:var(--white);flex-shrink:0}
+.submission-student-info{flex:1;min-width:0}
+.submission-student-name{font-size:13.5px;font-weight:600;color:var(--text-dark);margin-bottom:2px}
+.submission-student-code{font-size:11px;color:var(--text-muted)}
+.submission-date-info{font-size:12px;color:var(--text-muted);text-align:center;flex-shrink:0;min-width:100px}
+.submission-grade-inline{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.submission-grade-input{width:60px;padding:5px 8px;border:1.5px solid rgba(11,31,58,0.12);border-radius:6px;font-family:'Jost',sans-serif;font-size:13px;text-align:center;color:var(--text-dark);background:var(--cream);outline:none;transition:border-color var(--transition)}
+.submission-grade-input:focus{border-color:var(--gold);background:var(--white)}
+.submission-actions-inline{display:flex;gap:5px;flex-shrink:0}
+
+.grade-btn{display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border-radius:6px;font-family:'Jost',sans-serif;font-size:12px;font-weight:500;cursor:pointer;border:1px solid transparent;transition:all var(--transition);white-space:nowrap}
+.grade-btn.save{background:rgba(39,174,96,0.08);color:var(--success);border-color:rgba(39,174,96,0.22)}
+.grade-btn.save:hover{background:rgba(39,174,96,0.16)}
+.grade-btn.view{background:rgba(11,31,58,0.05);color:var(--text-body);border-color:rgba(11,31,58,0.12)}
+.grade-btn.view:hover{background:rgba(11,31,58,0.1)}
+
+.week-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.week-day-col{background:var(--cream);border-radius:var(--radius);overflow:hidden;min-height:120px}
+.week-day-header{padding:8px 12px;background:var(--navy);color:var(--white);font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;text-align:center}
+.week-day-slots{padding:8px;display:flex;flex-direction:column;gap:6px}
+.week-slot{background:var(--white);border-radius:6px;padding:8px 10px;border-left:3px solid var(--teal);box-shadow:var(--shadow-sm)}
+.week-slot-course{font-size:12px;font-weight:600;color:var(--text-dark);margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.week-slot-time{font-size:10.5px;color:var(--text-muted)}
+
+.student-row{display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid rgba(11,31,58,0.05)}
+.student-row:last-child{border-bottom:none}
+.student-row-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--navy-light),var(--teal));display:flex;align-items:center;justify-content:center;font-family:'Cormorant Garamond',serif;font-size:15px;font-weight:700;color:var(--white);flex-shrink:0}
+.student-row-info{flex:1;min-width:0}
+.student-row-name{font-size:13.5px;font-weight:600;color:var(--text-dark);margin-bottom:2px}
+.student-row-code{font-size:11.5px;color:var(--text-muted)}
+.student-row-stats{display:flex;gap:16px;flex-shrink:0}
+.student-stat{text-align:center}
+.student-stat-val{font-size:15px;font-weight:700;color:var(--text-dark);font-family:'Cormorant Garamond',serif}
+.student-stat-lbl{font-size:9.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px}
+
+.prof-summary-stat{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(11,31,58,0.05)}
+.prof-summary-stat:last-child{border-bottom:none}
+.prof-summary-icon{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.prof-summary-val{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;color:var(--text-dark);line-height:1}
+.prof-summary-lbl{font-size:11px;color:var(--text-muted);margin-top:1px}
+
+@media(max-width:900px){
+    .week-grid{grid-template-columns:repeat(3,1fr)}
+    .panel-perfil .grid-2{grid-template-columns:1fr}
+}
+@media(max-width:600px){
+    .week-grid{grid-template-columns:1fr 1fr}
+    .submission-row{flex-wrap:wrap}
+    .submission-date-info{display:none}
+}
