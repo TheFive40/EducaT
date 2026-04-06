@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducaT — Aula Extendida</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Jost:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/student-dashboard.css">
+</head>
+<body>
+
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <div class="sidebar-logo">E</div>
+        <span class="sidebar-brand">Educa<span>T</span></span>
+        <span class="sidebar-badge">Alumno</span>
+    </div>
+    <div class="sidebar-user">
+        <div class="user-avatar">
+            <svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <div class="user-info">
+            <div class="user-name" id="sidebarUserName">Cargando...</div>
+            <div class="user-role" id="sidebarStudentCode">Estudiante</div>
+        </div>
+    </div>
+    <nav class="sidebar-nav">
+        <div class="nav-group">
+            <div class="nav-group-label">Principal</div>
+            <button class="nav-item active" data-section="overview">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                Resumen
+            </button>
+        </div>
+        <div class="nav-group">
+            <div class="nav-group-label">Mis Cursos</div>
+            <button class="nav-item" data-section="cursos">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+                Cursos Matriculados
+            </button>
+            <button class="nav-item" data-section="clases">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                Clases Programadas
+            </button>
+            <button class="nav-item" data-section="ausencias">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                Reportar Ausencia
+            </button>
+        </div>
+        <div class="nav-group">
+            <div class="nav-group-label">Personal</div>
+            <button class="nav-item" data-section="area-personal">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                Área Personal
+            </button>
+            <button class="nav-item" data-section="actualizacion">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                Actualización de Datos
+            </button>
+        </div>
+    </nav>
+    <div class="sidebar-footer">
+        <button class="btn-logout" id="logoutBtn">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Cerrar sesión
+        </button>
+    </div>
+</aside>
+
+<div class="main">
+    <header class="topbar">
+        <div class="topbar-left">
+            <button class="menu-toggle" id="menuToggle">
+                <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <div>
+                <div class="page-title" id="pageTitle">Resumen</div>
+                <div class="page-subtitle" id="pageSubtitle">Aula Extendida — Vista del Estudiante</div>
+            </div>
+        </div>
+        <div class="topbar-right">
+            <span class="topbar-date" id="currentDate"></span>
+        </div>
+    </header>
+
+    <div class="content">
+
+        <section class="section-panel active" id="panel-overview">
+            <div class="stats-row">
+                <div class="stat-card">
+                    <div class="stat-icon navy"><svg width="20" height="20" fill="none" stroke="var(--navy)" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg></div>
+                    <div class="stat-value" id="statCursos">—</div>
+                    <div class="stat-label">Cursos Activos</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon gold"><svg width="20" height="20" fill="none" stroke="var(--gold)" stroke-width="2" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
+                    <div class="stat-value" id="statPromedio">—</div>
+                    <div class="stat-label">Promedio General</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon teal"><svg width="20" height="20" fill="none" stroke="var(--teal)" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div>
+                    <div class="stat-value" id="statAsistencia">—</div>
+                    <div class="stat-label">Asistencia</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon success"><svg width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg></div>
+                    <div class="stat-value" id="statCertificados">—</div>
+                    <div class="stat-label">Certificados</div>
+                </div>
+            </div>
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Mis Cursos</span></div>
+                    <div class="card-body" id="overviewCursos"><div class="loading"><div class="spinner"></div>Cargando...</div></div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Calificaciones Recientes</span></div>
+                    <div class="card-body" id="overviewGrades"><div class="loading"><div class="spinner"></div>Cargando...</div></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section-panel" id="panel-cursos">
+            <div class="card">
+                <div class="card-header"><span class="card-title">Cursos Matriculados</span></div>
+                <div class="card-body">
+                    <div style="font-size:13px;color:var(--text-muted);margin-bottom:18px">Selecciona un curso para acceder a su contenido completo, actividades, evaluaciones y materiales.</div>
+                    <div id="cursosContainer"><div class="loading"><div class="spinner"></div>Cargando cursos...</div></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section-panel" id="panel-clases">
+            <div class="card">
+                <div class="card-header"><span class="card-title">Clases Programadas</span></div>
+                <div class="card-body" id="clasesContainer"><div class="loading"><div class="spinner"></div>Cargando horario...</div></div>
+            </div>
+        </section>
+
+        <section class="section-panel" id="panel-ausencias">
+            <div style="max-width:680px">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Reportar Ausencia</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info" style="margin-bottom:20px">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                            Reporta tu ausencia con anticipación. Adjunta los documentos de soporte para que tu docente pueda validar el reporte.
+                        </div>
+                        <div class="alert alert-success" id="ausenciaOk" style="display:none">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                            Ausencia reportada correctamente. Tu docente recibirá la notificación.
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Curso</label>
+                                <select class="form-input" id="ausCurso">
+                                    <option value="">Selecciona el curso</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Fecha de la clase</label>
+                                <input type="date" class="form-input" id="ausFecha">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Motivo de la ausencia</label>
+                            <select class="form-input" id="ausMotivo">
+                                <option value="">Selecciona el motivo</option>
+                                <option value="Enfermedad o motivo médico">Enfermedad o motivo médico</option>
+                                <option value="Calamidad doméstica">Calamidad doméstica</option>
+                                <option value="Diligencia personal o familiar">Diligencia personal o familiar</option>
+                                <option value="Evento académico externo">Evento académico externo</option>
+                                <option value="Otro motivo">Otro motivo</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Descripción detallada</label>
+                            <textarea class="form-input" id="ausDescripcion" placeholder="Describe el motivo de tu ausencia con el mayor detalle posible. Esta información es revisada por tu docente..." style="min-height:110px"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Documentos de soporte</label>
+                            <div class="file-drop-area" id="fileDropArea">
+                                <input type="file" id="fileInput" multiple accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
+                                <div class="file-drop-icon">
+                                    <svg width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                </div>
+                                <div class="file-drop-text">Arrastra archivos aquí o haz clic para seleccionar</div>
+                                <div class="file-drop-sub">PDF, imágenes o documentos Word — máx. 10 MB por archivo</div>
+                            </div>
+                            <div class="file-list" id="fileList"></div>
+                        </div>
+                        <button class="btn btn-primary" id="btnReportarAusencia">
+                            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                            Enviar Reporte de Ausencia
+                        </button>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Mis Reportes Anteriores</span></div>
+                    <div class="card-body" id="ausenciasHistorial"><div class="loading"><div class="spinner"></div>Cargando historial...</div></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section-panel" id="panel-area-personal">
+            <div style="margin-bottom:24px">
+                <div class="personal-grid" id="personalGrid">
+                    <div class="loading"><div class="spinner"></div>Cargando área personal...</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section-panel" id="panel-actualizacion">
+            <div class="card" style="max-width:640px">
+                <div class="card-header"><span class="card-title">Actualización de Datos</span></div>
+                <div class="card-body">
+                    <div class="alert alert-success" id="updateAlert" style="display:none"></div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Nombre Completo</label>
+                            <input type="text" class="form-input" id="updName">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Correo Electrónico</label>
+                            <input type="email" class="form-input" id="updEmail">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Nueva Contraseña</label>
+                            <input type="password" class="form-input" id="updPassword" placeholder="Dejar en blanco para mantener">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Confirmar Contraseña</label>
+                            <input type="password" class="form-input" id="updConfirm">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" id="saveProfileBtn">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                        Guardar Cambios
+                    </button>
+                </div>
+            </div>
+        </section>
+
+    </div>
+</div>
+
+<div class="course-view" id="courseView">
+    <div class="course-view-topbar">
+        <button class="cv-back-btn" id="cvBackBtn">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            Mis Cursos
+        </button>
+        <div style="width:1px;height:22px;background:rgba(255,255,255,0.12)"></div>
+        <div class="cv-course-name" id="cvCourseName">Curso</div>
+        <div class="cv-teacher-name" id="cvTeacherName"></div>
+    </div>
+    <div class="course-view-body">
+        <nav class="unit-nav" id="unitNav">
+            <div class="unit-nav-section-label">Unidades del Curso</div>
+            <div id="unitNavItems"></div>
+        </nav>
+        <div class="unit-content" id="unitContent">
+            <div class="loading"><div class="spinner"></div>Cargando contenido...</div>
+        </div>
+    </div>
+</div>
+
+<div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal" id="modal">
+        <div class="modal-header">
+            <span class="modal-title" id="modalTitle"></span>
+            <button class="modal-close" id="modalClose">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
+    </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+<script src="/js/student-dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducaT — Iniciar Sesión</title>
+    <link rel="stylesheet" href="/css/shared.css">
+    <link rel="stylesheet" href="/css/auth.css">
+</head>
+<body>
+
+<div class="auth-panel-left">
+    <div class="auth-panel-left-grid"></div>
+    <div class="auth-panel-left-gradient"></div>
+    <div class="auth-panel-left-bar"></div>
+
+    <a href="index.html" class="auth-brand">
+        <div class="auth-logomark"><span>ET</span></div>
+        <span class="auth-brand-name">Educa<em>T</em></span>
+    </a>
+
+    <div class="auth-left-body">
+        <div class="auth-left-role-tag" id="roleBadge" style="display:none">
+            <div class="auth-left-role-tag-line"></div>
+            <span id="roleText">Acceso</span>
+        </div>
+        <h2 class="auth-headline">
+            Bienvenido<br>de <em>vuelta</em> a<br>tu plataforma.
+        </h2>
+        <p class="auth-subline">Accede a tus cursos, actividades, calificaciones y mucho más desde un solo lugar.</p>
+        <div class="auth-features">
+            <div class="auth-feature">
+                <div class="auth-feature-icon">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+                </div>
+                <span class="auth-feature-text">Acceso a todos tus cursos y materiales</span>
+            </div>
+            <div class="auth-feature">
+                <div class="auth-feature-icon">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                </div>
+                <span class="auth-feature-text">Seguimiento en tiempo real de calificaciones</span>
+            </div>
+            <div class="auth-feature">
+                <div class="auth-feature-icon">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                </div>
+                <span class="auth-feature-text">Comunicación directa con docentes</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="auth-left-footer">
+        <a href="index.html">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            Portal institucional
+        </a>
+    </div>
+</div>
+
+<div class="auth-panel-right">
+    <div class="auth-form-box">
+        <a href="index.html" class="auth-back-link">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            Portal institucional
+        </a>
+
+        <h1 class="auth-form-title">Iniciar sesión</h1>
+        <p class="auth-form-subtitle">¿No tienes cuenta? <a href="register.html">Regístrate gratis</a></p>
+
+        <div class="alert-box is-error" id="alertError">
+            <svg class="alert-box-icon" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <span id="alertErrorText">Error al iniciar sesión.</span>
+        </div>
+        <div class="alert-box is-success" id="alertSuccess">
+            <svg class="alert-box-icon" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            <span>Sesión iniciada correctamente. Redirigiendo...</span>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="email">Correo electrónico</label>
+            <div class="input-wrap">
+        <span class="input-icon">
+          <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        </span>
+                <input type="email" id="email" class="form-input" placeholder="tu@correo.com" autocomplete="email">
+            </div>
+            <div class="field-error" id="emailErr">Ingresa un correo válido.</div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="password">Contraseña</label>
+            <div class="input-wrap">
+        <span class="input-icon">
+          <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+        </span>
+                <input type="password" id="password" class="form-input" placeholder="Tu contraseña" autocomplete="current-password">
+                <button type="button" class="input-action" id="togglePass" aria-label="Mostrar contraseña">
+                    <svg id="eyeIcon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+            </div>
+            <div class="field-error" id="passErr">La contraseña debe tener al menos 8 caracteres.</div>
+        </div>
+
+        <div class="form-options">
+            <label class="form-check">
+                <input type="checkbox" id="remember">
+                <span class="form-check-label">Recordarme</span>
+            </label>
+            <a href="recover-password.html" class="form-link">¿Olvidaste tu contraseña?</a>
+        </div>
+
+        <button class="btn-submit" id="loginBtn" type="button">
+            <span class="btn-text">Iniciar sesión</span>
+            <div class="btn-loader"></div>
+        </button>
+
+        <div class="form-divider">
+            <div class="form-divider-line"></div>
+            <span class="form-divider-text">¿Eres nuevo aquí?</span>
+            <div class="form-divider-line"></div>
+        </div>
+
+        <a href="register.html" class="form-alt-link">Crear una cuenta nueva</a>
+    </div>
+</div>
+
+<script src="/js/login.js"></script>
+</body>
+</html>

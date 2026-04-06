@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducaT — Registrarse</title>
+    <link rel="stylesheet" href="/css/shared.css">
+    <link rel="stylesheet" href="/css/auth.css">
+    <style>
+        .auth-panel-left {
+            background: linear-gradient(160deg, #122540 0%, #0C1C2E 60%, #0A1A28 100%);
+        }
+        .auth-form-box {
+            max-width: 460px;
+            padding-bottom: 48px;
+        }
+        .auth-panel-right {
+            align-items: flex-start;
+            padding-top: 48px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="auth-panel-left">
+    <div class="auth-panel-left-grid"></div>
+    <div class="auth-panel-left-gradient"></div>
+    <div class="auth-panel-left-bar"></div>
+
+    <a href="index.html" class="auth-brand">
+        <div class="auth-logomark"><span>ET</span></div>
+        <span class="auth-brand-name">Educa<em>T</em></span>
+    </a>
+
+    <div class="auth-left-body">
+        <h2 class="auth-headline">
+            Tu <em>camino</em><br>académico<br>comienza aquí.
+        </h2>
+        <p class="auth-subline">Crea tu cuenta y accede a todas las herramientas de la plataforma EducaT.</p>
+        <div class="auth-steps">
+            <div class="auth-step">
+                <div class="auth-step-num">1</div>
+                <span class="auth-step-text"><strong>Completa el formulario</strong> con tus datos personales y elige tu rol en la plataforma.</span>
+            </div>
+            <div class="auth-step">
+                <div class="auth-step-num">2</div>
+                <span class="auth-step-text"><strong>Verifica tu cuenta</strong> y accede de inmediato a todos los recursos académicos.</span>
+            </div>
+            <div class="auth-step">
+                <div class="auth-step-num">3</div>
+                <span class="auth-step-text"><strong>Explora la plataforma</strong> y comienza tu experiencia de aprendizaje digital.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="auth-left-footer">
+        <a href="index.html">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            Portal institucional
+        </a>
+    </div>
+</div>
+
+<div class="auth-panel-right">
+    <div class="auth-form-box">
+        <a href="login.html" class="auth-back-link">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            Volver a iniciar sesión
+        </a>
+
+        <h1 class="auth-form-title">Crear cuenta</h1>
+        <p class="auth-form-subtitle">¿Ya tienes cuenta? <a href="login.html">Inicia sesión</a></p>
+
+        <div class="alert-box is-error" id="alertError">
+            <svg class="alert-box-icon" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <span id="alertErrorText">Error al crear la cuenta.</span>
+        </div>
+        <div class="alert-box is-success" id="alertSuccess">
+            <svg class="alert-box-icon" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            <span>Cuenta creada exitosamente. Redirigiendo al inicio de sesión...</span>
+        </div>
+
+        <div class="section-divider">Información personal</div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label" for="name">Nombre completo</label>
+                <div class="input-wrap">
+          <span class="input-icon">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </span>
+                    <input type="text" id="name" class="form-input" placeholder="Tu nombre" autocomplete="name">
+                </div>
+                <div class="field-error" id="nameErr">Ingresa tu nombre completo.</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="email">Correo electrónico</label>
+                <div class="input-wrap">
+          <span class="input-icon">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          </span>
+                    <input type="email" id="email" class="form-input" placeholder="tu@correo.com" autocomplete="email">
+                </div>
+                <div class="field-error" id="emailErr">Ingresa un correo válido.</div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="password">Contraseña</label>
+            <div class="input-wrap">
+        <span class="input-icon">
+          <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+        </span>
+                <input type="password" id="password" class="form-input" placeholder="Mínimo 8 caracteres" autocomplete="new-password">
+                <button type="button" class="input-action" id="togglePass">
+                    <svg id="eyeIcon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+            </div>
+            <div class="password-strength">
+                <div class="strength-bar"><div class="strength-fill" id="strengthFill"></div></div>
+                <span class="strength-label" id="strengthLabel">Ingresa una contraseña</span>
+            </div>
+            <div class="field-error" id="passErr">La contraseña debe tener al menos 8 caracteres.</div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="confirmPassword">Confirmar contraseña</label>
+            <div class="input-wrap">
+        <span class="input-icon">
+          <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+        </span>
+                <input type="password" id="confirmPassword" class="form-input" placeholder="Repite tu contraseña" autocomplete="new-password">
+                <button type="button" class="input-action" id="togglePassConfirm">
+                    <svg id="eyeIconConfirm" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+            </div>
+            <div class="field-error" id="confirmErr">Las contraseñas no coinciden.</div>
+        </div>
+
+        <div class="section-divider">Rol en la plataforma</div>
+
+        <div class="form-group">
+            <div class="role-selector" id="roleSelector">
+                <div class="role-option">
+                    <input type="radio" name="role" id="roleStudent" value="3" checked>
+                    <label class="role-label" for="roleStudent">
+                        <div class="role-label-icon">
+                            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                        </div>
+                        <span class="role-label-text">Estudiante</span>
+                    </label>
+                </div>
+                <div class="role-option">
+                    <input type="radio" name="role" id="roleTeacher" value="2">
+                    <label class="role-label" for="roleTeacher">
+                        <div class="role-label-icon">
+                            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+                        </div>
+                        <span class="role-label-text">Docente</span>
+                    </label>
+                </div>
+                <div class="role-option">
+                    <input type="radio" name="role" id="roleAdmin" value="1">
+                    <label class="role-label" for="roleAdmin">
+                        <div class="role-label-icon">
+                            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M20 12h2M2 12h2M19.07 19.07l-1.41-1.41M4.93 19.07l1.41-1.41M12 20v2M12 2v2"/></svg>
+                        </div>
+                        <span class="role-label-text">Admin</span>
+                    </label>
+                </div>
+            </div>
+            <div class="field-error" id="roleErr">Selecciona un rol.</div>
+        </div>
+
+        <label class="terms-row">
+            <input type="checkbox" id="terms">
+            <span class="terms-text">Acepto los <a href="#">Términos de Uso</a> y la <a href="#">Política de Privacidad</a> de EducaT.</span>
+        </label>
+
+        <button class="btn-submit" id="registerBtn" type="button">
+            <span class="btn-text">Crear mi cuenta</span>
+            <div class="btn-loader"></div>
+        </button>
+    </div>
+</div>
+
+<script src="/js/register.js"></script>
+</body>
+</html>
