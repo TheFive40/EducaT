@@ -414,3 +414,123 @@ textarea.form-input{resize:vertical;min-height:100px}
     .submission-grade-display{flex-direction:column;gap:12px}
     .submission-grade-sep{display:none}
 }
+/* ─── Submission status actions (Editar / Reenviar / Eliminar) ─────────────── */
+.submission-status-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap; /* allows actions to wrap on narrow screens */
+}
+
+.submission-status-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.sub-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    font-family: inherit;
+    white-space: nowrap;
+}
+
+.sub-action-btn.edit {
+    background: rgba(11, 31, 58, 0.06);
+    color: var(--text-body);
+    border-color: rgba(11, 31, 58, 0.12);
+}
+.sub-action-btn.edit:hover {
+    background: rgba(11, 31, 58, 0.11);
+    border-color: rgba(11, 31, 58, 0.2);
+}
+
+.sub-action-btn.resubmit {
+    background: rgba(42, 157, 143, 0.08);
+    color: var(--teal);
+    border-color: rgba(42, 157, 143, 0.25);
+}
+.sub-action-btn.resubmit:hover {
+    background: rgba(42, 157, 143, 0.15);
+}
+
+.sub-action-btn.delete {
+    background: rgba(192, 57, 43, 0.07);
+    color: var(--error, #c0392b);
+    border-color: rgba(192, 57, 43, 0.2);
+}
+.sub-action-btn.delete:hover {
+    background: rgba(192, 57, 43, 0.14);
+}
+
+/* ─── Collapsible student comment ──────────────────────────────────────────── */
+.sub-comment-toggle {
+    margin-top: 12px;
+    border: 1px solid rgba(11, 31, 58, 0.09);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--cream, #faf9f6);
+}
+
+.sub-comment-toggle-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 13px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text-body);
+    font-family: inherit;
+    transition: background 0.13s;
+}
+.sub-comment-toggle-btn:hover {
+    background: rgba(11, 31, 58, 0.04);
+}
+
+.sub-comment-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 20px;
+    background: var(--navy, #0b1f3a);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.sub-comment-chevron {
+    display: flex;
+    align-items: center;
+    transition: transform 0.2s ease;
+    color: var(--text-muted);
+}
+
+.sub-comment-body {
+    padding: 10px 13px 12px;
+    border-top: 1px solid rgba(11, 31, 58, 0.07);
+}
+
+.sub-comment-text {
+    font-size: 13px;
+    color: var(--text-body);
+    line-height: 1.65;
+    white-space: pre-wrap;
+}

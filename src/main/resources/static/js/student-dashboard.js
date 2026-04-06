@@ -614,13 +614,35 @@ function renderUnitTabs() {
     </button>`).join('');
 }
 
+/* ─── Submission section ─────────────────────────────────────────────────── */
 function renderSubmissionSection(actId, sub) {
     const iconFile = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
     const iconSend = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
     const iconCheck = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`;
     const iconStar = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+    const iconEdit = `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4z"/></svg>`;
+    const iconTrash = `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>`;
+    const iconRefresh = `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>`;
+    const iconMsg = `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>`;
+    const iconChevron = `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>`;
 
+    /* Helper: collapsible comment block */
+    function commentToggle(comment, uid) {
+        if (!comment) return '';
+        return `<div class="sub-comment-toggle" id="sct-wrap-${uid}">
+          <button class="sub-comment-toggle-btn" onclick="toggleSubComment('${uid}')">
+            <span style="display:flex;align-items:center;gap:6px">${iconMsg} Comentario del estudiante <span class="sub-comment-count">1</span></span>
+            <span class="sub-comment-chevron" id="sct-chev-${uid}">${iconChevron}</span>
+          </button>
+          <div class="sub-comment-body" id="sct-body-${uid}" style="display:none">
+            <div class="sub-comment-text">${comment}</div>
+          </div>
+        </div>`;
+    }
+
+    /* ── CALIFICADO ── */
     if (sub && sub.graded) {
+        const uid = 'graded-' + actId;
         return `<div class="submission-status-bar graded" style="margin-top:18px">
           <div class="submission-status-icon">${iconStar}</div>
           <div class="submission-status-info">
@@ -636,23 +658,52 @@ function renderSubmissionSection(actId, sub) {
             <div class="submission-grade-comment">${sub.feedback || 'Sin comentarios adicionales.'}</div>
           </div>
         </div>
-        ${sub.comment ? `<div class="student-comment-display"><div class="student-comment-label">Tu comentario</div><div class="student-comment-text">${sub.comment}</div></div>` : ''}`;
+        ${commentToggle(sub.comment, uid)}`;
     }
 
+    /* ── MODO EDICIÓN ── */
+    if (sub && sub.editing) {
+        return `<div class="submission-upload-section" style="margin-top:18px">
+          <div class="submission-section-title">
+            <span>Editar Entrega</span>
+            <span class="badge badge-gold">Editando</span>
+          </div>
+          <textarea class="submission-comment-input" id="sub-comment-${actId}" placeholder="Comentario para el docente (opcional)...">${sub.prevComment || ''}</textarea>
+          <div class="submission-file-drop" id="sub-drop-${actId}" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleSubDrop(event,${actId})">
+            <input type="file" multiple onchange="handleSubFile(event,${actId})">
+            <div class="submission-file-drop-text">Arrastra archivos aquí o haz clic para seleccionar</div>
+            <div class="submission-file-drop-sub">PDF, imágenes, documentos Word</div>
+          </div>
+          <div id="sub-files-${actId}"></div>
+          <div class="submission-actions" style="gap:8px">
+            <button class="btn btn-teal" onclick="submitActivity(${actId})">${iconSend} Guardar cambios</button>
+            <button class="btn btn-outline btn-sm" onclick="cancelEditSubmission(${actId})" style="background:transparent">Cancelar</button>
+          </div>
+        </div>`;
+    }
+
+    /* ── ENTREGADO (pendiente de calificación) ── */
     if (sub && sub.submitted) {
         const submittedDate = new Date(sub.submittedAt).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const uid = 'sub-' + actId;
         return `<div class="submission-status-bar submitted" style="margin-top:18px">
           <div class="submission-status-icon">${iconCheck}</div>
           <div class="submission-status-info">
             <div class="submission-status-label">Entrega realizada</div>
             <div class="submission-status-detail">Enviado el ${submittedDate} — Pendiente de calificación</div>
           </div>
+          <div class="submission-status-actions">
+            <button class="sub-action-btn edit" onclick="editSubmission(${actId})" title="Editar comentario o archivos">${iconEdit} Editar</button>
+            <button class="sub-action-btn resubmit" onclick="resubmitActivity(${actId})" title="Volver a entregar">${iconRefresh} Reenviar</button>
+            <button class="sub-action-btn delete" onclick="deleteSubmission(${actId})" title="Eliminar entrega">${iconTrash} Eliminar</button>
+          </div>
         </div>
-        ${sub.comment ? `<div class="student-comment-display"><div class="student-comment-label">Tu comentario</div><div class="student-comment-text">${sub.comment}</div></div>` : ''}
+        ${commentToggle(sub.comment, uid)}
         ${sub.files && sub.files.length ? `<div class="announcement-section-label" style="margin-top:12px">Archivos enviados</div>
         <div class="attachment-list">${sub.files.map(f => `<div class="attachment-item"><div class="attachment-icon doc">${iconFile}</div><span class="attachment-name">${f.name}</span><span class="attachment-meta">${(f.size / 1024).toFixed(0)} KB</span></div>`).join('')}</div>` : ''}`;
     }
 
+    /* ── SIN ENVIAR ── */
     return `<div class="submission-upload-section" style="margin-top:18px">
       <div class="submission-section-title">
         <span>Entregar Actividad</span>
@@ -669,6 +720,47 @@ function renderSubmissionSection(actId, sub) {
         <button class="btn btn-teal" onclick="submitActivity(${actId})">${iconSend} Enviar entrega</button>
       </div>
     </div>`;
+}
+
+/* ── Toggles / CRUD de entregas ─────────────────────────────────────────── */
+function toggleSubComment(uid) {
+    const body = document.getElementById('sct-body-' + uid);
+    const chev = document.getElementById('sct-chev-' + uid);
+    if (!body) return;
+    const isOpen = body.style.display !== 'none';
+    body.style.display = isOpen ? 'none' : 'block';
+    if (chev) chev.style.transform = isOpen ? '' : 'rotate(180deg)';
+}
+
+function deleteSubmission(actId) {
+    if (!confirm('¿Seguro que deseas eliminar esta entrega? Esta acción no se puede deshacer.')) return;
+    const sid = currentStudent ? currentStudent.id : 1;
+    localStorage.removeItem('educat_sub_' + sid + '_' + actId);
+    showToast('Entrega eliminada');
+    renderUnit(currentUnitIdx);
+}
+
+function editSubmission(actId) {
+    const sub = getSubmission(actId);
+    if (!sub) return;
+    saveSubmission(actId, { ...sub, editing: true, prevComment: sub.comment });
+    renderUnit(currentUnitIdx);
+}
+
+function cancelEditSubmission(actId) {
+    const sub = getSubmission(actId);
+    if (!sub) return;
+    // Remove editing flag, restore original state
+    const { editing, prevComment, ...rest } = sub;
+    saveSubmission(actId, rest);
+    renderUnit(currentUnitIdx);
+}
+
+function resubmitActivity(actId) {
+    const sub = getSubmission(actId);
+    if (!sub) return;
+    saveSubmission(actId, { ...sub, editing: true, prevComment: sub.comment });
+    renderUnit(currentUnitIdx);
 }
 
 function handleSubFile(event, actId) {
@@ -711,12 +803,17 @@ function removeSubFile(actId, idx) {
 function submitActivity(actId) {
     const comment = (document.getElementById('sub-comment-' + actId) || {}).value || '';
     const files = actSubmissionFiles[actId] || [];
+    const existing = getSubmission(actId);
+    // Merge files: keep previously submitted files if editing and no new files provided
+    let finalFiles = files.map(f => ({ name: f.name, size: f.size }));
+    if (!finalFiles.length && existing && existing.files) finalFiles = existing.files;
     saveSubmission(actId, {
         submitted: true,
         submittedAt: new Date().toISOString(),
         comment,
-        files: files.map(f => ({ name: f.name, size: f.size })),
-        graded: false
+        files: finalFiles,
+        graded: false,
+        editing: false
     });
     delete actSubmissionFiles[actId];
     showToast('Actividad entregada correctamente', 'success');
@@ -797,7 +894,7 @@ function renderUnit(idx) {
         const sub = getSubmission(a.id);
         const cid = `act-${a.id}-${currentCourse.id}`;
         const isGraded = sub && sub.graded;
-        const isSubmitted = sub && sub.submitted;
+        const isSubmitted = sub && sub.submitted && !sub.editing;
         const statusBadge = isGraded
             ? `<span class="badge badge-gold">Calificado: ${sub.grade}/10</span>`
             : isSubmitted
