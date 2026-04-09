@@ -30,10 +30,10 @@ const MOCK = {
         { id: 5, student: { id: 5, studentCode: 'EST-2024-105', user: { name: 'Daniela Martínez Soto' } }, course: { id: 1 }, grade: 8.0, description: 'Muy bien' },
     ],
     activities: [
-        { id: 1, course: { id: 1 }, title: 'Taller: Matrices y Determinantes', description: 'Resolver los ejercicios de matrices 3×3 del capítulo 2. Presenta el procedimiento completo con cada operación detallada paso a paso.\n\nCriterios de evaluación:\n• Procedimiento correcto: 50%\n• Resultados: 30%\n• Presentación: 20%', dueDate: '2025-04-15', attachments: [{ name: 'Guía de Ejercicios Cap.2.pdf', type: 'pdf', url: '#' }] },
-        { id: 2, course: { id: 1 }, title: 'Taller: Derivadas Implícitas', description: 'Aplicación de reglas de derivación en funciones implícitas y paramétricas. Incluye resolución de problemas de optimización con justificación completa.', dueDate: '2025-04-22', attachments: [] },
-        { id: 3, course: { id: 2 }, title: 'Ensayo Literario', description: 'Análisis temático y estilístico de "Cien años de soledad". Mínimo 3 páginas, máximo 5.', dueDate: '2025-04-18', attachments: [{ name: 'Rúbrica de evaluación.pdf', type: 'pdf', url: '#' }] },
-        { id: 4, course: { id: 3 }, title: 'Informe de Laboratorio', description: 'Informe completo del experimento de reacciones ácido-base. Incluye: objetivo, marco teórico, materiales, procedimiento, tabla de datos y conclusiones.', dueDate: '2025-04-20', attachments: [] },
+        { id: 1, course: { id: 1 }, title: 'Taller: Matrices y Determinantes', description: 'Resolver los ejercicios de matrices 3×3 del capítulo 2. Presenta el procedimiento completo con cada operación detallada paso a paso.\n\nCriterios de evaluación:\n• Procedimiento correcto: 50%\n• Resultados: 30%\n• Presentación: 20%', dueDate: '2025-04-15', attachments: [{ name: 'Guía de Ejercicios Cap.2.pdf', type: 'pdf', url: '#' }], materials: [] },
+        { id: 2, course: { id: 1 }, title: 'Taller: Derivadas Implícitas', description: 'Aplicación de reglas de derivación en funciones implícitas y paramétricas. Incluye resolución de problemas de optimización con justificación completa.', dueDate: '2025-04-22', attachments: [], materials: [] },
+        { id: 3, course: { id: 2 }, title: 'Ensayo Literario', description: 'Análisis temático y estilístico de "Cien años de soledad". Mínimo 3 páginas, máximo 5.', dueDate: '2025-04-18', attachments: [{ name: 'Rúbrica de evaluación.pdf', type: 'pdf', url: '#' }], materials: [] },
+        { id: 4, course: { id: 3 }, title: 'Informe de Laboratorio', description: 'Informe completo del experimento de reacciones ácido-base. Incluye: objetivo, marco teórico, materiales, procedimiento, tabla de datos y conclusiones.', dueDate: '2025-04-20', attachments: [], materials: [] },
     ],
     exams: [
         { id: 1, course: { id: 1 }, title: 'Parcial I — Álgebra Lineal', examDate: '2025-04-20', description: 'Temas: vectores, matrices, sistemas de ecuaciones y transformaciones lineales. Duración: 2 horas.' },
@@ -57,7 +57,7 @@ const DEFAULT_UNITS = {
             description: 'Vectores en espacios n-dimensionales, matrices y operaciones, sistemas de ecuaciones lineales y resolución mediante eliminación gaussiana, transformaciones lineales y sus propiedades.',
             announcements: [
                 { id: 'a1', title: 'Entrega del Taller de Matrices', content: 'Recuerden que el taller de matrices debe entregarse antes del viernes a las 11:59 p.m.\n\nFormato de entrega: PDF con nombre Apellido_Taller1.pdf. Subir a la plataforma o enviar al correo institucional si hay inconvenientes técnicos.', date: '2025-04-01', attachments: [] },
-                { id: 'a2', title: 'Quiz sorpresa — próxima clase', content: 'Habrá un quiz corto de 10 minutos al inicio de la próxima clase sobre operaciones matriciales.\n\nTemas a repasar:\n• Suma y resta de matrices\n• Multiplicación de matrices\n• Transpuesta e inversa\n• Determinante 2×2 y 3×3', date: '2025-04-03', attachments: [] },
+                { id: 'a2', title: 'Quiz sorpresa — próxima clase', content: 'Habrá un quiz corto de 10 minutos al inicio de la próxima clase sobre operaciones matriciales.\n\nTemas a repasar:\n• Suma y resta de matrices\n• Multiplicación de matrices\n• Transpuesta e inversa\n• Determinante 2×2 y 3×3\n\nEl quiz cuenta como nota de participación.', date: '2025-04-03', attachments: [] },
             ],
             activities: [1], exams: [1],
             resources: [
@@ -117,6 +117,119 @@ const DEFAULT_UNITS = {
 
 function getAuth() { return localStorage.getItem('educat_auth') || sessionStorage.getItem('educat_auth'); }
 function getEmail() { return localStorage.getItem('educat_email') || sessionStorage.getItem('educat_email'); }
+
+/* ─── Modal file attachment helpers ─────────────────────────────────────────── */
+const modalFiles = {};
+
+function handleModalFile(event, key) {
+    if (!modalFiles[key]) modalFiles[key] = [];
+    Array.from(event.target.files).forEach(f => {
+        if (!modalFiles[key].find(x => x.name === f.name)) modalFiles[key].push(f);
+    });
+    renderModalFiles(key);
+    event.target.value = '';
+}
+
+function handleModalDrop(event, key) {
+    event.preventDefault();
+    const dropEl = document.getElementById('mdrop-' + key);
+    if (dropEl) dropEl.classList.remove('drag-over');
+    if (!modalFiles[key]) modalFiles[key] = [];
+    Array.from(event.dataTransfer.files).forEach(f => {
+        if (!modalFiles[key].find(x => x.name === f.name)) modalFiles[key].push(f);
+    });
+    renderModalFiles(key);
+}
+
+function removeModalFile(key, idx) {
+    if (modalFiles[key]) { modalFiles[key].splice(idx, 1); renderModalFiles(key); }
+}
+
+function renderModalFiles(key) {
+    const list = document.getElementById('mfiles-' + key);
+    if (!list) return;
+    const files = modalFiles[key] || [];
+    const IFILE = `<svg width="13" height="13" fill="none" stroke="var(--teal)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+    const IIMG  = `<svg width="13" height="13" fill="none" stroke="var(--teal)" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+    const IVID  = `<svg width="13" height="13" fill="none" stroke="var(--gold)" stroke-width="2" viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>`;
+    list.innerHTML = files.map((f, i) => {
+        const isImg = f.type && f.type.startsWith('image/');
+        const isVid = f.type && f.type.startsWith('video/');
+        const icon  = isImg ? IIMG : isVid ? IVID : IFILE;
+        return `<div class="file-chip">
+            ${icon}
+            <span class="file-chip-name">${f.name}</span>
+            <span class="file-chip-size">${(f.size / 1024).toFixed(0)} KB</span>
+            <button class="file-chip-remove" onclick="removeModalFile('${key}',${i})">
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>`;
+    }).join('');
+}
+
+function clearModalFiles(key) { delete modalFiles[key]; }
+
+function getModalAttachments(key, existingAttachments) {
+    const files = modalFiles[key] || [];
+    const newAtts = files.map(f => ({
+        name: f.name,
+        size: f.size,
+        type: (f.type && f.type.startsWith('image/')) ? 'img'
+            : (f.type && f.type.startsWith('video/')) ? 'video'
+                : f.name.endsWith('.pdf') ? 'pdf' : 'doc',
+        url: '#'
+    }));
+    return [...(existingAttachments || []), ...newAtts];
+}
+
+function modalDropArea(key, label) {
+    return `<div class="file-drop-area" id="mdrop-${key}" style="padding:16px"
+            ondragover="event.preventDefault();document.getElementById('mdrop-${key}').classList.add('drag-over')"
+            ondragleave="document.getElementById('mdrop-${key}').classList.remove('drag-over')"
+            ondrop="handleModalDrop(event,'${key}')">
+        <input type="file" multiple accept="image/*,video/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
+               onchange="handleModalFile(event,'${key}')">
+        <div class="file-drop-icon">
+            <svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div class="file-drop-text" style="font-size:13px">${label || 'Arrastra archivos o haz clic para seleccionar'}</div>
+        <div class="file-drop-sub">Imágenes, videos, PDF, Word, PowerPoint</div>
+    </div>
+    <div class="file-list" id="mfiles-${key}" style="margin-top:8px"></div>`;
+}
+
+function renderExistingAttachments(attachments, key, unitIdx, annIdx) {
+    if (!attachments || !attachments.length) return '';
+    const IFILE = `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+    return `<div style="font-size:10.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;margin-top:4px">Archivos existentes</div>
+    <div class="attachment-list" style="margin-bottom:10px">
+        ${attachments.map((at, i) => `<div class="attachment-item" id="exatt-${key}-${i}">
+            <div class="attachment-icon ${at.type || 'doc'}">${IFILE}</div>
+            <span class="attachment-name">${at.name}</span>
+            <button class="attachment-remove" onclick="removeExistingAttachment('${key}',${unitIdx},${annIdx !== undefined ? annIdx : -1},${i})" title="Eliminar">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>`).join('')}
+    </div>`;
+}
+
+function removeExistingAttachment(key, unitIdx, annIdx, attIdx) {
+    const units = getUnits(currentCourse.id);
+    if (annIdx >= 0) {
+        // announcement attachment
+        const ann = units[unitIdx].announcements[annIdx];
+        if (ann && Array.isArray(ann.attachments)) {
+            ann.attachments.splice(attIdx, 1);
+            saveUnits(currentCourse.id, units);
+        }
+    } else {
+        // could extend for activities
+    }
+    const el = document.getElementById('exatt-' + key + '-' + attIdx);
+    if (el) el.remove();
+}
+
+/* ─── END modal file helpers ─────────────────────────────────────────────────── */
 
 async function apiFetch(url, opts = {}) {
     const headers = { 'Authorization': 'Basic ' + authHeader, 'Content-Type': 'application/json', ...opts.headers };
@@ -473,19 +586,19 @@ function renderSubmissionsList() {
         return;
     }
     const IFILE = `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
-const ICH = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>`;
-body.innerHTML = rows.map(r => {
-    const { student, sub, state } = r;
-    const initials = getInitials(student.user.name);
-    const dateStr = sub && sub.submittedAt ? new Date(sub.submittedAt).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
-    let statusHtml = '';
-    if (state === 'missing') {
-        statusHtml = `<div class="submission-status-bar no-submit" style="margin:0 20px 16px">
+    const ICH = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>`;
+    body.innerHTML = rows.map(r => {
+        const { student, sub, state } = r;
+        const initials = getInitials(student.user.name);
+        const dateStr = sub && sub.submittedAt ? new Date(sub.submittedAt).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+        let statusHtml = '';
+        if (state === 'missing') {
+            statusHtml = `<div class="submission-status-bar no-submit" style="margin:0 20px 16px">
                 <div class="submission-status-icon"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
                 <div class="submission-status-info"><div class="submission-status-label">Sin entregar</div><div class="submission-status-detail">El estudiante no ha realizado ninguna entrega.</div></div>
             </div>`;
-    } else if (state === 'graded') {
-        statusHtml = `<div style="margin:0 20px 16px">
+        } else if (state === 'graded') {
+            statusHtml = `<div style="margin:0 20px 16px">
                 <div class="submission-grade-display">
                     <div class="submission-grade-num">${sub.grade}</div>
                     <div class="submission-grade-sep"></div>
@@ -496,8 +609,8 @@ body.innerHTML = rows.map(r => {
                 </div>
                 <button class="grade-btn view" onclick="openGradeModal(${actId},${student.id})">Editar calificación</button>
             </div>`;
-    } else {
-        statusHtml = `<div style="margin:0 20px 16px">
+        } else {
+            statusHtml = `<div style="margin:0 20px 16px">
                 <div class="submission-status-bar submitted" style="margin-bottom:12px">
                     <div class="submission-status-icon"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
                     <div class="submission-status-info"><div class="submission-status-label">Entrega recibida</div><div class="submission-status-detail">Enviado el ${dateStr}</div></div>
@@ -511,17 +624,17 @@ body.innerHTML = rows.map(r => {
                     Guardar calificación
                 </button>
             </div>`;
-    }
-    const filesHtml = sub && sub.files && sub.files.length ? `<div style="padding:0 20px 14px">
+        }
+        const filesHtml = sub && sub.files && sub.files.length ? `<div style="padding:0 20px 14px">
             <div style="font-size:10.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px">Archivos enviados</div>
             <div class="attachment-list">${sub.files.map(f => `<div class="attachment-item"><div class="attachment-icon doc">${IFILE}</div><span class="attachment-name">${f.name}</span><span class="attachment-meta">${(f.size / 1024).toFixed(0)} KB</span></div>`).join('')}</div>
         </div>` : '';
-    const commentHtml = sub && sub.comment ? `<div style="padding:0 20px 14px">
+        const commentHtml = sub && sub.comment ? `<div style="padding:0 20px 14px">
             <div style="font-size:10.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px">Comentario del estudiante</div>
             <div style="background:var(--cream);border-radius:8px;padding:12px 14px;border-left:3px solid var(--gold);font-size:13px;color:var(--text-body);line-height:1.65;white-space:pre-line">${sub.comment}</div>
         </div>` : '';
-    const isOpen = state === 'pending';
-    return `<div class="activity-card ${isOpen ? 'open' : ''}" id="subrow-${student.id}" style="margin:0;border-radius:0;border-left:none;border-right:none;border-top:none">
+        const isOpen = state === 'pending';
+        return `<div class="activity-card ${isOpen ? 'open' : ''}" id="subrow-${student.id}" style="margin:0;border-radius:0;border-left:none;border-right:none;border-top:none">
             <div class="activity-card-header" onclick="toggleCard('subrow-${student.id}')">
                 <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--navy-light),var(--teal));display:flex;align-items:center;justify-content:center;font-family:'Cormorant Garamond',serif;font-size:14px;font-weight:700;color:#fff;flex-shrink:0;margin-top:1px">${initials}</div>
                 <div class="activity-header-meta">
@@ -537,7 +650,7 @@ body.innerHTML = rows.map(r => {
                 ${commentHtml}${filesHtml}${statusHtml}
             </div>
         </div>`;
-}).join('');
+    }).join('');
 }
 
 function saveGradeFromView(actId, studentId) {
@@ -734,7 +847,6 @@ function renderAttBody(students, courseId, date) {
 }
 
 function toggleAtt(sid, courseId, date) { attState[sid] = !attState[sid]; renderAttBody(MOCK.students, courseId, date); }
-
 function markAll(courseId, date, val) { MOCK.students.forEach(s => attState[s.id] = val); renderAttBody(MOCK.students, courseId, date); }
 
 function saveAttendance(courseId, date) {
@@ -989,6 +1101,23 @@ function renderUnit(idx) {
     const IPLUS = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
     const IVID = `<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>`;
     const ILINK = `<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>`;
+    const IIMG = `<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>`;
+
+    /* Helper: render attachment list for a given array */
+    function attachmentsHtml(atts) {
+        if (!atts || !atts.length) return '';
+        const iconMap = {
+            pdf: `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
+            doc: `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
+            img: `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`,
+            video: `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>`,
+        };
+        return `<div class="attachment-list">${atts.map(at => `<div class="attachment-item">
+            <div class="attachment-icon ${at.type || 'doc'}">${iconMap[at.type] || iconMap.doc}</div>
+            <span class="attachment-name">${at.name}</span>
+            <a class="attachment-download" href="${at.url || '#'}" target="_blank">${ICLIP} Abrir</a>
+        </div>`).join('')}</div>`;
+    }
 
     contentArea.innerHTML = `
     <div class="unit-welcome">
@@ -1008,6 +1137,7 @@ function renderUnit(idx) {
         <p style="font-size:14px;line-height:1.75;color:var(--text-body)">${unit.description || 'Sin descripción. Edita la unidad para agregar una.'}</p>
     </div>
 
+    <!-- ── ANUNCIOS ── -->
     <div class="card" style="margin-bottom:20px">
         <div class="card-header">
             <span class="card-title">Anuncios</span>
@@ -1016,13 +1146,13 @@ function renderUnit(idx) {
                 <button class="btn btn-sm btn-outline" onclick="addAnnouncementModal(${idx})">${IPLUS} Agregar</button>
             </div>
         </div>
-        <div class="card-body" id="announcementsBody">
+        <div class="card-body" style="${announcements.length ? 'padding:0' : ''}">
             ${announcements.length ? announcements.map((a, ai) => {
         const isObj = typeof a === 'object' && a !== null;
         const title = isObj ? (a.title || 'Anuncio') : String(a).slice(0, 80);
         const content = isObj ? (a.content || '') : String(a);
         const dateStr = isObj && a.date ? new Date(a.date + 'T00:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
-        const attachments = isObj && Array.isArray(a.attachments) ? a.attachments : [];
+        const atts = isObj && Array.isArray(a.attachments) ? a.attachments : [];
         const cid = `ann-t-${currentCourse.id}-${idx}-${ai}`;
         return `<div class="announcement-card" id="${cid}">
                     <div class="announcement-card-header" onclick="toggleCard('${cid}')">
@@ -1040,18 +1170,14 @@ function renderUnit(idx) {
                     </div>
                     <div class="announcement-card-body">
                         <div class="announcement-full-text">${content}</div>
-                        ${attachments.length ? `<div class="announcement-section-label">Archivos adjuntos</div>
-                        <div class="attachment-list">${attachments.map(at => `<div class="attachment-item">
-                            <div class="attachment-icon ${at.type || 'doc'}">${IFILE}</div>
-                            <span class="attachment-name">${at.name}</span>
-                            <a class="attachment-download" href="${at.url || '#'}" target="_blank">${ICLIP} Descargar</a>
-                        </div>`).join('')}</div>` : ''}
+                        ${atts.length ? `<div class="announcement-section-label" style="margin-top:14px">Archivos adjuntos</div>${attachmentsHtml(atts)}` : ''}
                     </div>
                 </div>`;
-    }).join('') : '<div style="color:var(--text-muted);font-size:13px">Sin anuncios para esta unidad.</div>'}
+    }).join('') : '<div style="color:var(--text-muted);font-size:13px;padding:4px 0">Sin anuncios para esta unidad.</div>'}
         </div>
     </div>
 
+    <!-- ── TALLERES ── -->
     <div class="card" style="margin-bottom:20px">
         <div class="card-header">
             <span class="card-title">Talleres y Actividades</span>
@@ -1064,6 +1190,7 @@ function renderUnit(idx) {
             ${acts.length ? acts.map((a, i) => {
         const pending = MOCK.students.filter(s => { const sub = getStudentSubmission(s.id, a.id); return sub && sub.submitted && !sub.graded; }).length;
         const cid = `act-t-${a.id}-${currentCourse.id}`;
+        const mats = a.materials || [];
         return `<div class="activity-card" id="${cid}" style="margin-bottom:10px">
                     <div class="activity-card-header" onclick="toggleCard('${cid}')">
                         <div class="activity-num">${i + 1}</div>
@@ -1083,11 +1210,8 @@ function renderUnit(idx) {
                     </div>
                     <div class="activity-card-body">
                         ${a.description ? `<div class="activity-description">${a.description}</div>` : ''}
-                        ${a.attachments && a.attachments.length ? `<div class="announcement-section-label" style="margin-top:12px">Archivos adjuntos</div>
-                        <div class="attachment-list">${a.attachments.map(at => `<div class="attachment-item">
-                            <div class="attachment-icon ${at.type || 'doc'}">${IFILE}</div>
-                            <span class="attachment-name">${at.name}</span>
-                        </div>`).join('')}</div>` : ''}
+                        ${a.attachments && a.attachments.length ? `<div class="announcement-section-label" style="margin-top:14px">Archivos adjuntos para el estudiante</div>${attachmentsHtml(a.attachments)}` : ''}
+                        ${mats.length ? `<div class="announcement-section-label" style="margin-top:14px">Bibliografía y material de apoyo</div>${attachmentsHtml(mats)}` : ''}
                         <div style="margin-top:14px;display:flex;gap:8px">
                             <button class="btn btn-sm btn-teal" onclick="openActivitySubmissions(${a.id})">
                                 <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -1101,6 +1225,7 @@ function renderUnit(idx) {
         </div>
     </div>
 
+    <!-- ── EVALUACIONES ── -->
     <div class="card" style="margin-bottom:20px">
         <div class="card-header">
             <span class="card-title">Evaluaciones</span>
@@ -1128,6 +1253,7 @@ function renderUnit(idx) {
         </div>
     </div>
 
+    <!-- ── RECURSOS ── -->
     <div class="card" style="margin-bottom:20px">
         <div class="card-header">
             <span class="card-title">Bibliografía y Recursos</span>
@@ -1138,7 +1264,7 @@ function renderUnit(idx) {
         </div>
         <div class="card-body">
             ${resources.map((r, ri) => `<div class="resource-card-item" style="cursor:default">
-                <div class="resource-icon ${r.type || 'doc'}"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${r.type === 'video' ? IVID : r.type === 'link' ? ILINK : '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>'}</svg></div>
+                <div class="resource-icon ${r.type || 'doc'}"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${r.type === 'video' ? IVID : r.type === 'link' ? ILINK : r.type === 'img' ? IIMG : '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>'}</svg></div>
                 <span class="resource-name">${r.name}</span>
                 <span class="resource-type">${(r.type || 'doc').toUpperCase()}</span>
                 <button class="btn-icon del" onclick="removeResource(${idx},${ri})" title="Eliminar">${IDEL}</button>
@@ -1148,6 +1274,9 @@ function renderUnit(idx) {
     </div>`;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   UNIT CRUD
+═══════════════════════════════════════════════════════════════════════════ */
 function addUnitModal() {
     openModal('Nueva Unidad', `
         <div class="form-group"><label class="form-label">Nombre de la unidad</label><input type="text" class="form-input" id="mUnitName" placeholder="Ej: Unidad 1 — Álgebra Lineal"></div>
@@ -1197,101 +1326,258 @@ function deleteUnitConfirm(idx) {
     showToast('Unidad eliminada');
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANNOUNCEMENT CRUD  (with file attachments)
+═══════════════════════════════════════════════════════════════════════════ */
 function addAnnouncementModal(unitIdx) {
+    const key = 'ann-new-' + unitIdx;
+    clearModalFiles(key);
     openModal('Nuevo Anuncio', `
-        <div class="form-group"><label class="form-label">Título del anuncio</label><input type="text" class="form-input" id="mAnnTitle" placeholder="Ej: Recordatorio de entrega"></div>
-        <div class="form-group"><label class="form-label">Contenido</label><textarea class="form-input" id="mAnnContent" placeholder="Escribe el anuncio para los estudiantes..." style="min-height:120px"></textarea></div>
-        <div class="form-group"><label class="form-label">Fecha</label><input type="date" class="form-input" id="mAnnDate" value="${new Date().toISOString().split('T')[0]}"></div>
-        <button class="btn btn-teal" style="width:100%" onclick="saveAnnouncement(${unitIdx})">Publicar anuncio</button>`);
+        <div class="form-group">
+            <label class="form-label">Título del anuncio</label>
+            <input type="text" class="form-input" id="mAnnTitle" placeholder="Ej: Recordatorio de entrega">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Contenido</label>
+            <textarea class="form-input" id="mAnnContent"
+                placeholder="Escribe el anuncio completo para los estudiantes. Puedes incluir instrucciones, recordatorios, aclaraciones, etc."
+                style="min-height:160px"></textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Fecha</label>
+            <input type="date" class="form-input" id="mAnnDate" value="${new Date().toISOString().split('T')[0]}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Archivos adjuntos <span style="font-weight:400;color:var(--text-muted)">(imágenes, videos, PDFs, documentos)</span></label>
+            ${modalDropArea(key, 'Arrastra imágenes, videos o documentos aquí')}
+        </div>
+        <button class="btn btn-teal" style="width:100%" onclick="saveAnnouncement(${unitIdx},'${key}')">Publicar anuncio</button>`);
 }
 
-function saveAnnouncement(unitIdx) {
+function saveAnnouncement(unitIdx, key) {
     const title = document.getElementById('mAnnTitle').value.trim();
     const content = document.getElementById('mAnnContent').value.trim();
     if (!title || !content) { showToast('Título y contenido son obligatorios', 'error'); return; }
+    const attachments = getModalAttachments(key, []);
     const units = getUnits(currentCourse.id);
     units[unitIdx].announcements = units[unitIdx].announcements || [];
-    units[unitIdx].announcements.push({ id: 'a' + Date.now(), title, content, date: document.getElementById('mAnnDate').value, attachments: [] });
+    units[unitIdx].announcements.push({
+        id: 'a' + Date.now(),
+        title,
+        content,
+        date: document.getElementById('mAnnDate').value,
+        attachments
+    });
     saveUnits(currentCourse.id, units);
-    closeModal(); renderUnit(unitIdx); showToast('Anuncio publicado', 'success');
+    clearModalFiles(key);
+    closeModal();
+    renderUnit(unitIdx);
+    showToast('Anuncio publicado', 'success');
 }
 
 function editAnnouncementModal(unitIdx, annIdx) {
     const units = getUnits(currentCourse.id);
     const a = units[unitIdx].announcements[annIdx];
     const isObj = typeof a === 'object' && a !== null;
+    const key = 'ann-edit-' + unitIdx + '-' + annIdx;
+    clearModalFiles(key);
+    const existingAtts = isObj && Array.isArray(a.attachments) ? a.attachments : [];
     openModal('Editar Anuncio', `
-        <div class="form-group"><label class="form-label">Título</label><input type="text" class="form-input" id="mAnnTitle" value="${isObj ? (a.title || '') : ''}"></div>
-        <div class="form-group"><label class="form-label">Contenido</label><textarea class="form-input" id="mAnnContent" style="min-height:120px">${isObj ? (a.content || a) : String(a)}</textarea></div>
-        <div class="form-group"><label class="form-label">Fecha</label><input type="date" class="form-input" id="mAnnDate" value="${isObj && a.date ? a.date : new Date().toISOString().split('T')[0]}"></div>
-        <button class="btn btn-teal" style="width:100%" onclick="updateAnnouncement(${unitIdx},${annIdx})">Guardar cambios</button>`);
+        <div class="form-group">
+            <label class="form-label">Título</label>
+            <input type="text" class="form-input" id="mAnnTitle" value="${isObj ? (a.title || '') : ''}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Contenido</label>
+            <textarea class="form-input" id="mAnnContent"
+                style="min-height:160px">${isObj ? (a.content || String(a)) : String(a)}</textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Fecha</label>
+            <input type="date" class="form-input" id="mAnnDate" value="${isObj && a.date ? a.date : new Date().toISOString().split('T')[0]}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Archivos adjuntos</label>
+            ${renderExistingAttachments(existingAtts, key, unitIdx, annIdx)}
+            ${modalDropArea(key, 'Agregar nuevos archivos')}
+        </div>
+        <button class="btn btn-teal" style="width:100%" onclick="updateAnnouncement(${unitIdx},${annIdx},'${key}')">Guardar cambios</button>`);
 }
 
-function updateAnnouncement(unitIdx, annIdx) {
+function updateAnnouncement(unitIdx, annIdx, key) {
     const title = document.getElementById('mAnnTitle').value.trim();
     const content = document.getElementById('mAnnContent').value.trim();
     if (!title || !content) { showToast('Título y contenido son obligatorios', 'error'); return; }
     const units = getUnits(currentCourse.id);
     const existing = units[unitIdx].announcements[annIdx];
     const isObj = typeof existing === 'object' && existing !== null;
-    units[unitIdx].announcements[annIdx] = { ...(isObj ? existing : {}), title, content, date: document.getElementById('mAnnDate').value };
+    // Merge: keep existing (possibly edited via removeExistingAttachment) + new uploads
+    const currentAtts = isObj && Array.isArray(existing.attachments) ? existing.attachments : [];
+    const attachments = getModalAttachments(key, currentAtts);
+    units[unitIdx].announcements[annIdx] = {
+        ...(isObj ? existing : {}),
+        title,
+        content,
+        date: document.getElementById('mAnnDate').value,
+        attachments
+    };
     saveUnits(currentCourse.id, units);
-    closeModal(); renderUnit(unitIdx); showToast('Anuncio actualizado', 'success');
+    clearModalFiles(key);
+    closeModal();
+    renderUnit(unitIdx);
+    showToast('Anuncio actualizado', 'success');
 }
 
 function removeAnnouncement(unitIdx, annIdx) {
     const units = getUnits(currentCourse.id);
     units[unitIdx].announcements.splice(annIdx, 1);
     saveUnits(currentCourse.id, units);
-    renderUnit(unitIdx); showToast('Anuncio eliminado');
+    renderUnit(unitIdx);
+    showToast('Anuncio eliminado');
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   ACTIVITY CRUD  (with attachments + bibliography/materials)
+═══════════════════════════════════════════════════════════════════════════ */
 function addActivityModal(unitIdx) {
+    const keyAtts  = 'act-new-atts-' + unitIdx;
+    const keyMats  = 'act-new-mats-' + unitIdx;
+    clearModalFiles(keyAtts);
+    clearModalFiles(keyMats);
     openModal('Nueva Actividad', `
-        <div class="form-group"><label class="form-label">Título</label><input type="text" class="form-input" id="mActTitle" placeholder="Ej: Taller — Matrices y Determinantes"></div>
-        <div class="form-group"><label class="form-label">Descripción</label><textarea class="form-input" id="mActDesc" placeholder="Descripción de la actividad..."></textarea></div>
-        <div class="form-group"><label class="form-label">Fecha de entrega</label><input type="date" class="form-input" id="mActDate"></div>
-        <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="saveActivity(${unitIdx})">Agregar actividad</button>`);
+        <div class="form-group">
+            <label class="form-label">Título</label>
+            <input type="text" class="form-input" id="mActTitle" placeholder="Ej: Taller — Matrices y Determinantes">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Descripción e instrucciones</label>
+            <textarea class="form-input" id="mActDesc"
+                placeholder="Describe la actividad, criterios de evaluación, formato de entrega, etc."
+                style="min-height:130px"></textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Fecha de entrega</label>
+            <input type="date" class="form-input" id="mActDate">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Archivos adjuntos para el estudiante <span style="font-weight:400;color:var(--text-muted)">(guías, rúbricas, plantillas…)</span></label>
+            ${modalDropArea(keyAtts, 'Arrastra guías, rúbricas o cualquier archivo')}
+        </div>
+        <div class="form-group">
+            <label class="form-label">Bibliografía y material de apoyo <span style="font-weight:400;color:var(--text-muted)">(lecturas, videos, referencias…)</span></label>
+            ${modalDropArea(keyMats, 'Arrastra PDFs, videos u otros materiales de apoyo')}
+        </div>
+        <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="saveActivity(${unitIdx},'${keyAtts}','${keyMats}')">Agregar actividad</button>`);
 }
 
-function saveActivity(unitIdx) {
+function saveActivity(unitIdx, keyAtts, keyMats) {
     const title = document.getElementById('mActTitle').value.trim();
     if (!title) { showToast('El título es obligatorio', 'error'); return; }
-    const newAct = { id: Date.now(), course: { id: currentCourse.id }, title, description: document.getElementById('mActDesc').value, dueDate: document.getElementById('mActDate').value, attachments: [] };
+    const attachments = getModalAttachments(keyAtts, []);
+    const materials   = getModalAttachments(keyMats, []);
+    const newAct = {
+        id: Date.now(),
+        course: { id: currentCourse.id },
+        title,
+        description: document.getElementById('mActDesc').value,
+        dueDate: document.getElementById('mActDate').value,
+        attachments,
+        materials
+    };
     MOCK.activities.push(newAct);
     const units = getUnits(currentCourse.id);
     units[unitIdx].activities = units[unitIdx].activities || [];
     units[unitIdx].activities.push(newAct.id);
     saveUnits(currentCourse.id, units);
-    closeModal(); renderUnit(unitIdx); showToast('Actividad agregada', 'success');
+    clearModalFiles(keyAtts);
+    clearModalFiles(keyMats);
+    closeModal();
+    renderUnit(unitIdx);
+    showToast('Actividad agregada', 'success');
 }
 
 function editActivityModal(actId, unitIdx) {
     const a = MOCK.activities.find(x => x.id === actId);
     if (!a) return;
+    const keyAtts = 'act-edit-atts-' + actId;
+    const keyMats = 'act-edit-mats-' + actId;
+    clearModalFiles(keyAtts);
+    clearModalFiles(keyMats);
+    const existingAtts = Array.isArray(a.attachments) ? a.attachments : [];
+    const existingMats = Array.isArray(a.materials)   ? a.materials   : [];
     openModal('Editar Actividad', `
-        <div class="form-group"><label class="form-label">Título</label><input type="text" class="form-input" id="mActTitle" value="${a.title}"></div>
-        <div class="form-group"><label class="form-label">Descripción</label><textarea class="form-input" id="mActDesc">${a.description || ''}</textarea></div>
-        <div class="form-group"><label class="form-label">Fecha de entrega</label><input type="date" class="form-input" id="mActDate" value="${a.dueDate || ''}"></div>
-        <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="updateActivity(${actId},${unitIdx})">Guardar cambios</button>`);
+        <div class="form-group">
+            <label class="form-label">Título</label>
+            <input type="text" class="form-input" id="mActTitle" value="${a.title}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Descripción e instrucciones</label>
+            <textarea class="form-input" id="mActDesc" style="min-height:130px">${a.description || ''}</textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Fecha de entrega</label>
+            <input type="date" class="form-input" id="mActDate" value="${a.dueDate || ''}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Archivos adjuntos para el estudiante</label>
+            ${existingAtts.length ? `<div style="margin-bottom:8px">${existingAtts.map((at,i) => `<div class="file-chip" id="exatt2-atts-${i}">
+                <svg width="13" height="13" fill="none" stroke="var(--teal)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span class="file-chip-name">${at.name}</span>
+                <button class="file-chip-remove" onclick="removeActExistingAtt(${actId},'attachments',${i})">
+                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>`).join('')}</div>` : ''}
+            ${modalDropArea(keyAtts, 'Agregar guías, rúbricas o plantillas')}
+        </div>
+        <div class="form-group">
+            <label class="form-label">Bibliografía y material de apoyo</label>
+            ${existingMats.length ? `<div style="margin-bottom:8px">${existingMats.map((at,i) => `<div class="file-chip" id="exatt2-mats-${i}">
+                <svg width="13" height="13" fill="none" stroke="var(--gold)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span class="file-chip-name">${at.name}</span>
+                <button class="file-chip-remove" onclick="removeActExistingAtt(${actId},'materials',${i})">
+                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>`).join('')}</div>` : ''}
+            ${modalDropArea(keyMats, 'Agregar PDFs, videos u otras referencias')}
+        </div>
+        <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="updateActivity(${actId},${unitIdx},'${keyAtts}','${keyMats}')">Guardar cambios</button>`);
 }
 
-function updateActivity(actId, unitIdx) {
+function removeActExistingAtt(actId, field, idx) {
+    const a = MOCK.activities.find(x => x.id === actId);
+    if (!a || !Array.isArray(a[field])) return;
+    a[field].splice(idx, 1);
+    const el = document.getElementById('exatt2-' + field + '-' + idx);
+    if (el) el.remove();
+}
+
+function updateActivity(actId, unitIdx, keyAtts, keyMats) {
     const a = MOCK.activities.find(x => x.id === actId);
     if (!a) return;
-    a.title = document.getElementById('mActTitle').value.trim() || a.title;
+    a.title       = document.getElementById('mActTitle').value.trim() || a.title;
     a.description = document.getElementById('mActDesc').value;
-    a.dueDate = document.getElementById('mActDate').value;
-    closeModal(); renderUnit(unitIdx); showToast('Actividad actualizada', 'success');
+    a.dueDate     = document.getElementById('mActDate').value;
+    // Merge new uploads with whatever remains after inline removals
+    a.attachments = getModalAttachments(keyAtts, Array.isArray(a.attachments) ? a.attachments : []);
+    a.materials   = getModalAttachments(keyMats,  Array.isArray(a.materials)   ? a.materials   : []);
+    clearModalFiles(keyAtts);
+    clearModalFiles(keyMats);
+    closeModal();
+    renderUnit(unitIdx);
+    showToast('Actividad actualizada', 'success');
 }
 
 function removeActivity(actId, unitIdx) {
     const units = getUnits(currentCourse.id);
     units[unitIdx].activities = (units[unitIdx].activities || []).filter(id => id !== actId);
     saveUnits(currentCourse.id, units);
-    renderUnit(unitIdx); showToast('Actividad eliminada de esta unidad');
+    renderUnit(unitIdx);
+    showToast('Actividad eliminada de esta unidad');
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   EXAM CRUD
+═══════════════════════════════════════════════════════════════════════════ */
 function addExamModal(unitIdx) {
     openModal('Nueva Evaluación', `
         <div class="form-group"><label class="form-label">Título</label><input type="text" class="form-input" id="mExTitle" placeholder="Ej: Parcial I — Álgebra Lineal"></div>
@@ -1338,10 +1624,13 @@ function removeExam(examId, unitIdx) {
     renderUnit(unitIdx); showToast('Evaluación eliminada de esta unidad');
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESOURCE CRUD
+═══════════════════════════════════════════════════════════════════════════ */
 function addResourceModal(unitIdx) {
     openModal('Agregar Recurso', `
         <div class="form-group"><label class="form-label">Nombre del recurso</label><input type="text" class="form-input" id="mResName" placeholder="Ej: Álgebra Lineal — Howard Anton (Cap. 1-3)"></div>
-        <div class="form-group"><label class="form-label">Tipo</label><select class="form-input" id="mResType"><option value="pdf">PDF</option><option value="doc">Documento</option><option value="link">Enlace web</option><option value="video">Video</option></select></div>
+        <div class="form-group"><label class="form-label">Tipo</label><select class="form-input" id="mResType"><option value="pdf">PDF</option><option value="doc">Documento</option><option value="link">Enlace web</option><option value="video">Video</option><option value="img">Imagen</option></select></div>
         <div class="form-group"><label class="form-label">URL (opcional)</label><input type="url" class="form-input" id="mResUrl" placeholder="https://..."></div>
         <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="saveResource(${unitIdx})">Agregar recurso</button>`);
 }
@@ -1371,6 +1660,32 @@ function saveCourseEdit() {
     closeModal(); showToast('Curso actualizado', 'success');
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   GRADE HELPERS
+═══════════════════════════════════════════════════════════════════════════ */
+function createGrade(courseId) {
+    const sId = parseInt(document.getElementById('mStudent').value);
+    const val = parseFloat(document.getElementById('mGrade').value);
+    const desc = document.getElementById('mGradeDesc').value;
+    if (isNaN(val) || val < 0 || val > 10) { showToast('Calificación inválida', 'error'); return; }
+    const student = MOCK.students.find(s => s.id === sId);
+    MOCK.grades.push({ id: Date.now(), student: { id: sId, studentCode: student ? student.studentCode : '—', user: { name: student ? student.user.name : '—' } }, course: { id: courseId }, grade: val, description: desc });
+    closeModal(); renderGrades(courseId); showToast('Calificación registrada', 'success');
+}
+
+function createSchedule() {
+    const cId = parseInt(document.getElementById('schCourse').value);
+    const day = document.getElementById('schDay').value;
+    const start = document.getElementById('schStart').value;
+    const end = document.getElementById('schEnd').value;
+    const course = MOCK.courses.find(c => c.id === cId) || {};
+    MOCK.schedules.push({ id: Date.now(), course: { id: cId, name: course.name }, day, startTime: start, endTime: end });
+    closeModal(); loadHorarios(); showToast('Horario agregado', 'success');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   INIT & EVENT LISTENERS
+═══════════════════════════════════════════════════════════════════════════ */
 async function init() {
     authHeader = getAuth() || btoa('docente@educat.edu.co:demo1234');
     setDate();
@@ -1468,16 +1783,6 @@ document.getElementById('btnNewGrade').addEventListener('click', () => {
         <button class="btn btn-teal" style="width:100%" onclick="createGrade(${courseId})">Registrar calificación</button>`);
 });
 
-function createGrade(courseId) {
-    const sId = parseInt(document.getElementById('mStudent').value);
-    const val = parseFloat(document.getElementById('mGrade').value);
-    const desc = document.getElementById('mGradeDesc').value;
-    if (isNaN(val) || val < 0 || val > 10) { showToast('Calificación inválida', 'error'); return; }
-    const student = MOCK.students.find(s => s.id === sId);
-    MOCK.grades.push({ id: Date.now(), student: { id: sId, studentCode: student ? student.studentCode : '—', user: { name: student ? student.user.name : '—' } }, course: { id: courseId }, grade: val, description: desc });
-    closeModal(); renderGrades(courseId); showToast('Calificación registrada', 'success');
-}
-
 document.getElementById('btnExportGrades').addEventListener('click', exportGrades);
 
 document.getElementById('btnNewSchedule').addEventListener('click', () => {
@@ -1495,18 +1800,7 @@ document.getElementById('btnNewSchedule').addEventListener('click', () => {
         <button class="btn btn-teal" style="width:100%" onclick="createSchedule()">Agregar horario</button>`);
 });
 
-function createSchedule() {
-    const cId = parseInt(document.getElementById('schCourse').value);
-    const day = document.getElementById('schDay').value;
-    const start = document.getElementById('schStart').value;
-    const end = document.getElementById('schEnd').value;
-    const course = MOCK.courses.find(c => c.id === cId) || {};
-    MOCK.schedules.push({ id: Date.now(), course: { id: cId, name: course.name }, day, startTime: start, endTime: end });
-    closeModal(); loadHorarios(); showToast('Horario agregado', 'success');
-}
-
 document.getElementById('btnLoadSubmissions').addEventListener('click', renderEntregasList);
-
 document.getElementById('submissionsFilter').addEventListener('change', renderSubmissionsList);
 
 document.getElementById('btnGradeAll').addEventListener('click', () => {
