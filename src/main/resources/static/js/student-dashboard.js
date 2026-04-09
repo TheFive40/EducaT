@@ -4,6 +4,56 @@ let enrollments = [], grades = [], attendance = [], certificates = [], schedules
 let currentCourse = null, currentUnitIdx = 0;
 let selectedFiles = [];
 const actSubmissionFiles = {};
+const MOCK_GRADE_PERIODS = {
+    1: { periods: [{ name:'Corte 1', grade:8.5, weight:33.3 },{ name:'Corte 2', grade:7.8, weight:33.3 },{ name:'Corte 3', grade:9.1, weight:33.4 }] },
+    2: { periods: [{ name:'Corte 1', grade:7.2, weight:33.3 },{ name:'Corte 2', grade:8.0, weight:33.3 },{ name:'Corte 3', grade:6.8, weight:33.4 }] },
+    3: { periods: [{ name:'Corte 1', grade:9.0, weight:33.3 },{ name:'Corte 2', grade:8.5, weight:33.3 },{ name:'Corte 3', grade:9.3, weight:33.4 }] },
+};
+
+const EVAL_QUESTIONS = [
+    { id:'q1', type:'binary',   label:'Puntualidad',  text:'¿El docente llega puntualmente a clases?' },
+    { id:'q2', type:'binary',   label:'Contenido',    text:'¿El docente cumple con el contenido programático?' },
+    { id:'q3', type:'binary',   label:'Respeto',      text:'¿El docente mantiene una comunicación respetuosa?' },
+    { id:'q4', type:'rating5',  label:'Claridad',     text:'Claridad en la explicación de los temas (1 = muy bajo · 5 = excelente)' },
+    { id:'q5', type:'rating5',  label:'Disposición',  text:'Disposición para resolver dudas fuera de clase (1 = nunca · 5 = siempre)' },
+    { id:'q6', type:'rating10', label:'Metodología',  text:'Calidad de la metodología de enseñanza (0 = deficiente · 10 = sobresaliente)' },
+    { id:'q7', type:'rating10', label:'Material',     text:'Calidad del material de apoyo entregado (0 = deficiente · 10 = sobresaliente)' },
+    { id:'q8', type:'open',     label:'Lo mejor',     text:'¿Qué aspectos positivos destacas de este docente?' },
+    { id:'q9', type:'open',     label:'Sugerencias',  text:'¿Qué sugerencias de mejora le darías a este docente?' },
+];
+
+const AUTOEVAL_QUESTIONS = [
+    { id:'a1', type:'binary',   label:'Asistencia',   text:'¿Asististe regularmente a todas las clases del curso?' },
+    { id:'a2', type:'binary',   label:'Entregas',     text:'¿Entregaste todas las actividades y talleres en los plazos establecidos?' },
+    { id:'a3', type:'binary',   label:'Preparación',  text:'¿Preparaste el material antes de cada sesión de clase?' },
+    { id:'a4', type:'rating5',  label:'Participación',text:'Evalúa tu nivel de participación activa en clase (1 = muy baja · 5 = excelente)' },
+    { id:'a5', type:'rating5',  label:'Dedicación',   text:'Tiempo dedicado al estudio independiente fuera de clase (1 = muy poco · 5 = mucho)' },
+    { id:'a6', type:'rating10', label:'Comprensión',  text:'¿Cuánto comprendes el contenido visto hasta ahora? (0 = nada · 10 = todo)' },
+    { id:'a7', type:'open',     label:'Dificultades', text:'¿Cuáles fueron tus principales dificultades en este curso?' },
+    { id:'a8', type:'open',     label:'Compromisos',  text:'¿Qué compromisos asumes para mejorar en el siguiente período?' },
+];
+
+const MOCK_OUTCOMES = {
+    1: [
+        { text:'Comprende y aplica operaciones con matrices y vectores',    status:'achieved'    },
+        { text:'Resuelve sistemas de ecuaciones lineales',                  status:'achieved'    },
+        { text:'Calcula límites y derivadas de funciones',                  status:'in-progress' },
+        { text:'Aplica la derivada en problemas de optimización',           status:'pending'     },
+    ],
+    2: [
+        { text:'Analiza textos literarios hispanoamericanos',               status:'achieved'    },
+        { text:'Identifica técnicas narrativas del realismo mágico',        status:'achieved'    },
+        { text:'Produce ensayos con argumentación sólida',                  status:'in-progress' },
+        { text:'Utiliza normas APA en producción textual',                  status:'in-progress' },
+    ],
+    3: [
+        { text:'Comprende la estructura atómica y la tabla periódica',     status:'achieved'    },
+        { text:'Clasifica tipos de enlace químico',                         status:'achieved'    },
+        { text:'Balancea ecuaciones químicas',                              status:'achieved'    },
+        { text:'Aplica principios de estequiometría básica',                status:'in-progress' },
+        { text:'Realiza e interpreta prácticas de laboratorio',            status:'pending'     },
+    ],
+};
 
 const MOCK = {
     user: { id: 1, name: 'María José Rodríguez', email: 'maria@educat.edu.co', role: { id: 3, name: 'ESTUDIANTE' }, status: true },
@@ -356,6 +406,10 @@ async function loadCursos() {
     }).join('') + '</div>';
 }
 
+// ═══════════════════════════════════════════════════════════════════
+//  NEW loadClases()  —  replace the existing function in
+//  src/main/resources/static/js/student-dashboard.js
+// ═══════════════════════════════════════════════════════════════════
 async function loadClases() {
     const container = document.getElementById('clasesContainer');
     if (!schedules.length) schedules = MOCK.schedules;
@@ -363,19 +417,118 @@ async function loadClases() {
         container.innerHTML = '<div class="empty-state"><div class="empty-state-title">Sin clases programadas</div></div>';
         return;
     }
-    const dayOrder = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-    const sorted = [...schedules].sort((a, b) => dayOrder.indexOf(a.day) - dayOrder.indexOf(b.day));
-    container.innerHTML = '<table><thead><tr><th>Día</th><th>Curso</th><th>Hora Inicio</th><th>Hora Fin</th><th>Docente</th></tr></thead><tbody>' +
-        sorted.map(s => {
-            const teacher = s.course && s.course.teacher && s.course.teacher.user ? s.course.teacher.user.name : '—';
-            return `<tr>
-              <td><span class="badge badge-navy">${s.day}</span></td>
-              <td><strong>${s.course ? s.course.name : '—'}</strong></td>
-              <td>${s.startTime || '—'}</td>
-              <td>${s.endTime || '—'}</td>
-              <td>${teacher}</td>
-            </tr>`;
-        }).join('') + '</tbody></table>';
+
+    const DAY_ORDER = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const DAY_SHORT = { Lunes:'Lun', Martes:'Mar', Miércoles:'Mié', Jueves:'Jue', Viernes:'Vie', Sábado:'Sáb' };
+
+    function toMin(t) {
+        if (!t) return 0;
+        const [h, m] = t.split(':').map(Number);
+        return h * 60 + (m || 0);
+    }
+
+    // Active days (only days that have at least one class)
+    const activeDays = DAY_ORDER.filter(d => schedules.some(s => s.day === d));
+
+    // Time bounds (rounded to full hours)
+    const allMins  = schedules.flatMap(s => [toMin(s.startTime), toMin(s.endTime)]);
+    const rawMin   = Math.min(...allMins);
+    const rawMax   = Math.max(...allMins);
+    const startHour = Math.floor(rawMin / 60);
+    const endHour   = Math.ceil(rawMax  / 60);
+    const minTime   = startHour * 60;
+    const maxTime   = endHour   * 60;
+    const totalMin  = maxTime - minTime;
+    const PX_PER_MIN = 2.2;          // vertical density
+    const totalH    = totalMin * PX_PER_MIN;
+    const HEADER_H  = 44;
+    const TIME_W    = 52;
+
+    // Color palette (one per course)
+    const PALETTE = [
+        { bg:'rgba(26,58,107,0.10)',  border:'#1A3A6B', text:'#0B1F3A'  },
+        { bg:'rgba(30,107,116,0.10)', border:'#1E6B74', text:'#134e54'  },
+        { bg:'rgba(200,150,46,0.12)', border:'#C8962E', text:'#7a5a1a'  },
+        { bg:'rgba(39,174,96,0.10)',  border:'#27AE60', text:'#1a6b3c'  },
+        { bg:'rgba(142,68,173,0.10)', border:'#8e44ad', text:'#5b2577'  },
+        { bg:'rgba(192,57,43,0.10)',  border:'#C0392B', text:'#7b1d13'  },
+    ];
+    const courseIds = [...new Set(schedules.map(s => s.course && s.course.id).filter(Boolean))];
+    const colorMap  = {};
+    courseIds.forEach((id, i) => { colorMap[id] = PALETTE[i % PALETTE.length]; });
+
+    // ── Hour guide lines & time labels ─────────────────────────────
+    let guideHtml = '', timeLabelsHtml = '';
+    for (let h = startHour; h <= endHour; h++) {
+        const top = (h * 60 - minTime) * PX_PER_MIN;
+        guideHtml      += `<div class="wcal-guide" style="top:${top}px"></div>`;
+        timeLabelsHtml += `<div class="wcal-time-label" style="top:${top}px">${String(h).padStart(2,'0')}:00</div>`;
+    }
+
+    // ── Day columns ────────────────────────────────────────────────
+    let colsHtml = '';
+    activeDays.forEach(day => {
+        const daySch = schedules.filter(s => s.day === day);
+        let blocksHtml = '';
+
+        daySch.forEach(s => {
+            const sMin  = toMin(s.startTime) - minTime;
+            const dur   = toMin(s.endTime) - toMin(s.startTime);
+            const top   = sMin * PX_PER_MIN;
+            const height = Math.max(dur * PX_PER_MIN - 3, 20);
+            const c     = colorMap[s.course && s.course.id] || PALETTE[0];
+            const name  = s.course ? s.course.name : '—';
+            const teacher = s.course && s.course.teacher && s.course.teacher.user
+                ? s.course.teacher.user.name : '';
+            const shortName = name.length > 22 ? name.slice(0, 21) + '…' : name;
+            const showTime    = height >= 36;
+            const showTeacher = height >= 52 && teacher;
+
+            blocksHtml += `
+            <div class="wcal-block" style="top:${top}px;height:${height}px;background:${c.bg};border-left:3px solid ${c.border};"
+                 title="${name}${teacher ? ' · ' + teacher : ''}\n${s.startTime} – ${s.endTime}">
+                <span class="wcal-block-name" style="color:${c.text}">${shortName}</span>
+                ${showTime    ? `<span class="wcal-block-time">${s.startTime} – ${s.endTime}</span>` : ''}
+                ${showTeacher ? `<span class="wcal-block-teacher">${teacher}</span>` : ''}
+            </div>`;
+        });
+
+        colsHtml += `
+        <div class="wcal-day-col">
+            <div class="wcal-day-header">
+                <span class="wcal-day-full">${day}</span>
+                <span class="wcal-day-short">${DAY_SHORT[day] || day}</span>
+                <span class="wcal-day-count">${daySch.length} clase${daySch.length !== 1 ? 's' : ''}</span>
+            </div>
+            <div class="wcal-day-body" style="height:${totalH}px">
+                ${guideHtml}
+                ${blocksHtml}
+            </div>
+        </div>`;
+    });
+
+    // ── Legend ─────────────────────────────────────────────────────
+    const legendHtml = courseIds.map(id => {
+        const s = schedules.find(x => x.course && x.course.id === id);
+        const courseName = s && s.course ? s.course.name : '—';
+        const c = colorMap[id];
+        return `<div class="wcal-legend-item">
+            <div class="wcal-legend-swatch" style="background:${c.bg};border-color:${c.border}"></div>
+            <span>${courseName}</span>
+        </div>`;
+    }).join('');
+
+    container.innerHTML = `
+    <div class="wcal-legend">${legendHtml}</div>
+    <div class="wcal-root">
+        <div class="wcal-time-col" style="width:${TIME_W}px">
+            <div class="wcal-corner" style="height:${HEADER_H}px"></div>
+            <div class="wcal-time-track" style="height:${totalH}px">${timeLabelsHtml}</div>
+        </div>
+        <div class="wcal-grid">
+            ${colsHtml}
+        </div>
+    </div>`;
 }
 
 function loadAusencias() {
@@ -401,130 +554,596 @@ function loadAusencias() {
 }
 
 function loadAreaPersonal() {
-    const grds = grades.length ? grades : MOCK.grades;
-    const schds = schedules.length ? schedules : MOCK.schedules;
-    const certs = certificates.length ? certificates : MOCK.certificates;
-    const att = attendance.length ? attendance : MOCK.attendance;
-    const enr = enrollments.length ? enrollments : MOCK.enrollments.map((e, i) => ({ ...e, course: MOCK.courses[i] }));
-    const avg = grds.length ? (grds.reduce((s, g) => s + parseFloat(g.grade || 0), 0) / grds.length).toFixed(2) : '—';
-    const pct = att.length ? Math.round((att.filter(a => a.present).length / att.length) * 100) : 0;
-    const grid = document.getElementById('personalGrid');
-    grid.innerHTML = `
-    <div class="personal-card">
-      <div class="personal-card-header">
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-        <span class="personal-card-title">Calificaciones</span>
-      </div>
-      <div class="personal-card-body">
-        <div style="text-align:center;padding:12px 0;margin-bottom:14px;border-bottom:1px solid rgba(11,31,58,0.06)">
-          <div style="font-family:'Cormorant Garamond',serif;font-size:38px;font-weight:700;color:var(--text-dark)">${avg}</div>
-          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Promedio General</div>
-        </div>
-        ${grds.map(g => {
-        const v = parseFloat(g.grade || 0);
-        const cl = v >= 7 ? 'high' : v >= 5 ? 'mid' : 'low';
-        const color = cl === 'high' ? 'var(--success)' : cl === 'mid' ? 'var(--gold)' : 'var(--error)';
-        return `<div style="margin-bottom:10px">
-              <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-                <span style="font-size:12.5px">${g.course ? g.course.name : '—'}</span>
-                <strong style="font-size:13px;color:${color}">${v.toFixed(1)}</strong>
-              </div>
-              <div class="grade-bar"><div class="grade-fill ${cl}" style="width:${(v / 10) * 100}%"></div></div>
+    const items = [
+        { type:'grades',     icon:'<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',                                                                                                                                                                                                          color:'rgba(200,150,46,0.1)',  stroke:'var(--gold)',       title:'Calificaciones',               sub:'Notas por corte, definitiva por curso y promedio general' },
+        { type:'eval',       icon:'<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>',                                                                                                                                          color:'rgba(26,58,107,0.08)', stroke:'var(--navy-light)', title:'Evaluación Docente',           sub:'Evalúa individualmente a cada uno de tus profesores' },
+        { type:'autoeval',   icon:'<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>',                                                                                                                                                                                                                                           color:'rgba(142,68,173,0.08)', stroke:'#8e44ad',           title:'Autoevaluación',               sub:'Reflexiona sobre tu propio desempeño académico' },
+        { type:'horario',    icon:'<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/>',                                                                                                                                                         color:'rgba(39,174,96,0.08)', stroke:'var(--success)',     title:'Escogencia de Horario',        sub:'Indica tu disponibilidad horaria para el próximo período' },
+        { type:'resultados', icon:'<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>',                                                                                                                                                                                                         color:'rgba(30,107,116,0.08)', stroke:'var(--teal)',        title:'Resultados de Aprendizaje',    sub:'Competencias y logros alcanzados por asignatura' },
+        { type:'bienestar',  icon:'<path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/>',                                                                                                                                                                      color:'rgba(192,57,43,0.07)', stroke:'#e74c3c',            title:'Bienestar Estudiantil',        sub:'Servicios de apoyo psicológico, salud, deporte y más' },
+    ];
+
+    document.getElementById('personalGrid').innerHTML = items.map(it => `
+        <div class="ap-menu-card" onclick="openPersonalView('${it.type}')">
+            <div class="ap-menu-icon" style="background:${it.color}">
+                <svg width="26" height="26" fill="none" stroke="${it.stroke}" stroke-width="1.5" viewBox="0 0 24 24">${it.icon}</svg>
+            </div>
+            <div class="ap-menu-info">
+                <div class="ap-menu-title">${it.title}</div>
+                <div class="ap-menu-sub">${it.sub}</div>
+            </div>
+            <svg width="16" height="16" fill="none" stroke="var(--text-light)" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </div>`).join('');
+}
+
+function openPersonalView(type) {
+    document.getElementById('mainContent').style.display = 'none';
+    document.getElementById('courseView').classList.remove('show');
+    document.getElementById('personalSubView').classList.add('show');
+    document.getElementById('topbarBreadcrumb').style.display = 'none';
+    document.getElementById('pageTitle').style.display = 'none';
+    document.getElementById('pageSubtitle').style.display = 'none';
+
+    const titles = { grades:'Calificaciones', eval:'Evaluación Docente', autoeval:'Autoevaluación', horario:'Escogencia de Horario', resultados:'Resultados de Aprendizaje', bienestar:'Bienestar Estudiantil' };
+    document.getElementById('personalSubTitle').textContent = titles[type] || type;
+
+    const enr    = enrollments.length ? enrollments : MOCK.enrollments.map((e,i) => ({...e, course:MOCK.courses[i]}));
+    const courses = enr.map(e => e.course).filter(Boolean);
+    const content = document.getElementById('personalSubContent');
+
+    if      (type === 'grades')     { content.innerHTML = buildGradesView(courses);    initGradesCard(); }
+    else if (type === 'eval')       { content.innerHTML = buildEvalView(courses);      initEvalCard(courses, 'eval'); }
+    else if (type === 'autoeval')   { content.innerHTML = buildAutoEvalView(courses);  initEvalCard(courses, 'autoeval'); }
+    else if (type === 'horario')    { content.innerHTML = buildHorarioView();          initHorarioView(); }
+    else if (type === 'resultados') { content.innerHTML = buildResultadosView(courses); }
+    else if (type === 'bienestar')  { content.innerHTML = buildBienestarView(); }
+}function buildAutoEvalView(courses) { return buildEvalForm(courses, 'autoeval', AUTOEVAL_QUESTIONS, 'Reflexiona honestamente sobre tu desempeño en cada asignatura.'); }
+
+function closePersonalView() {
+    document.getElementById('personalSubView').classList.remove('show');
+    document.getElementById('mainContent').style.display = '';
+    document.getElementById('pageTitle').style.display = '';
+    document.getElementById('pageSubtitle').style.display = '';
+}
+
+function buildGradesView(courses) {
+    const cg = courses.map(c => {
+        const d = MOCK_GRADE_PERIODS[c.id];
+        if (!d) return { course:c, def:null, periods:[] };
+        const def = d.periods.reduce((s,p) => s + p.grade*(p.weight/100), 0);
+        return { course:c, def:parseFloat(def.toFixed(2)), periods:d.periods };
+    });
+    const valid = cg.filter(x => x.def !== null);
+    const prom  = valid.length ? (valid.reduce((s,x)=>s+x.def,0)/valid.length).toFixed(2) : '—';
+    const pc    = gradeColor(parseFloat(prom));
+
+    const rows = cg.map((x,i) => {
+        if (!x.def) return '';
+        const dc = gradeColor(x.def);
+        const ps = x.periods.map(p => {
+            const c = gradeColor(p.grade);
+            return `<div class="ap-period-row">
+                <span class="ap-period-name">${p.name}</span>
+                <div class="ap-period-bar-wrap"><div class="ap-period-bar"><div class="ap-period-fill" style="width:${(p.grade/10)*100}%;background:${c}"></div></div></div>
+                <span class="ap-period-grade" style="color:${c}">${p.grade.toFixed(1)}</span>
             </div>`;
-    }).join('')}
-      </div>
-    </div>
+        }).join('');
+        return `<div class="ap-course-row" id="cgrow-${i}">
+            <div class="ap-course-row-header" onclick="toggleGradeRow(${i})">
+                <div class="ap-course-row-dot" style="background:${dc}"></div>
+                <span class="ap-course-row-name">${x.course.name}</span>
+                <span class="ap-course-row-def" style="color:${dc}">${x.def.toFixed(2)}</span>
+                <svg class="ap-chevron" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="ap-course-row-body" id="cgbody-${i}" style="display:none">
+                <div class="ap-periods-list">${ps}</div>
+                <div class="ap-definitiva-row">
+                    <span>Nota definitiva del curso</span>
+                    <strong style="font-size:20px;font-family:'Cormorant Garamond',serif;color:${dc}">${x.def.toFixed(2)}<span style="font-size:12px;color:var(--text-muted)">/10</span></strong>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
 
-    <div class="personal-card">
-      <div class="personal-card-header">
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-        <span class="personal-card-title">Asistencia</span>
-      </div>
-      <div class="personal-card-body">
-        <div style="display:flex;gap:16px;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid rgba(11,31,58,0.06)">
-          <div style="text-align:center;flex:1"><div style="font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:700;color:var(--text-dark)">${pct}%</div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Total</div></div>
-          <div style="text-align:center;flex:1"><div style="font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:700;color:var(--success)">${att.filter(a => a.present).length}</div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Presentes</div></div>
-          <div style="text-align:center;flex:1"><div style="font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:700;color:var(--error)">${att.filter(a => !a.present).length}</div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Ausencias</div></div>
+    return `<div style="max-width:760px;margin:0 auto">
+        <div class="card">
+            <div class="ap-prom-general">
+                <div style="position:relative">
+                    <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,0.5);margin-bottom:4px">Promedio General</div>
+                    <div style="font-family:'Cormorant Garamond',serif;font-size:48px;font-weight:700;color:var(--white);line-height:1">${prom}<span style="font-size:16px;color:rgba(255,255,255,0.5)">/10</span></div>
+                    <div style="font-size:13px;color:rgba(255,255,255,0.5);margin-top:5px">${valid.length} curso(s) · Período Académico 2025</div>
+                </div>
+                <div class="ap-prom-badge" style="background:${pc}20;border:1px solid ${pc}50;color:${pc}">${gradeLabel(parseFloat(prom))}</div>
+            </div>
+            <div class="ap-courses-list">${rows}</div>
         </div>
-        ${att.slice(-5).reverse().map(a => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(11,31,58,0.04);font-size:12.5px">
-          <span style="color:var(--text-muted)">${a.date ? new Date(a.date + 'T00:00:00').toLocaleDateString('es-CO') : '—'}</span>
-          <span class="badge ${a.present ? 'badge-success' : 'badge-error'}">${a.present ? 'Presente' : 'Ausente'}</span>
-        </div>`).join('')}
-      </div>
-    </div>
+    </div>`;
+}
 
-    <div class="personal-card">
-      <div class="personal-card-header">
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        <span class="personal-card-title">Horario Académico</span>
-      </div>
-      <div class="personal-card-body">
-        <div class="schedule-mini">${schds.map(s => `<div class="schedule-mini-item">
-          <span class="schedule-mini-day">${s.day}</span>
-          <span class="schedule-mini-course">${s.course ? s.course.name : '—'}</span>
-          <span class="schedule-mini-time">${s.startTime}–${s.endTime}</span>
-        </div>`).join('')}</div>
-      </div>
-    </div>
 
-    <div class="personal-card">
-      <div class="personal-card-header">
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
-        <span class="personal-card-title">Certificados</span>
-      </div>
-      <div class="personal-card-body">${certs.length ? certs.map(c => `
-        <div class="cert-card">
-          <div class="cert-icon"><svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg></div>
-          <div class="cert-info">
-            <div class="cert-name">${c.name}</div>
-            ${c.filePath && c.filePath !== '#' ? `<a href="${c.filePath}" class="cert-sub" style="color:var(--teal)">Descargar</a>` : '<span class="cert-sub">Disponible en secretaría</span>'}
-          </div>
-        </div>`).join('') : '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin certificados</div></div>'}
-      </div>
-    </div>
+function initGradesCard() {
+    const b = document.getElementById('cgbody-0'), r = document.getElementById('cgrow-0');
+    if (b) b.style.display = 'block';
+    if (r) r.querySelector('.ap-chevron').style.transform = 'rotate(180deg)';
+}
+function toggleGradeRow(i) {
+    const b = document.getElementById('cgbody-'+i), r = document.getElementById('cgrow-'+i);
+    if (!b) return;
+    const open = b.style.display !== 'none';
+    b.style.display = open ? 'none' : 'block';
+    r.querySelector('.ap-chevron').style.transform = open ? '' : 'rotate(180deg)';
+}
+function gradeColor(v) { return isNaN(v)?'var(--text-muted)':v>=8?'#27AE60':v>=6?'#C8962E':'#C0392B'; }
+function gradeLabel(v) { return isNaN(v)?'—':v>=9?'Sobresaliente':v>=8?'Excelente':v>=7?'Bueno':v>=6?'Aprobado':'Reprobado'; }
 
-    <div class="personal-card">
-      <div class="personal-card-header">
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><line x1="16" y1="13" x2="8" y2="13"/></svg>
-        <span class="personal-card-title">Información de Matrícula</span>
-      </div>
-      <div class="personal-card-body">
-        <div style="padding:12px;background:var(--cream);border-radius:8px;margin-bottom:14px">
-          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">Código de Estudiante</div>
-          <div style="font-size:18px;font-family:'Cormorant Garamond',serif;font-weight:700">${currentStudent ? currentStudent.studentCode : MOCK.student.studentCode}</div>
+
+function buildCertsView(certs) {
+    const rows = certs.map(c => {
+        const isPending = c.status === 'pending';
+        const date = c.issuedAt ? new Date(c.issuedAt + 'T00:00:00').toLocaleDateString('es-CO',{day:'numeric',month:'short',year:'numeric'}) : '—';
+        const actions = !isPending && c.filePath && c.filePath !== '#'
+            ? `<a href="${c.filePath}" download class="cert-action-btn cert-btn-dl">
+                  <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Descargar
+               </a>
+               <a href="${c.filePath}" target="_blank" rel="noopener" class="cert-action-btn cert-btn-view">
+                  <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  Visualizar
+               </a>`
+            : `<span style="font-size:11.5px;color:var(--text-light);font-style:italic">${isPending?'Pendiente de emisión':'No disponible'}</span>`;
+        return `<tr>
+            <td><div style="display:flex;align-items:center;gap:10px">
+                <div class="cert-tbl-icon"><svg width="15" height="15" fill="none" stroke="var(--gold)" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg></div>
+                <span class="cert-tbl-name">${c.name}</span>
+            </div></td>
+            <td style="font-size:12.5px;color:var(--text-muted);white-space:nowrap">${date}</td>
+            <td><span class="badge ${isPending?'badge-warning':'badge-success'}">${isPending?'En proceso':'Disponible'}</span></td>
+            <td><div class="cert-actions-cell">${actions}</div></td>
+        </tr>`;
+    }).join('');
+
+    return `<div style="max-width:900px;margin:0 auto">
+        <div class="card">
+            <div class="card-header"><span class="card-title">Mis Certificados</span></div>
+            <div style="overflow-x:auto">
+                <table class="cert-table">
+                    <thead><tr><th>Certificado</th><th>Expedición</th><th>Estado</th><th>Acciones</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
         </div>
-        ${enr.map(e => {
-        const c = e.course || {};
-        const d = e.enrollmentDate ? new Date(e.enrollmentDate).toLocaleDateString('es-CO') : '—';
-        return `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(11,31,58,0.05);font-size:13px">
-              <span style="font-weight:500">${c.name || 'Curso'}</span>
-              <span style="color:var(--text-muted);font-size:12px">${d}</span>
-            </div>`;
-    }).join('')}
-      </div>
-    </div>
+    </div>`;
+}
 
-    <div class="personal-card">
-      <div class="personal-card-header">
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        <span class="personal-card-title">Evaluación Docente</span>
-      </div>
-      <div class="personal-card-body">
-        <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Tu opinión es confidencial y ayuda a mejorar la calidad educativa.</div>
-        ${enr.slice(0, 3).map((e, i) => {
-        const c = e.course || {};
-        const t = c.teacher && c.teacher.user ? c.teacher.user.name : 'Docente';
-        return `<div style="padding:10px;background:var(--cream);border-radius:8px;margin-bottom:8px">
-              <div style="font-weight:600;font-size:13px;margin-bottom:8px">${c.name || 'Curso'} — ${t}</div>
-              <div style="display:flex;gap:4px" id="stars-${i}">
-                ${[1, 2, 3, 4, 5].map(n => `<button onclick="setRating(${i},${n})" style="background:none;border:none;cursor:pointer;padding:2px">
-                  <svg width="20" height="20" fill="none" stroke="var(--gold)" stroke-width="2" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                </button>`).join('')}
-              </div>
+function buildEvalView(courses)     { return buildEvalForm(courses, 'eval',     EVAL_QUESTIONS,     'Evalúa a cada docente. Tu opinión es confidencial.'); }
+function buildEvalForm(courses, prefix, questions, infoText) {
+    const tabs = courses.map((c,i) => {
+        const sent = !!localStorage.getItem(evalKey(prefix, c.id)+'_sent');
+        return `<button class="eval-tab ${i===0?'active':''}" onclick="switchEvalTab(${i},'${prefix}')" id="${prefix}-tab-${i}">
+            ${sent?`<svg width="12" height="12" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`:''}
+            ${c.name.length>18?c.name.slice(0,17)+'…':c.name}
+        </button>`;
+    }).join('');
+
+    const panels = courses.map((c,i) => {
+        const teacher   = c.teacher && c.teacher.user ? c.teacher.user.name : 'Docente';
+        const spec      = c.teacher ? c.teacher.specialization||'' : '';
+        const initials  = teacher.split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase();
+        const sent      = !!localStorage.getItem(evalKey(prefix, c.id)+'_sent');
+        const avatarBg  = prefix==='autoeval' ? 'rgba(142,68,173,0.15)' : 'rgba(200,150,46,0.15)';
+        const avatarBd  = prefix==='autoeval' ? 'rgba(142,68,173,0.35)' : 'rgba(200,150,46,0.35)';
+
+        const bannerContent = prefix === 'autoeval'
+            ? `<div class="eval-teacher-avatar" style="background:${avatarBg};border-color:${avatarBd}">${initials}</div>
+               <div style="flex:1;position:relative">
+                   <div class="eval-teacher-name">Autoevaluación</div>
+                   <div class="eval-teacher-sub">${c.name}</div>
+               </div>`
+            : `<div class="eval-teacher-avatar" style="background:${avatarBg};border-color:${avatarBd}">${initials}</div>
+               <div style="flex:1;position:relative">
+                   <div class="eval-teacher-name">${teacher}</div>
+                   <div class="eval-teacher-sub">${spec} · ${c.name}</div>
+               </div>`;
+
+        return `<div class="eval-form-panel ${i===0?'active':''}" id="${prefix}-panel-${i}" data-course="${c.id}" data-prefix="${prefix}">
+            <div class="eval-teacher-banner">${bannerContent}
+                <div class="eval-completion-badge" id="${prefix}-badge-${i}"></div>
+            </div>
+            <div class="eval-questions-list">${buildEvalQuestions(prefix, c.id, questions, sent)}</div>
+            <div style="padding:0 18px 18px">
+                <button class="btn btn-gold" id="${prefix}-btn-${i}" onclick="submitEvalForm('${prefix}',${i},${c.id})" style="width:100%;${sent?'display:none':''}">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    Enviar evaluación
+                </button>
+                <div class="eval-sent-msg" id="${prefix}-msg-${i}" style="${sent?'display:flex':'display:none'}">
+                    <svg width="14" height="14" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                    Evaluación enviada. ¡Gracias!
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+
+    return `<div style="max-width:860px;margin:0 auto"><div class="card">
+        <div class="eval-info-bar"><svg width="14" height="14" fill="none" stroke="var(--gold)" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>${infoText}</div>
+        <div class="eval-tabs-bar">${tabs}</div>
+        ${panels}
+    </div></div>`;
+}
+function buildEvalQuestions(prefix, courseId, questions, disabled) {
+    const saved = getEvalData(prefix, courseId);
+    return questions.map(q => {
+        const val      = saved[q.id];
+        const answered = val !== undefined && val !== null && val !== '';
+        let   input    = '';
+
+        if (q.type === 'binary') {
+            input = `<div class="eval-binary-group">${['si','no'].map(opt =>
+                `<button class="eval-binary-btn${val===opt?' active-'+opt:''}" onclick="setEvalAns('${prefix}','${courseId}','${q.id}','${opt}',this,'binary')" data-opt="${opt}" ${disabled?'disabled':''}>
+                    ${opt==='si'?`<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Sí`:`<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> No`}
+                </button>`).join('')}</div>`;
+        }
+        if (q.type === 'rating5') {
+            input = `<div class="eval-rating-group">${[1,2,3,4,5].map(n=>
+                `<button class="eval-rating-btn${val===n?' selected':''}" onclick="setEvalAns('${prefix}','${courseId}','${q.id}',${n},this,'rating5')" data-val="${n}" ${disabled?'disabled':''}>${n}</button>`
+            ).join('')}<span class="eval-rating-labels"><span>Muy bajo</span><span>Excelente</span></span></div>`;
+        }
+        if (q.type === 'rating10') {
+            input = `<div class="eval-rating-group eval-rating-10">${[0,1,2,3,4,5,6,7,8,9,10].map(n=>
+                `<button class="eval-rating-btn${val===n?' selected':''}" onclick="setEvalAns('${prefix}','${courseId}','${q.id}',${n},this,'rating10')" data-val="${n}" ${disabled?'disabled':''}>${n}</button>`
+            ).join('')}<span class="eval-rating-labels"><span>Deficiente</span><span>Sobresaliente</span></span></div>`;
+        }
+        if (q.type === 'open') {
+            input = `<textarea class="eval-open-input" rows="3" placeholder="Escribe aquí..." ${disabled?'disabled':''}
+                oninput="setEvalAns('${prefix}','${courseId}','${q.id}',this.value,this,'open')">${val||''}</textarea>`;
+        }
+
+        return `<div class="eval-question${answered?' answered':''}" id="${prefix}-q-${courseId}-${q.id}">
+            <div class="eval-q-label-row">
+                <span class="eval-q-tag">${q.label}</span>
+                ${q.type!=='open'?'<span class="eval-q-required">*</span>':''}
+                ${answered?`<svg width="13" height="13" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`:''}
+            </div>
+            <p class="eval-q-text">${q.text}</p>
+            ${input}
+        </div>`;
+    }).join('');
+}
+function setEvalAns(prefix, courseId, qId, value, el, type) {
+    if (localStorage.getItem(evalKey(prefix,courseId)+'_sent')) return;
+    const data = getEvalData(prefix, courseId);
+    data[qId] = value;
+    saveEvalData(prefix, courseId, data);
+    const qEl = document.getElementById(prefix+'-q-'+courseId+'-'+qId);
+    if (qEl) {
+        qEl.classList.add('answered');
+        const lr = qEl.querySelector('.eval-q-label-row');
+        if (lr && !lr.querySelector('svg:last-child')) lr.insertAdjacentHTML('beforeend',`<svg width="13" height="13" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`);
+    }
+    if (type==='binary') {
+        el.closest('.eval-binary-group').querySelectorAll('.eval-binary-btn').forEach(b=>{b.className='eval-binary-btn'+(b.dataset.opt===value?' active-'+value:'');});
+    }
+    if (type==='rating5'||type==='rating10') {
+        el.closest('.eval-rating-group').querySelectorAll('.eval-rating-btn').forEach(b=>{b.classList.toggle('selected',parseInt(b.dataset.val)===value);});
+    }
+    updateEvalBadge2(prefix, courseId);
+}
+function updateEvalBadge2(prefix, courseId) {
+    const questions = prefix==='autoeval' ? AUTOEVAL_QUESTIONS : EVAL_QUESTIONS;
+    const data = getEvalData(prefix, courseId);
+    const done = questions.filter(q=>data[q.id]!==undefined&&data[q.id]!==null&&data[q.id]!=='').length;
+    const panel = document.querySelector(`.eval-form-panel[data-course="${courseId}"][data-prefix="${prefix}"]`);
+    if (!panel) return;
+    const idx = panel.id.replace(prefix+'-panel-','');
+    const badge = document.getElementById(prefix+'-badge-'+idx);
+    if (badge) { badge.textContent=done+'/'+questions.length+' respondidas'; badge.className='eval-completion-badge '+(done===questions.length?'complete':'partial'); }
+}
+function initEvalCard(courses, prefix) {
+    courses.forEach(c => updateEvalBadge2(prefix, c.id));
+}
+function switchEvalTab(idx, prefix) {
+    document.querySelectorAll(`[id^="${prefix}-tab-"]`).forEach((t,i)=>t.classList.toggle('active',i===idx));
+    document.querySelectorAll(`[id^="${prefix}-panel-"]`).forEach((p,i)=>p.classList.toggle('active',i===idx));
+}
+
+function submitEvalForm(prefix, panelIdx, courseId) {
+    const questions = prefix==='autoeval' ? AUTOEVAL_QUESTIONS : EVAL_QUESTIONS;
+    const data = getEvalData(prefix, courseId);
+    const missing = questions.filter(q=>q.type!=='open'&&(data[q.id]===undefined||data[q.id]===null||data[q.id]===''));
+    if (missing.length) {
+        showToast('Responde todas las preguntas obligatorias (*).','error');
+        const el = document.getElementById(prefix+'-q-'+courseId+'-'+missing[0].id);
+        if (el) el.scrollIntoView({behavior:'smooth',block:'center'});
+        return;
+    }
+    localStorage.setItem(evalKey(prefix,courseId)+'_sent','1');
+    const btn = document.getElementById(prefix+'-btn-'+panelIdx);
+    const msg = document.getElementById(prefix+'-msg-'+panelIdx);
+    if (btn) btn.style.display='none';
+    if (msg) msg.style.display='flex';
+    document.querySelectorAll(`#${prefix}-panel-${panelIdx} button,#${prefix}-panel-${panelIdx} textarea`).forEach(el=>el.disabled=true);
+    const tab = document.getElementById(prefix+'-tab-'+panelIdx);
+    if (tab&&!tab.querySelector('svg')) tab.insertAdjacentHTML('afterbegin',`<svg width="12" height="12" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> `);
+    showToast('Evaluación enviada. ¡Gracias!','success');
+}
+function buildHorarioView() {
+    const days  = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+    const slots = ['06:00–07:00','07:00–08:00','08:00–09:00','09:00–10:00','10:00–11:00','11:00–12:00','12:00–13:00','13:00–14:00','14:00–15:00','15:00–16:00','16:00–17:00','17:00–18:00','18:00–19:00','19:00–20:00'];
+
+    const headCols = days.map(d=>`<th style="text-align:center;font-size:11px;padding:8px 6px">${d}</th>`).join('');
+    const bodyRows = slots.map(s=>{
+        const cells = days.map(d=>{
+            const key = 'sch_'+d+'_'+s;
+            return `<td style="text-align:center;padding:4px 3px">
+                <button class="sch-cell" id="${key}" onclick="toggleSchCell('${key}')" title="${d} ${s}"></button>
+            </td>`;
+        }).join('');
+        return `<tr><td style="font-size:11.5px;font-weight:600;color:var(--text-muted);padding:4px 10px;white-space:nowrap">${s}</td>${cells}</tr>`;
+    }).join('');
+
+    return `<div style="max-width:900px;margin:0 auto">
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Disponibilidad Horaria</div>
+                    <div style="font-size:12.5px;color:var(--text-muted);margin-top:3px">Marca los bloques en los que estás disponible para el próximo período</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <div style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted)"><div style="width:14px;height:14px;border-radius:3px;background:rgba(200,150,46,0.15);border:1.5px solid var(--gold)"></div>Disponible</div>
+                    <button class="btn btn-sm btn-outline" onclick="clearScheduleSelection()">Limpiar</button>
+                    <button class="btn btn-sm btn-gold" onclick="saveScheduleSelection()">Guardar disponibilidad</button>
+                </div>
+            </div>
+            <div class="card-body" style="overflow-x:auto;padding:0">
+                <table style="width:100%;border-collapse:collapse;min-width:600px">
+                    <thead><tr><th style="font-size:10px;padding:8px 10px;text-align:left;color:var(--text-muted);border-bottom:2px solid var(--cream-dark);background:var(--cream)">Franja</th>${headCols}</tr></thead>
+                    <tbody>${bodyRows}</tbody>
+                </table>
+            </div>
+        </div>
+    </div>`;
+}
+function initHorarioView() {
+    const sid = currentStudent ? currentStudent.id : 1;
+    const saved = JSON.parse(localStorage.getItem('educat_schedule_sel_'+sid)||'{}');
+    Object.keys(saved).forEach(k => {
+        if (saved[k]) { const el=document.getElementById(k); if(el) el.classList.add('selected'); }
+    });
+}
+function toggleSchCell(key) {
+    const el = document.getElementById(key);
+    if (!el) return;
+    el.classList.toggle('selected');
+}
+function saveScheduleSelection() {
+    const sid = currentStudent ? currentStudent.id : 1;
+    const state = {};
+    document.querySelectorAll('.sch-cell').forEach(b=>{ state[b.id]=b.classList.contains('selected'); });
+    localStorage.setItem('educat_schedule_sel_'+sid, JSON.stringify(state));
+    showToast('Disponibilidad guardada correctamente','success');
+}
+function clearScheduleSelection() {
+    document.querySelectorAll('.sch-cell').forEach(b=>b.classList.remove('selected'));
+    showToast('Selección limpiada');
+}
+function buildResultadosView(courses) {
+    const STATUS = {
+        achieved:    { label:'Logrado',      badge:'badge-success', icon:'<polyline points="20 6 9 17 4 12"/>' },
+        'in-progress':{ label:'En proceso',  badge:'badge-gold',    icon:'<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>' },
+        pending:     { label:'Pendiente',    badge:'badge-navy',    icon:'<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12.01" y2="16"/>' },
+    };
+
+    const cards = courses.map(c => {
+        const outcomes = MOCK_OUTCOMES[c.id] || [];
+        if (!outcomes.length) return '';
+        const achieved = outcomes.filter(o=>o.status==='achieved').length;
+        const pct      = Math.round((achieved/outcomes.length)*100);
+        const color    = pct>=80?'var(--success)':pct>=50?'var(--gold)':'var(--error)';
+
+        const rows = outcomes.map(o => {
+            const s = STATUS[o.status]||STATUS.pending;
+            return `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(11,31,58,0.05)">
+                <svg width="16" height="16" fill="none" stroke="${o.status==='achieved'?'var(--success)':o.status==='in-progress'?'var(--gold)':'var(--text-light)'}" stroke-width="2.5" viewBox="0 0 24 24">${s.icon}</svg>
+                <span style="flex:1;font-size:13.5px;color:var(--text-body)">${o.text}</span>
+                <span class="badge ${s.badge}" style="flex-shrink:0;font-size:10px">${s.label}</span>
             </div>`;
-    }).join('')}
-        <button class="btn btn-gold btn-sm" style="margin-top:4px" onclick="submitEvals()">Enviar evaluaciones</button>
-      </div>
+        }).join('');
+
+        return `<div class="card" style="margin-bottom:16px">
+            <div class="card-header" style="flex-wrap:nowrap">
+                <div>
+                    <div class="card-title">${c.name}</div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${achieved} de ${outcomes.length} resultados logrados</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0">
+                    <div style="font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:700;color:${color};line-height:1">${pct}%</div>
+                    <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Avance</div>
+                </div>
+            </div>
+            <div class="card-body" style="padding-top:0">
+                <div style="height:5px;background:rgba(11,31,58,0.07);border-radius:3px;overflow:hidden;margin-bottom:16px">
+                    <div style="height:100%;width:${pct}%;background:${color};border-radius:3px;transition:width .5s ease"></div>
+                </div>
+                ${rows}
+            </div>
+        </div>`;
+    }).join('');
+
+    return `<div style="max-width:800px;margin:0 auto">${cards||'<div class="empty-state"><div class="empty-state-title">Sin resultados registrados</div></div>'}</div>`;
+}function buildBienestarView() {
+    const services = [
+        { icon:'<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>',  color:'rgba(142,68,173,0.1)', stroke:'#8e44ad', title:'Apoyo Psicológico',           desc:'Atención individual y grupal con profesionales en salud mental. Espacios de escucha y acompañamiento emocional.', cta:'Solicitar cita' },
+        { icon:'<circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>',                                                                                                  color:'rgba(39,174,96,0.08)', stroke:'var(--success)', title:'Actividad Física y Deporte', desc:'Torneos internos, equipos representativos y acceso a instalaciones deportivas durante la jornada académica.', cta:'Más información' },
+        { icon:'<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',                                                                  color:'rgba(200,150,46,0.08)', stroke:'var(--gold)', title:'Arte y Cultura',               desc:'Grupos de teatro, música, danza y artes plásticas. Participa en los eventos culturales del calendario institucional.', cta:'Inscribirme' },
+        { icon:'<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>',                                                         color:'rgba(30,107,116,0.08)', stroke:'var(--teal)', title:'Apoyos Económicos y Becas',   desc:'Descuentos por excelencia académica, becas socioeconómicas y planes de financiamiento flexible para tu matrícula.', cta:'Consultar requisitos' },
+        { icon:'<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',                                                                                                                     color:'rgba(192,57,43,0.07)', stroke:'#e74c3c', title:'Servicio Médico y Salud',      desc:'Enfermería disponible en la institución, campañas de vacunación y orientación en salud preventiva.', cta:'Más información' },
+        { icon:'<circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>',                                                                                  color:'rgba(26,58,107,0.07)', stroke:'var(--navy-light)', title:'Orientación Vocacional',   desc:'Talleres de proyección profesional, feria de universidades y asesoría personalizada para tu plan de vida.', cta:'Agendar sesión' },
+    ];
+
+    const cards = services.map((s,i) => `
+    <div class="bw-card">
+        <div class="bw-card-icon" style="background:${s.color}">
+            <svg width="24" height="24" fill="none" stroke="${s.stroke}" stroke-width="1.5" viewBox="0 0 24 24">${s.icon}</svg>
+        </div>
+        <div class="bw-card-title">${s.title}</div>
+        <p class="bw-card-desc">${s.desc}</p>
+        <button class="bw-card-btn" onclick="requestBienestar('${s.title}',${i})">
+            ${s.cta}
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>
+        <div class="bw-card-sent" id="bw-sent-${i}" style="display:none">
+            <svg width="14" height="14" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            Solicitud enviada
+        </div>
+    </div>`).join('');
+
+    return `<div style="max-width:900px;margin:0 auto">
+        <div class="bw-info-banner">
+            <svg width="18" height="18" fill="none" stroke="var(--white)" stroke-width="1.5" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
+            <div>
+                <div style="font-size:14px;font-weight:700;color:var(--white)">Servicios de Bienestar Estudiantil</div>
+                <div style="font-size:12.5px;color:rgba(255,255,255,0.65);margin-top:2px">Tu institución te acompaña más allá del aula. Accede a todos los servicios disponibles.</div>
+            </div>
+        </div>
+        <div class="bw-grid">${cards}</div>
+    </div>`;
+}
+
+function requestBienestar(service, idx) {
+    const btn  = document.querySelector(`#bw-sent-${idx}`).previousElementSibling;
+    const sent = document.getElementById('bw-sent-'+idx);
+    if (btn)  btn.style.display  = 'none';
+    if (sent) sent.style.display = 'flex';
+    showToast('Solicitud enviada — '+service,'success');
+}
+function renderEvalQuestions(courseId, disabled) {
+    const saved = getEvalData(courseId);
+    return EVAL_QUESTIONS.map(q => {
+        const val      = saved[q.id];
+        const answered = val !== undefined && val !== null && val !== '';
+        let   input    = '';
+
+        if (q.type === 'binary') {
+            input = `<div class="eval-binary-group">${['si','no'].map(opt =>
+                `<button class="eval-binary-btn${val===opt?' active-'+opt:''}" onclick="setEvalAnswer('${courseId}','${q.id}','${opt}',this,'binary')" data-opt="${opt}" ${disabled?'disabled':''}>
+                    ${opt==='si'
+                    ?`<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Sí`
+                    :`<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> No`}
+                </button>`).join('')}</div>`;
+        }
+        if (q.type === 'rating5') {
+            input = `<div class="eval-rating-group">${[1,2,3,4,5].map(n =>
+                `<button class="eval-rating-btn${val===n?' selected':''}" onclick="setEvalAnswer('${courseId}','${q.id}',${n},this,'rating5')" data-val="${n}" ${disabled?'disabled':''}>${n}</button>`
+            ).join('')}<span class="eval-rating-labels"><span>Muy bajo</span><span>Excelente</span></span></div>`;
+        }
+        if (q.type === 'rating10') {
+            input = `<div class="eval-rating-group eval-rating-10">${[0,1,2,3,4,5,6,7,8,9,10].map(n =>
+                `<button class="eval-rating-btn${val===n?' selected':''}" onclick="setEvalAnswer('${courseId}','${q.id}',${n},this,'rating10')" data-val="${n}" ${disabled?'disabled':''}>${n}</button>`
+            ).join('')}<span class="eval-rating-labels"><span>Deficiente</span><span>Sobresaliente</span></span></div>`;
+        }
+        if (q.type === 'open') {
+            input = `<textarea class="eval-open-input" rows="3" placeholder="Escribe tu respuesta aquí…" ${disabled?'disabled':''}
+                onchange="setEvalAnswer('${courseId}','${q.id}',this.value,this,'open')"
+                oninput="setEvalAnswer('${courseId}','${q.id}',this.value,this,'open')">${val||''}</textarea>`;
+        }
+
+        return `<div class="eval-question${answered?' answered':''}" id="evq-${courseId}-${q.id}">
+            <div class="eval-q-label-row">
+                <span class="eval-q-tag">${q.label}</span>
+                ${q.type!=='open'?'<span class="eval-q-required">*</span>':''}
+                ${answered?`<svg width="13" height="13" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`:''}
+            </div>
+            <p class="eval-q-text">${q.text}</p>
+            ${input}
+        </div>`;
+    }).join('');
+}
+function evalKey(prefix, courseId) { return 'educat_'+prefix+'_'+(currentStudent?currentStudent.id:1)+'_'+courseId; }
+function getEvalKey(courseId) {
+    return 'educat_eval_' + (currentStudent ? currentStudent.id : 1) + '_' + courseId;
+}
+function getEvalData(prefix, courseId) { try { return JSON.parse(localStorage.getItem(evalKey(prefix,courseId)))||{}; } catch(e){ return {}; } }
+function saveEvalData(prefix, courseId, data) { localStorage.setItem(evalKey(prefix,courseId), JSON.stringify(data)); }
+
+
+function setEvalAnswer(courseId, qId, value, el, type) {
+    if (localStorage.getItem(getEvalKey(courseId)+'_sent')) return;
+    const data = getEvalData(courseId);
+    data[qId] = value;
+    saveEvalData(courseId, data);
+    const qEl = document.getElementById('evq-'+courseId+'-'+qId);
+    if (qEl) {
+        qEl.classList.add('answered');
+        const lr = qEl.querySelector('.eval-q-label-row');
+        if (lr && !lr.querySelector('svg')) lr.insertAdjacentHTML('beforeend',`<svg width="13" height="13" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`);
+    }
+    if (type==='binary') {
+        el.closest('.eval-binary-group').querySelectorAll('.eval-binary-btn').forEach(b => {
+            b.className = 'eval-binary-btn' + (b.dataset.opt===value?' active-'+value:'');
+        });
+    }
+    if (type==='rating5'||type==='rating10') {
+        el.closest('.eval-rating-group').querySelectorAll('.eval-rating-btn').forEach(b => {
+            b.classList.toggle('selected', parseInt(b.dataset.val)===value);
+        });
+    }
+    updateEvalBadge(courseId);
+}
+
+function updateEvalBadge(courseId) {
+    const data  = getEvalData(courseId);
+    const done  = EVAL_QUESTIONS.filter(q => data[q.id]!==undefined && data[q.id]!==null && data[q.id]!=='').length;
+    const panel = document.querySelector(`.eval-form-panel[data-course="${courseId}"]`);
+    if (!panel) return;
+    const idx   = panel.id.replace('evpanel-','');
+    const badge = document.getElementById('evdone-'+idx);
+    if (badge) { badge.textContent = done+'/'+EVAL_QUESTIONS.length+' respondidas'; badge.className='eval-completion-badge '+(done===EVAL_QUESTIONS.length?'complete':'partial'); }
+}
+
+function initEvalCard(courses) {
+    courses.forEach(c => updateEvalBadge(c.id));
+}
+
+function switchEvalTab(idx) {
+    document.querySelectorAll('.eval-tab').forEach((t,i) => t.classList.toggle('active', i===idx));
+    document.querySelectorAll('.eval-form-panel').forEach((p,i) => p.classList.toggle('active', i===idx));
+}
+
+function submitEval(panelIdx, courseId) {
+    const data    = getEvalData(courseId);
+    const missing = EVAL_QUESTIONS.filter(q => q.type!=='open' && (data[q.id]===undefined||data[q.id]===null||data[q.id]===''));
+    if (missing.length) {
+        showToast('Responde todas las preguntas obligatorias (*).', 'error');
+        const el = document.getElementById('evq-'+courseId+'-'+missing[0].id);
+        if (el) el.scrollIntoView({behavior:'smooth',block:'center'});
+        return;
+    }
+    localStorage.setItem(getEvalKey(courseId)+'_sent','1');
+    const btn = document.getElementById('evbtn-'+panelIdx);
+    const msg = document.getElementById('evmsg-'+panelIdx);
+    if (btn) btn.style.display = 'none';
+    if (msg) msg.style.display = 'flex';
+    document.querySelectorAll(`#evpanel-${panelIdx} button, #evpanel-${panelIdx} textarea`).forEach(el => el.disabled=true);
+    const tab = document.getElementById('evtab-'+panelIdx);
+    if (tab&&!tab.querySelector('svg')) tab.insertAdjacentHTML('afterbegin',`<svg width="12" height="12" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> `);
+    showToast('Evaluación enviada. ¡Gracias!','success');
+}
+
+function buildScheduleView(schds) {
+    const dayOrder = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+    const sorted   = [...schds].sort((a,b) => dayOrder.indexOf(a.day)-dayOrder.indexOf(b.day));
+    const rows     = sorted.map(s => `<tr>
+        <td><span class="badge badge-navy">${s.day}</span></td>
+        <td><strong>${s.course?s.course.name:'—'}</strong></td>
+        <td>${s.startTime||'—'}</td>
+        <td>${s.endTime||'—'}</td>
+    </tr>`).join('');
+    return `<div style="max-width:700px;margin:0 auto">
+        <div class="card">
+            <div class="card-header"><span class="card-title">Horario Académico</span></div>
+            <div class="card-body">
+                <table><thead><tr><th>Día</th><th>Curso</th><th>Inicio</th><th>Fin</th></tr></thead><tbody>${rows}</tbody></table>
+            </div>
+        </div>
     </div>`;
 }
 
