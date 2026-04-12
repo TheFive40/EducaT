@@ -2,15 +2,18 @@ let authHeader = '', currentUser = null, currentStudent = null;
 let enrollments = [], grades = [], attendance = [], certificates = [], schedules = [];
 let currentCourse = null, currentUnitIdx = 0;
 let selectedFiles = [];
+let studentForumReplyPanels = {};
 let personalCertificatesMap = {};
 const actSubmissionFiles = {};
+const studentOpenCardsByUnit = {};
+let studentConfirmAction = null;
 
 const MOCK_GRADE_PERIODS = {
     1: { periods: [{ name:'Corte 1', grade:8.5, weight:33.3 },{ name:'Corte 2', grade:7.8, weight:33.3 },{ name:'Corte 3', grade:9.1, weight:33.4 }] },
     2: { periods: [{ name:'Corte 1', grade:7.2, weight:33.3 },{ name:'Corte 2', grade:8.0, weight:33.3 },{ name:'Corte 3', grade:6.8, weight:33.4 }] },
     3: { periods: [{ name:'Corte 1', grade:9.0, weight:33.3 },{ name:'Corte 2', grade:8.5, weight:33.3 },{ name:'Corte 3', grade:9.3, weight:33.4 }] },
 };
-const EVAL_QUESTIONS = [
+const DEFAULT_EVAL_QUESTIONS = [
     { id:'q1', type:'binary',   label:'Puntualidad',  text:'¿El docente llega puntualmente a clases?' },
     { id:'q2', type:'binary',   label:'Contenido',    text:'¿El docente cumple con el contenido programático?' },
     { id:'q3', type:'binary',   label:'Respeto',      text:'¿El docente mantiene una comunicación respetuosa?' },
@@ -21,7 +24,7 @@ const EVAL_QUESTIONS = [
     { id:'q8', type:'open',     label:'Lo mejor',     text:'¿Qué aspectos positivos destacas de este docente?' },
     { id:'q9', type:'open',     label:'Sugerencias',  text:'¿Qué sugerencias de mejora le darías a este docente?' },
 ];
-const AUTOEVAL_QUESTIONS = [
+const DEFAULT_AUTOEVAL_QUESTIONS = [
     { id:'a1', type:'binary',   label:'Asistencia',    text:'¿Asististe regularmente a todas las clases del curso?' },
     { id:'a2', type:'binary',   label:'Entregas',      text:'¿Entregaste todas las actividades y talleres en los plazos establecidos?' },
     { id:'a3', type:'binary',   label:'Preparación',   text:'¿Preparaste el material antes de cada sesión de clase?' },
@@ -31,6 +34,21 @@ const AUTOEVAL_QUESTIONS = [
     { id:'a7', type:'open',     label:'Dificultades',  text:'¿Cuáles fueron tus principales dificultades en este curso?' },
     { id:'a8', type:'open',     label:'Compromisos',   text:'¿Qué compromisos asumes para mejorar en el siguiente período?' },
 ];
+function loadAdminFormsOrDefault() {
+    try {
+        const raw = JSON.parse(localStorage.getItem('educat_admin_eval_forms') || '{}');
+        return {
+            eval: Array.isArray(raw.eval) && raw.eval.length ? raw.eval : DEFAULT_EVAL_QUESTIONS,
+            autoeval: Array.isArray(raw.autoeval) && raw.autoeval.length ? raw.autoeval : DEFAULT_AUTOEVAL_QUESTIONS
+        };
+    } catch (e) {
+        return { eval: DEFAULT_EVAL_QUESTIONS, autoeval: DEFAULT_AUTOEVAL_QUESTIONS };
+    }
+}
+
+let EVAL_QUESTIONS = loadAdminFormsOrDefault().eval;
+let AUTOEVAL_QUESTIONS = loadAdminFormsOrDefault().autoeval;
+
 const MOCK_OUTCOMES = {
     1: [
         { text:'Comprende y aplica operaciones con matrices y vectores',  status:'achieved'     },
@@ -91,10 +109,10 @@ const MOCK = {
         { id: 5, course: { id: 3, name: 'Ciencias Naturales' },     day: 'Viernes',  startTime: '11:00', endTime: '13:00' },
     ],
     activities: [
-        { id: 1, course: { id: 1 }, title: 'Taller: Matrices y Determinantes', description: 'Resolver los ejercicios de matrices 3×3 del capítulo 2. Presenta el procedimiento completo con cada operación detallada paso a paso.\n\nCriterios de evaluación:\n• Procedimiento correcto: 50%\n• Resultados: 30%\n• Presentación: 20%\n\nFormato de entrega: PDF con nombre Apellido_Taller1.pdf', dueDate: '2025-04-15', attachments: [{ name: 'Guía de Ejercicios Cap.2.pdf', type: 'pdf', url: '#' }] },
-        { id: 2, course: { id: 1 }, title: 'Taller: Derivadas Implícitas', description: 'Aplicación de reglas de derivación en funciones implícitas y paramétricas. Incluye resolución de problemas de optimización con justificación completa.\n\nEntrega en formato PDF con todos los pasos desarrollados.', dueDate: '2025-04-22', attachments: [] },
-        { id: 3, course: { id: 2 }, title: 'Ensayo Literario', description: 'Análisis temático y estilístico de "Cien años de soledad". Mínimo 3 páginas, máximo 5.\n\nEstructura requerida:\n• Introducción con tesis clara\n• Análisis del realismo mágico\n• Análisis de personajes principales\n• Conclusión\n\nFormato: APA 7ª edición. Entrega como PDF.', dueDate: '2025-04-18', attachments: [{ name: 'Rúbrica de evaluación.pdf', type: 'pdf', url: '#' }] },
-        { id: 4, course: { id: 3 }, title: 'Informe de Laboratorio', description: 'Informe completo del experimento de reacciones ácido-base. Debe incluir: objetivo, marco teórico, materiales, procedimiento, tabla de datos, análisis de resultados y conclusiones.\n\nFormato: impreso y digital (PDF).', dueDate: '2025-04-20', attachments: [] },
+        { id: 1, course: { id: 1 }, title: 'Taller: Matrices y Determinantes', description: 'Resolver los ejercicios de matrices 3×3 del capítulo 2. Presenta el procedimiento completo con cada operación detallada paso a paso.\n\nCriterios de evaluación:\n• Procedimiento correcto: 50%\n• Resultados: 30%\n• Presentación: 20%\n\nFormato de entrega: PDF con nombre Apellido_Taller1.pdf', dueDate: '2025-04-15', allowLateSubmission: false, attachments: [{ name: 'Guía de Ejercicios Cap.2.pdf', type: 'pdf', url: '#' }] },
+        { id: 2, course: { id: 1 }, title: 'Taller: Derivadas Implícitas', description: 'Aplicación de reglas de derivación en funciones implícitas y paramétricas. Incluye resolución de problemas de optimización con justificación completa.\n\nEntrega en formato PDF con todos los pasos desarrollados.', dueDate: '2025-04-22', allowLateSubmission: true, attachments: [] },
+        { id: 3, course: { id: 2 }, title: 'Ensayo Literario', description: 'Análisis temático y estilístico de "Cien años de soledad". Mínimo 3 páginas, máximo 5.\n\nEstructura requerida:\n• Introducción con tesis clara\n• Análisis del realismo mágico\n• Análisis de personajes principales\n• Conclusión\n\nFormato: APA 7ª edición. Entrega como PDF.', dueDate: '2025-04-18', allowLateSubmission: true, attachments: [{ name: 'Rúbrica de evaluación.pdf', type: 'pdf', url: '#' }] },
+        { id: 4, course: { id: 3 }, title: 'Informe de Laboratorio', description: 'Informe completo del experimento de reacciones ácido-base. Debe incluir: objetivo, marco teórico, materiales, procedimiento, tabla de datos, análisis de resultados y conclusiones.\n\nFormato: impreso y digital (PDF).', dueDate: '2025-04-20', allowLateSubmission: false, attachments: [] },
     ],
     exams: [
         { id: 1, course: { id: 1 }, title: 'Parcial I — Álgebra Lineal', examDate: '2025-04-20', description: 'Temas: vectores, matrices, sistemas de ecuaciones y transformaciones lineales. Duración: 2 horas. Material permitido: calculadora científica.' },
@@ -144,9 +162,288 @@ function showToast(msg, type = '') {
     setTimeout(() => t.remove(), 3500);
 }
 
-function closeModal() { document.getElementById('modalBackdrop').classList.remove('show'); }
+const srtState = {
+    savedRangeByEditor: {},
+    activeImageByEditor: {},
+    draggedImage: null,
+};
+function buildStudentRichEditorHtml(editorId, minHeight) {
+    return `<div class="trt-editor-shell">
+        <div class="trt-toolbar" onmousedown="srtToolbarMouseDown('${editorId}',event)">
+            <div class="trt-toolbar-group">
+                <select class="form-input trt-select" onchange="srtSetBlock('${editorId}',this.value)">
+                    <option value="P">Parrafo</option><option value="H2">Titulo 1</option><option value="H3">Titulo 2</option><option value="H4">Titulo 3</option><option value="BLOCKQUOTE">Cita</option>
+                </select>
+                <select class="form-input trt-select" onchange="srtSetFont('${editorId}',this.value)">
+                    <option value="Calibri">Calibri</option><option value="Jost">Jost</option><option value="Arial">Arial</option><option value="Georgia">Georgia</option>
+                </select>
+                <select class="form-input trt-select trt-size-select" onchange="srtSetFontSize('${editorId}',this.value)">
+                    <option value="2">Pequena</option><option value="3" selected>Normal</option><option value="4">Grande</option><option value="5">Muy grande</option>
+                </select>
+            </div>
+            <span class="trt-sep"></span>
+            <div class="trt-toolbar-group">
+                <button class="trt-btn" type="button" title="Negrita" onclick="srtCmd('${editorId}','bold')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4h8a4 4 0 010 8H6z"/><path d="M6 12h9a4 4 0 010 8H6z"/></svg></button>
+                <button class="trt-btn" type="button" title="Cursiva" onclick="srtCmd('${editorId}','italic')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg></button>
+                <button class="trt-btn" type="button" title="Subrayado" onclick="srtCmd('${editorId}','underline')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4v6a6 6 0 0012 0V4"/><line x1="4" y1="20" x2="20" y2="20"/></svg></button>
+                <button class="trt-btn" type="button" title="Tachado" onclick="srtCmd('${editorId}','strikeThrough')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><path d="M16 6a4 4 0 00-4-2 4 4 0 00-4 4c0 4 8 2 8 6a4 4 0 01-4 4 4 4 0 01-4-2"/></svg></button>
+                <button class="trt-btn" type="button" title="Superindice" onclick="srtCmd('${editorId}','superscript')">X<sup>2</sup></button>
+                <button class="trt-btn" type="button" title="Subindice" onclick="srtCmd('${editorId}','subscript')">X<sub>2</sub></button>
+            </div>
+            <span class="trt-sep"></span>
+            <div class="trt-toolbar-group">
+                <button class="trt-btn" type="button" title="Lista con viñetas" onclick="srtCmd('${editorId}','insertUnorderedList')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="6" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="18" r="1"/><line x1="10" y1="6" x2="20" y2="6"/><line x1="10" y1="12" x2="20" y2="12"/><line x1="10" y1="18" x2="20" y2="18"/></svg></button>
+                <button class="trt-btn" type="button" title="Lista numerada" onclick="srtCmd('${editorId}','insertOrderedList')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M4 14h2l-2 4h2"/><line x1="10" y1="6" x2="20" y2="6"/><line x1="10" y1="12" x2="20" y2="12"/><line x1="10" y1="18" x2="20" y2="18"/></svg></button>
+                <button class="trt-btn" type="button" title="Reducir sangria" onclick="srtCmd('${editorId}','outdent')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="10" y1="6" x2="20" y2="6"/><line x1="10" y1="12" x2="20" y2="12"/><line x1="10" y1="18" x2="20" y2="18"/><polyline points="7 8 4 11 7 14"/></svg></button>
+                <button class="trt-btn" type="button" title="Aumentar sangria" onclick="srtCmd('${editorId}','indent')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="10" y1="6" x2="20" y2="6"/><line x1="10" y1="12" x2="20" y2="12"/><line x1="10" y1="18" x2="20" y2="18"/><polyline points="4 8 7 11 4 14"/></svg></button>
+            </div>
+            <span class="trt-sep"></span>
+            <div class="trt-toolbar-group">
+                <button class="trt-btn" type="button" title="Alinear izquierda" onclick="srtCmd('${editorId}','justifyLeft')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg></button>
+                <button class="trt-btn" type="button" title="Centrar" onclick="srtCmd('${editorId}','justifyCenter')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg></button>
+                <button class="trt-btn" type="button" title="Alinear derecha" onclick="srtCmd('${editorId}','justifyRight')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="10" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg></button>
+                <button class="trt-btn" type="button" title="Justificar" onclick="srtCmd('${editorId}','justifyFull')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg></button>
+            </div>
+            <span class="trt-sep"></span>
+            <div class="trt-toolbar-group">
+                <button class="trt-btn" type="button" title="Enlace" onclick="srtInsertLink('${editorId}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.07 0l2.83-2.83a5 5 0 10-7.07-7.07L11 5"/><path d="M14 11a5 5 0 00-7.07 0L4.1 13.83a5 5 0 107.07 7.07L13 19"/></svg></button>
+                <button class="trt-btn" type="button" title="Quitar enlace" onclick="srtUnlink('${editorId}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 7l-10 10"/><path d="M7 7h5a5 5 0 013 8"/><path d="M17 17h-5a5 5 0 01-3-8"/></svg></button>
+                <button class="trt-btn" type="button" title="Insertar imagen" onclick="srtInsertImageLink('${editorId}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M21 16l-5-5-4 4-2-2-7 7"/></svg></button>
+                <button class="trt-btn" type="button" title="Insertar linea" onclick="srtCmd('${editorId}','insertHorizontalRule')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="12" x2="20" y2="12"/></svg></button>
+            </div>
+            <span class="trt-sep"></span>
+            <div class="trt-toolbar-group">
+                <label class="trt-color-wrap" title="Color de texto"><span class="trt-color-label">A</span><input class="trt-color" type="color" value="#0b1f3a" onchange="srtApplyForeColor('${editorId}',this.value)"></label>
+                <label class="trt-color-wrap" title="Resaltado"><span class="trt-color-label">Res</span><input class="trt-color" type="color" value="#fff3a0" onchange="srtApplyHighlightColor('${editorId}',this.value)"></label>
+                <button class="trt-btn" type="button" title="Imagen izquierda" onclick="srtImageAlign('${editorId}','left')">Img L</button>
+                <button class="trt-btn" type="button" title="Imagen centrada" onclick="srtImageAlign('${editorId}','center')">Img C</button>
+                <button class="trt-btn" type="button" title="Imagen derecha" onclick="srtImageAlign('${editorId}','right')">Img R</button>
+                <button class="trt-btn" type="button" title="Quitar imagen seleccionada" onclick="srtRemoveActiveImage('${editorId}')">Quitar Img</button>
+            </div>
+            <span class="trt-sep"></span>
+            <div class="trt-toolbar-group">
+                <button class="trt-btn" type="button" title="Deshacer" onclick="srtCmd('${editorId}','undo')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14L4 9l5-5"/><path d="M20 20a8 8 0 00-8-8H4"/></svg></button>
+                <button class="trt-btn" type="button" title="Rehacer" onclick="srtCmd('${editorId}','redo')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 14l5-5-5-5"/><path d="M4 20a8 8 0 018-8h8"/></svg></button>
+                <button class="trt-btn" type="button" title="Limpiar formato" onclick="srtCmd('${editorId}','removeFormat')">Limpiar</button>
+            </div>
+        </div>
+        <div id="${editorId}" class="rich-editor-content" contenteditable="true" style="min-height:${(minHeight || 120)}px" onfocus="srtEnsureEditor('${editorId}')"></div>
+    </div>`;
+}
+function srtEnsureEditor(editorId) {
+    const el = document.getElementById(editorId);
+    if (!el || el.dataset.ready === '1') return;
+    el.dataset.ready = '1';
+    ['mouseup', 'keyup', 'focus', 'input'].forEach(evt => el.addEventListener(evt, () => srtSaveSelection(editorId)));
+    el.addEventListener('click', ev => {
+        const wrap = ev.target.closest('.trt-image-wrap');
+        srtSelectImage(editorId, wrap || null);
+        srtSaveSelection(editorId);
+    });
+    el.addEventListener('dragstart', ev => {
+        const wrap = ev.target.closest('.trt-image-wrap');
+        if (!wrap) return;
+        srtState.draggedImage = wrap;
+        if (ev.dataTransfer) {
+            ev.dataTransfer.effectAllowed = 'move';
+            ev.dataTransfer.setData('text/plain', 'img-move');
+        }
+    });
+    el.addEventListener('dragover', ev => {
+        if (!srtState.draggedImage) return;
+        ev.preventDefault();
+    });
+    el.addEventListener('drop', ev => {
+        if (!srtState.draggedImage) return;
+        ev.preventDefault();
+        const range = srtRangeFromPoint(ev.clientX, ev.clientY);
+        if (range) {
+            range.collapse(true);
+            range.insertNode(srtState.draggedImage);
+            srtState.draggedImage = null;
+            srtSaveSelection(editorId);
+        }
+    });
+    el.addEventListener('dragend', () => { srtState.draggedImage = null; });
+}
+function srtRangeFromPoint(x, y) {
+    if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
+    if (document.caretPositionFromPoint) {
+        const pos = document.caretPositionFromPoint(x, y);
+        if (pos) {
+            const range = document.createRange();
+            range.setStart(pos.offsetNode, pos.offset);
+            return range;
+        }
+    }
+    return null;
+}
+function srtToolbarMouseDown(editorId, ev) {
+    if (ev) {
+        const target = ev.target;
+        const allowNative = !!(target && target.closest && (target.closest('select') || target.closest('input') || target.closest('option') || target.closest('label')));
+        if (!allowNative) ev.preventDefault();
+    }
+    srtRestoreSelection(editorId);
+}
+function srtSaveSelection(editorId) {
+    const el = document.getElementById(editorId);
+    const sel = window.getSelection();
+    if (!el || !sel || !sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    if (el.contains(range.commonAncestorContainer)) srtState.savedRangeByEditor[editorId] = range.cloneRange();
+}
+function srtRestoreSelection(editorId) {
+    const el = document.getElementById(editorId);
+    const range = srtState.savedRangeByEditor[editorId];
+    if (!el) return;
+    el.focus();
+    if (!range) return;
+    const sel = window.getSelection();
+    if (!sel) return;
+    sel.removeAllRanges();
+    sel.addRange(range);
+}
+function srtFocus(editorId) { srtEnsureEditor(editorId); srtRestoreSelection(editorId); }
+function srtCmd(editorId, cmd) { srtFocus(editorId); document.execCommand(cmd, false, null); srtSaveSelection(editorId); }
+function srtSetBlock(editorId, tag) { srtFocus(editorId); document.execCommand('formatBlock', false, tag); srtSaveSelection(editorId); }
+function srtSetFont(editorId, font) { srtFocus(editorId); document.execCommand('fontName', false, font); srtSaveSelection(editorId); }
+function srtSetFontSize(editorId, size) { srtFocus(editorId); document.execCommand('fontSize', false, size); srtSaveSelection(editorId); }
+function srtApplyForeColor(editorId, color) { if (!color) return; srtFocus(editorId); document.execCommand('foreColor', false, color); srtSaveSelection(editorId); }
+function srtApplyHighlightColor(editorId, color) { if (!color) return; srtFocus(editorId); document.execCommand('hiliteColor', false, color); srtSaveSelection(editorId); }
+function srtUnlink(editorId) { srtFocus(editorId); document.execCommand('unlink', false, null); srtSaveSelection(editorId); }
+function srtOpenMiniDialog(title, bodyHtml) {
+    srtCloseMiniDialog();
+    const host = document.createElement('div');
+    host.id = 'srtMiniDialog';
+    host.className = 'trt-mini-backdrop';
+    host.innerHTML = `<div class="trt-mini-modal"><div class="trt-mini-header"><span class="trt-mini-title">${title}</span><button class="trt-mini-close" type="button" onclick="srtCloseMiniDialog()">x</button></div><div class="trt-mini-body">${bodyHtml}</div></div>`;
+    document.body.appendChild(host);
+}
+function srtCloseMiniDialog() { const prev = document.getElementById('srtMiniDialog'); if (prev) prev.remove(); }
+function srtInsertImageLink(editorId) {
+    srtSaveSelection(editorId);
+    srtOpenMiniDialog('Insertar imagen', `<div class="form-group"><label class="form-label" for="srtImgUrl">URL de imagen</label><input type="url" class="form-input" id="srtImgUrl" placeholder="https://..."></div><div class="form-group"><label class="form-label" for="srtImgAlt">Texto alternativo</label><input type="text" class="form-input" id="srtImgAlt" placeholder="Descripcion de la imagen"></div><button class="btn btn-teal" style="width:100%" onclick="srtApplyImage('${editorId}')">Insertar</button><div style="margin-top:10px;font-size:12px;color:var(--text-muted)">Tip: luego puedes arrastrar la imagen para reubicarla.</div>`);
+}
+function srtApplyImage(editorId) {
+    const url = ((document.getElementById('srtImgUrl') || {}).value || '').trim();
+    const alt = ((document.getElementById('srtImgAlt') || {}).value || '').trim();
+    if (!url) { showToast('Ingresa la URL de la imagen', 'error'); return; }
+    srtFocus(editorId);
+    const sel = window.getSelection();
+    let range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+    if (!range) {
+        const editor = document.getElementById(editorId);
+        range = document.createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+    }
+    const wrap = document.createElement('span');
+    wrap.className = 'trt-image-wrap';
+    wrap.setAttribute('contenteditable', 'false');
+    wrap.setAttribute('draggable', 'true');
+    wrap.innerHTML = `<img src="${url}" alt="${alt || 'imagen'}" style="max-width:100%;height:auto;display:block;border-radius:8px"><span class="trt-image-grip" title="Arrastra para mover">::</span>`;
+    range.insertNode(wrap);
+    const spacer = document.createTextNode(' ');
+    wrap.after(spacer);
+    range.setStartAfter(spacer);
+    range.collapse(true);
+    if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+    }
+    srtCloseMiniDialog();
+    srtSelectImage(editorId, wrap);
+    srtSaveSelection(editorId);
+}
+function srtInsertLink(editorId) {
+    srtSaveSelection(editorId);
+    srtOpenMiniDialog('Insertar enlace', `<div class="form-group"><label class="form-label" for="srtLinkUrl">URL</label><input type="url" class="form-input" id="srtLinkUrl" placeholder="https://..."></div><div class="form-group"><label class="form-label" for="srtLinkText">Texto (opcional)</label><input type="text" class="form-input" id="srtLinkText" placeholder="Texto visible"></div><button class="btn btn-teal" style="width:100%" onclick="srtApplyLink('${editorId}')">Insertar enlace</button>`);
+}
+function srtApplyLink(editorId) {
+    const url = ((document.getElementById('srtLinkUrl') || {}).value || '').trim();
+    const text = ((document.getElementById('srtLinkText') || {}).value || '').trim();
+    if (!url) { showToast('Ingresa una URL valida', 'error'); return; }
+    srtFocus(editorId);
+    const selectedText = (window.getSelection() || {}).toString ? window.getSelection().toString().trim() : '';
+    if (!selectedText && text) document.execCommand('insertText', false, text);
+    document.execCommand('createLink', false, url);
+    srtCloseMiniDialog();
+    srtSaveSelection(editorId);
+}
+function srtSelectImage(editorId, wrap) {
+    const editor = document.getElementById(editorId);
+    if (!editor) return;
+    editor.querySelectorAll('.trt-image-wrap.active').forEach(el => el.classList.remove('active'));
+    if (wrap) {
+        wrap.classList.add('active');
+        srtState.activeImageByEditor[editorId] = wrap;
+    } else {
+        srtState.activeImageByEditor[editorId] = null;
+    }
+}
+function srtImageAlign(editorId, align) {
+    const imgWrap = srtState.activeImageByEditor[editorId];
+    if (!imgWrap) { showToast('Selecciona una imagen primero', 'error'); return; }
+    imgWrap.style.display = 'block';
+    imgWrap.style.float = 'none';
+    imgWrap.style.margin = '10px 0';
+    if (align === 'left') imgWrap.style.marginRight = 'auto';
+    if (align === 'center') imgWrap.style.margin = '10px auto';
+    if (align === 'right') imgWrap.style.marginLeft = 'auto';
+}
+function srtRemoveActiveImage(editorId) {
+    const imgWrap = srtState.activeImageByEditor[editorId];
+    if (!imgWrap) { showToast('Selecciona una imagen primero', 'error'); return; }
+    imgWrap.remove();
+    srtState.activeImageByEditor[editorId] = null;
+}
+function srtGetHtml(editorId) { const el = document.getElementById(editorId); return el ? el.innerHTML.trim() : ''; }
+
+function srtSetModalSize(size) {
+    const modal = document.getElementById('modal');
+    if (!modal) return;
+    modal.className = 'modal ' + (size === 'xl' ? 'modal-xl' : 'modal-lg');
+}
+function closeModal() { document.getElementById('modalBackdrop').classList.remove('show'); srtSetModalSize('lg'); }
 document.getElementById('modalClose').addEventListener('click', closeModal);
-document.getElementById('modalBackdrop').addEventListener('click', e => { if (e.target === document.getElementById('modalBackdrop')) closeModal(); });
+
+function openStudentConfirmModal(title, message, confirmLabel, onConfirm) {
+    studentConfirmAction = typeof onConfirm === 'function' ? onConfirm : null;
+    document.getElementById('modalTitle').textContent = title || 'Confirmar';
+    document.getElementById('modalBody').innerHTML = `
+        <div style="font-size:13.5px;color:var(--text-body);line-height:1.7;margin-bottom:14px">${message || ''}</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+            <button class="btn btn-danger" onclick="runStudentConfirmAction()">${confirmLabel || 'Confirmar'}</button>
+        </div>`;
+    srtSetModalSize('lg');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+
+function runStudentConfirmAction() {
+    const fn = studentConfirmAction;
+    studentConfirmAction = null;
+    closeModal();
+    if (typeof fn === 'function') fn();
+}
+
+function getStudentUnitCardState() {
+    const key = (currentCourse ? currentCourse.id : 'none') + ':' + currentUnitIdx;
+    if (!studentOpenCardsByUnit[key]) studentOpenCardsByUnit[key] = {};
+    return studentOpenCardsByUnit[key];
+}
+
+function isStudentCardOpen(cardId) {
+    return !!getStudentUnitCardState()[cardId];
+}
+
+function setStudentCardOpen(cardId, open) {
+    const state = getStudentUnitCardState();
+    if (open) state[cardId] = true;
+    else delete state[cardId];
+}
+
 
 function setDate() {
     document.getElementById('currentDate').textContent = new Date().toLocaleDateString('es-CO', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
@@ -158,6 +455,30 @@ function getUnits(courseId) {
     const def = DEFAULT_UNITS[courseId];
     return def ? JSON.parse(JSON.stringify(def)) : [];
 }
+function getStoredCourseActivities(courseId) {
+    try { return JSON.parse(localStorage.getItem('educat_course_activities_' + courseId) || '[]'); } catch (e) { return []; }
+}
+function getStoredCourseExams(courseId) {
+    try { return JSON.parse(localStorage.getItem('educat_course_exams_' + courseId) || '[]'); } catch (e) { return []; }
+}
+function getCourseActivitiesMerged(courseId) {
+    const base = MOCK.activities.filter(a => a.course && a.course.id === courseId);
+    const stored = getStoredCourseActivities(courseId);
+    if (!stored.length) return base;
+    const map = {};
+    base.forEach(a => { map[String(a.id)] = a; });
+    stored.forEach(a => { map[String(a.id)] = a; });
+    return Object.values(map);
+}
+function getCourseExamsMerged(courseId) {
+    const base = MOCK.exams.filter(x => x.course && x.course.id === courseId);
+    const stored = getStoredCourseExams(courseId);
+    if (!stored.length) return base;
+    const map = {};
+    base.forEach(x => { map[String(x.id)] = x; });
+    stored.forEach(x => { map[String(x.id)] = x; });
+    return Object.values(map);
+}
 function getSubmission(actId) {
     const sid = currentStudent ? currentStudent.id : 1;
     try { return JSON.parse(localStorage.getItem('educat_sub_' + sid + '_' + actId)); } catch (e) { return null; }
@@ -166,7 +487,72 @@ function saveSubmission(actId, data) {
     const sid = currentStudent ? currentStudent.id : 1;
     localStorage.setItem('educat_sub_' + sid + '_' + actId, JSON.stringify(data));
 }
-function toggleCard(id) { const el = document.getElementById(id); if (el) el.classList.toggle('open'); }
+function getActivityById(actId) {
+    const all = currentCourse ? getCourseActivitiesMerged(currentCourse.id) : MOCK.activities;
+    return all.find(a => String(a.id) === String(actId)) || null;
+}
+function getActivityDeadline(act) {
+    if (!act) return null;
+    if (act.dueDateTime) return new Date(act.dueDateTime);
+    if (!act.dueDate) return null;
+    const t = act.dueTime || '23:59';
+    return new Date(act.dueDate + 'T' + t + ':59');
+}
+function getActivityVisibleFrom(act) {
+    if (!act || !act.visibleFrom) return null;
+    return new Date(act.visibleFrom);
+}
+function isActivityVisible(act) {
+    const from = getActivityVisibleFrom(act);
+    if (!from) return true;
+    return from <= new Date();
+}
+function formatRemaining(deadline) {
+    if (!deadline) return '';
+    const diff = deadline.getTime() - Date.now();
+    if (diff <= 0) return 'Tiempo agotado';
+    const mins = Math.floor(diff / 60000);
+    const d = Math.floor(mins / (60 * 24));
+    const h = Math.floor((mins % (60 * 24)) / 60);
+    const m = mins % 60;
+    if (d > 0) return `Quedan ${d}d ${h}h`;
+    return `Quedan ${h}h ${m}m`;
+}
+function ensureUnitGlossaries(unit) {
+    unit.glossaries = unit.glossaries || [];
+    const legacy = Array.isArray(unit.glossaryTerms) ? unit.glossaryTerms : [];
+    if (!unit.glossaries.length) {
+        unit.glossaries.push({ id: 'gls-stu-' + Date.now(), title: 'Glosario general', terms: legacy });
+    } else if (legacy.length) {
+        const g0 = unit.glossaries[0];
+        g0.terms = g0.terms || [];
+        const ids = new Set(g0.terms.map(t => String(t.id)));
+        legacy.forEach(t => {
+            if (!ids.has(String(t.id))) {
+                g0.terms.push(t);
+                ids.add(String(t.id));
+            }
+        });
+    }
+    return unit.glossaries;
+}
+function allowsLateSubmission(act) {
+    return !act || act.allowLateSubmission !== false;
+}
+function isSubmissionLate(act, sub) {
+    if (!act || !sub || !sub.submittedAt) return false;
+    if (sub.isLate === true) return true;
+    const deadline = getActivityDeadline(act);
+    if (!deadline) return false;
+    return new Date(sub.submittedAt) > deadline;
+}
+function toggleCard(id, forceOpen) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const nextOpen = typeof forceOpen === 'boolean' ? forceOpen : !el.classList.contains('open');
+    el.classList.toggle('open', nextOpen);
+    setStudentCardOpen(id, nextOpen);
+}
 
 function navigateTo(section) {
     document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
@@ -307,10 +693,25 @@ function loadAusencias() {
     document.getElementById('ausFecha').value = new Date().toISOString().split('T')[0];
     const sid = currentStudent ? currentStudent.id : 1;
     const historial = JSON.parse(localStorage.getItem('educat_ausencias_'+sid)||'[]');
+    const central = JSON.parse(localStorage.getItem('educat_absence_reports') || '[]');
+    const centralMap = central.reduce((acc, item) => { acc[String(item.id)] = item; return acc; }, {});
+    const normalized = historial.map(item => {
+        const fromCentral = centralMap[String(item.id)] || null;
+        return fromCentral ? { ...item, ...fromCentral } : item;
+    });
+    localStorage.setItem('educat_ausencias_'+sid, JSON.stringify(normalized));
     const hist = document.getElementById('ausenciasHistorial');
-    if (!historial.length) { hist.innerHTML='<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin reportes previos</div><div class="empty-state-text">Aún no has reportado ninguna ausencia.</div></div>'; return; }
+    if (!normalized.length) { hist.innerHTML='<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin reportes previos</div><div class="empty-state-text">Aún no has reportado ninguna ausencia.</div></div>'; return; }
     hist.innerHTML = '<table><thead><tr><th>Fecha</th><th>Curso</th><th>Motivo</th><th>Documentos</th><th>Estado</th></tr></thead><tbody>' +
-        historial.slice().reverse().map(a=>`<tr><td>${a.fecha}</td><td>${a.curso}</td><td style="max-width:160px;font-size:12.5px">${a.motivo}</td><td>${a.archivos?'<span class="badge badge-navy">'+a.archivos+' archivo(s)</span>':'—'}</td><td><span class="badge badge-gold">Pendiente</span></td></tr>`).join('') + '</tbody></table>';
+        normalized.slice().reverse().map(a=>{
+            const status = a.status || 'pending';
+            const statusBadge = status === 'approved'
+                ? '<span class="badge badge-success">Valida</span>'
+                : status === 'rejected'
+                    ? '<span class="badge badge-error">No valida</span>'
+                    : '<span class="badge badge-gold">Pendiente</span>';
+            return `<tr><td>${a.fecha}</td><td>${a.courseName || a.curso || '—'}</td><td style="max-width:160px;font-size:12.5px">${a.motivo || ''}${a.descripcion ? ' — ' + a.descripcion.slice(0, 60) : ''}</td><td>${a.archivos?'<span class="badge badge-navy">'+a.archivos+' archivo(s)</span>':'—'}</td><td>${statusBadge}</td></tr>`;
+        }).join('') + '</tbody></table>';
 }
 
 // ═══════════════════════ ÁREA PERSONAL ═══════════════════════════
@@ -363,7 +764,7 @@ function openPersonalView(type) {
     else if (type === 'autoeval')   { content.innerHTML = apEvalHtml(courses, 'autoeval');   apInitEval(courses, 'autoeval'); }
     else if (type === 'horario')    { content.innerHTML = apHorarioHtml();                   apInitHorario(); }
     else if (type === 'resultados') { content.innerHTML = apResultadosHtml(courses); }
-    else if (type === 'bienestar')  { content.innerHTML = apBienestarHtml(); }
+    else if (type === 'bienestar')  { content.innerHTML = apBienestarHtml(); apInitBienestar(); }
 }
 
 function closePersonalView() {
@@ -407,7 +808,7 @@ function apToggleGrade(i) {
 function apGC(v) { return isNaN(v)?'var(--text-muted)':v>=8?'#27AE60':v>=6?'#C8962E':'#C0392B'; }
 function apGL(v) { return isNaN(v)?'—':v>=9?'Sobresaliente':v>=8?'Excelente':v>=7?'Bueno':v>=6?'Aprobado':'Reprobado'; }
 
-const AP_GUIDES = [
+const DEFAULT_AP_GUIDES = [
     {
         id: 'ins-manual',
         title: 'Manual de Convivencia',
@@ -505,6 +906,17 @@ const AP_GUIDES = [
         ]
     }
 ];
+
+function loadAdminGuidesOrDefault() {
+    try {
+        const raw = JSON.parse(localStorage.getItem('educat_admin_instructivos') || '[]');
+        return Array.isArray(raw) && raw.length ? raw : DEFAULT_AP_GUIDES;
+    } catch (e) {
+        return DEFAULT_AP_GUIDES;
+    }
+}
+
+let AP_GUIDES = loadAdminGuidesOrDefault();
 
 function apGetGuideById(guideId) {
     return AP_GUIDES.find(g => g.id === guideId) || null;
@@ -749,6 +1161,12 @@ function apEvalKey(prefix, courseId) { return 'educat_'+prefix+'_'+(currentStude
 function apGetEval(prefix, courseId) { try { return JSON.parse(localStorage.getItem(apEvalKey(prefix,courseId)))||{}; } catch(e){ return {}; } }
 function apSaveEval(prefix, courseId, data) { localStorage.setItem(apEvalKey(prefix,courseId), JSON.stringify(data)); }
 
+function isEvalAnswerFilled(q, value) {
+    if (Array.isArray(value)) return value.length > 0;
+    if (q && q.type === 'open') return String(value || '').trim().length > 0;
+    return value !== undefined && value !== null && value !== '';
+}
+
 function apEvalHtml(courses, prefix) {
     const questions = prefix==='autoeval' ? AUTOEVAL_QUESTIONS : EVAL_QUESTIONS;
     const info = prefix==='autoeval' ? 'Reflexiona honestamente sobre tu desempeño en cada asignatura.' : 'Evalúa a cada docente. Tu opinión es completamente confidencial.';
@@ -782,7 +1200,7 @@ function apEvalHtml(courses, prefix) {
 function apBuildQs(prefix, courseId, questions, disabled) {
     const saved = apGetEval(prefix, courseId);
     return questions.map(q => {
-        const val = saved[q.id], answered = val!==undefined&&val!==null&&val!=='';
+        const val = saved[q.id], answered = isEvalAnswerFilled(q, val);
         let input = '';
         if (q.type==='binary') {
             input = `<div class="eval-binary-group">${['si','no'].map(opt=>`<button class="eval-binary-btn${val===opt?' active-'+opt:''}" onclick="apSetEval('${prefix}','${courseId}','${q.id}','${opt}',this,'binary')" data-opt="${opt}" ${disabled?'disabled':''}>${opt==='si'?'<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Sí':'<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> No'}</button>`).join('')}</div>`;
@@ -796,8 +1214,23 @@ function apBuildQs(prefix, courseId, questions, disabled) {
         if (q.type==='open') {
             input = `<textarea class="eval-open-input" rows="3" placeholder="Escribe aquí..." ${disabled?'disabled':''} oninput="apSetEval('${prefix}','${courseId}','${q.id}',this.value,this,'open')">${val||''}</textarea>`;
         }
-        return `<div class="eval-question${answered?' answered':''}" id="${prefix}-q-${courseId}-${q.id}"><div class="eval-q-label-row"><span class="eval-q-tag">${q.label}</span>${q.type!=='open'?'<span class="eval-q-required">*</span>':''}${answered?'<svg width="13" height="13" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>':''}</div><p class="eval-q-text">${q.text}</p>${input}</div>`;
+        if (q.type==='multiselect') {
+            const opts = Array.isArray(q.options) ? q.options : [];
+            const selected = Array.isArray(val) ? val : [];
+            input = `<div class="eval-multi-group">${opts.map(opt => `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text-body)"><input type="checkbox" ${selected.includes(opt)?'checked':''} ${disabled?'disabled':''} onchange="apToggleEvalMulti('${prefix}','${courseId}','${q.id}','${String(opt).replace(/'/g, "\\'")}',this)">${opt}</label>`).join('') || '<div style="font-size:12px;color:var(--text-muted)">Sin opciones configuradas.</div>'}</div>`;
+        }
+        return `<div class="eval-question${answered?' answered':''}" id="${prefix}-q-${courseId}-${q.id}"><div class="eval-q-label-row"><span class="eval-q-tag">${q.label}</span>${q.required === false ? '' : '<span class="eval-q-required">*</span>'}${answered?'<svg width="13" height="13" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>':''}</div><p class="eval-q-text">${q.text}</p>${input}</div>`;
     }).join('');
+}
+
+function apToggleEvalMulti(prefix, courseId, qId, option, el) {
+    if (localStorage.getItem(apEvalKey(prefix,courseId)+'_sent')) return;
+    const data = apGetEval(prefix, courseId);
+    const arr = Array.isArray(data[qId]) ? [...data[qId]] : [];
+    const idx = arr.indexOf(option);
+    if (el.checked && idx < 0) arr.push(option);
+    if (!el.checked && idx >= 0) arr.splice(idx, 1);
+    apSetEval(prefix, courseId, qId, arr, el, 'multiselect');
 }
 
 function apSetEval(prefix, courseId, qId, value, el, type) {
@@ -806,10 +1239,17 @@ function apSetEval(prefix, courseId, qId, value, el, type) {
     data[qId] = value;
     apSaveEval(prefix, courseId, data);
     const qEl = document.getElementById(prefix+'-q-'+courseId+'-'+qId);
+    const questions = prefix === 'autoeval' ? AUTOEVAL_QUESTIONS : EVAL_QUESTIONS;
+    const qCfg = questions.find(q => q.id === qId);
+    const filled = isEvalAnswerFilled(qCfg, value);
     if (qEl) {
-        qEl.classList.add('answered');
+        qEl.classList.toggle('answered', filled);
         const lr = qEl.querySelector('.eval-q-label-row');
-        if (lr && !lr.querySelector('svg[stroke="var(--success)"]')) lr.insertAdjacentHTML('beforeend','<svg width="13" height="13" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>');
+        if (lr && filled && !lr.querySelector('svg[stroke="var(--success)"]')) lr.insertAdjacentHTML('beforeend','<svg width="13" height="13" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>');
+        if (lr && !filled) {
+            const check = lr.querySelector('svg[stroke="var(--success)"]');
+            if (check) check.remove();
+        }
     }
     if (type==='binary') { el.closest('.eval-binary-group').querySelectorAll('.eval-binary-btn').forEach(b=>{b.className='eval-binary-btn'+(b.dataset.opt===value?' active-'+value:'');}); }
     if (type==='rating5'||type==='rating10') { el.closest('.eval-rating-group').querySelectorAll('.eval-rating-btn').forEach(b=>{b.classList.toggle('selected',parseInt(b.dataset.val)===value);}); }
@@ -818,7 +1258,7 @@ function apSetEval(prefix, courseId, qId, value, el, type) {
 function apUpdateBadge(prefix, courseId) {
     const questions = prefix==='autoeval'?AUTOEVAL_QUESTIONS:EVAL_QUESTIONS;
     const data = apGetEval(prefix, courseId);
-    const done = questions.filter(q=>data[q.id]!==undefined&&data[q.id]!==null&&data[q.id]!=='').length;
+    const done = questions.filter(q=>isEvalAnswerFilled(q, data[q.id])).length;
     const panel = document.querySelector(`.eval-form-panel[data-course="${courseId}"][data-prefix="${prefix}"]`);
     if (!panel) return;
     const idx = panel.id.replace(prefix+'-panel-','');
@@ -833,7 +1273,7 @@ function apSwitchEval(idx, prefix) {
 function apSubmitEval(prefix, panelIdx, courseId) {
     const questions = prefix==='autoeval'?AUTOEVAL_QUESTIONS:EVAL_QUESTIONS;
     const data    = apGetEval(prefix, courseId);
-    const missing = questions.filter(q=>q.type!=='open'&&(data[q.id]===undefined||data[q.id]===null||data[q.id]===''));
+    const missing = questions.filter(q => q.required !== false && !isEvalAnswerFilled(q, data[q.id]));
     if (missing.length) {
         showToast('Responde todas las preguntas obligatorias (*).','error');
         const el=document.getElementById(prefix+'-q-'+courseId+'-'+missing[0].id);
@@ -891,23 +1331,377 @@ function apResultadosHtml(courses) {
 }
 
 // ── 6. Bienestar Estudiantil ─────────────────────────────────────
-function apBienestarHtml() {
-    const services = [
-        { color:'rgba(142,68,173,0.1)', stroke:'#8e44ad', icon:'<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>', title:'Apoyo Psicológico',         desc:'Atención individual y grupal con profesionales en salud mental. Espacios de escucha y acompañamiento emocional.', cta:'Solicitar cita' },
-        { color:'rgba(39,174,96,0.08)', stroke:'var(--success)', icon:'<circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>', title:'Actividad Física y Deporte', desc:'Torneos internos, equipos representativos y acceso a instalaciones deportivas durante la jornada académica.', cta:'Más información' },
-        { color:'rgba(200,150,46,0.08)',stroke:'var(--gold)',    icon:'<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',  title:'Arte y Cultura',             desc:'Grupos de teatro, música, danza y artes plásticas. Participa en los eventos culturales del calendario institucional.', cta:'Inscribirme' },
-        { color:'rgba(30,107,116,0.08)',stroke:'var(--teal)',    icon:'<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>',  title:'Apoyos Económicos y Becas',  desc:'Descuentos por excelencia académica, becas socioeconómicas y planes de financiamiento flexible para tu matrícula.', cta:'Consultar requisitos' },
-        { color:'rgba(192,57,43,0.07)', stroke:'#e74c3c',       icon:'<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',                  title:'Servicio Médico y Salud',    desc:'Enfermería disponible en la institución, campañas de vacunación y orientación en salud preventiva.', cta:'Más información' },
-        { color:'rgba(26,58,107,0.07)', stroke:'var(--navy-light)', icon:'<circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>',              title:'Orientación Vocacional',     desc:'Talleres de proyección profesional, feria de universidades y asesoría personalizada para tu plan de vida.', cta:'Agendar sesión' },
-    ];
-    const cards = services.map((s,i) => `<div class="bw-card"><div class="bw-card-icon" style="background:${s.color}"><svg width="24" height="24" fill="none" stroke="${s.stroke}" stroke-width="1.5" viewBox="0 0 24 24">${s.icon}</svg></div><div class="bw-card-title">${s.title}</div><p class="bw-card-desc">${s.desc}</p><button class="bw-card-btn" onclick="apBwRequest('${s.title}',${i})">${s.cta} <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button><div id="bw-sent-${i}" style="display:none;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--success)"><svg width="14" height="14" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Solicitud enviada</div></div>`).join('');
-    return `<div style="max-width:900px;margin:0 auto"><div style="background:linear-gradient(135deg,#0B1F3A,#1A3A6B);border-radius:var(--radius);padding:20px 24px;display:flex;align-items:center;gap:14px;margin-bottom:20px"><svg width="18" height="18" fill="none" stroke="#fff" stroke-width="1.5" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg><div><div style="font-size:14px;font-weight:700;color:#fff">Servicios de Bienestar Estudiantil</div><div style="font-size:12.5px;color:rgba(255,255,255,0.65);margin-top:2px">Tu institución te acompaña más allá del aula.</div></div></div><div class="bw-grid">${cards}</div></div>`;
+const WELLNESS_DATA = {
+    psychologists: [
+        { id: 'ps1', name: 'Dra. Laura Sánchez', specialty: 'Ansiedad y manejo emocional', dates: [{ date: '2026-04-14', slots: ['08:00', '09:00', '10:30'] }, { date: '2026-04-16', slots: ['14:00', '15:30'] }] },
+        { id: 'ps2', name: 'Msc. Camila Gómez', specialty: 'Orientación familiar y académica', dates: [{ date: '2026-04-15', slots: ['09:30', '11:00'] }, { date: '2026-04-18', slots: ['08:30', '10:00', '11:30'] }] },
+    ],
+    psychologyPosts: [
+        { id: 'psy-1', title: 'Cómo manejar el estrés académico', author: 'Dra. Laura Sánchez', date: '2026-04-08', content: '<p>Identificar detonantes y organizar tus tiempos disminuye la carga mental. Empieza por bloques de estudio cortos y descansos conscientes.</p><ul><li>Planifica con anticipación.</li><li>Prioriza tareas por impacto.</li><li>Busca apoyo cuando sea necesario.</li></ul>', videoLink: 'https://www.youtube.com/watch?v=hnpQrMqDoqE', reactions: { like: 12, love: 4, clap: 7 } },
+        { id: 'psy-2', title: 'Técnicas de respiración para exámenes', author: 'Msc. Camila Gómez', date: '2026-04-05', content: '<p>La respiración diafragmática ayuda a regular el sistema nervioso. Practícala 5 minutos antes de cada evaluación.</p>', reactions: { like: 8, love: 2, clap: 5 } }
+    ],
+    sportsPosts: [
+        { id: 'spo-1', title: 'Intercolegiados 2026: calendario oficial', author: 'Coordinación Deportiva', date: '2026-04-07', content: '<p>Ya está disponible el cronograma de eliminatorias en fútbol, baloncesto y voleibol.</p>', reactions: { like: 16, love: 3, clap: 10 } },
+        { id: 'spo-2', title: 'Entrenamiento funcional para estudiantes', author: 'Entrenador David Peña', date: '2026-04-03', content: '<p>Rutina de 20 minutos para mejorar resistencia y concentración.</p>', videoLink: 'https://www.youtube.com/watch?v=ml6cT4AZdqI', reactions: { like: 10, love: 2, clap: 6 } }
+    ],
+    sportsArticles: [
+        { id: 'spo-a1', title: 'Prevención de lesiones en entrenamiento escolar', author: 'Área de Rendimiento', date: '2026-04-01', content: '<p>Una correcta activación articular y muscular reduce de forma significativa la probabilidad de lesión durante prácticas deportivas. El calentamiento debe durar entre 10 y 15 minutos y enfocarse en movilidad, técnica y progresión de carga.</p><p>Recomendaciones clave: hidratación previa, control de fatiga y pausas activas en sesiones largas.</p>' },
+    ],
+    sportCalls: [
+        { id: 'sc1', title: 'Convocatoria Selección de Fútbol', closeDate: '2026-04-20', slots: 22 },
+        { id: 'sc2', title: 'Convocatoria Atletismo (100m y 400m)', closeDate: '2026-04-24', slots: 15 },
+    ],
+    artPosts: [
+        { id: 'art-1', title: 'Festival de Talentos: bases de participación', author: 'Coordinación Cultural', date: '2026-04-06', content: '<p>Se abre convocatoria para danza, teatro, música y artes visuales.</p>', reactions: { like: 9, love: 5, clap: 6 } },
+        { id: 'art-2', title: 'Muestra de dibujo y pintura', author: 'Prof. Lina Ortega', date: '2026-04-02', content: '<p>Exposición abierta con acompañamiento docente en técnica y composición.</p>', reactions: { like: 7, love: 4, clap: 3 } }
+    ],
+    artArticles: [
+        { id: 'art-a1', title: 'Elementos básicos de análisis visual en artes plásticas', author: 'Departamento de Arte', date: '2026-03-29', content: '<p>El análisis visual contempla composición, equilibrio, contraste, ritmo y jerarquía. Para valorar una obra académicamente, conviene describir primero lo observable y luego interpretar desde el contexto histórico y simbólico.</p>' },
+    ],
+    orientationPosts: [
+        { id: 'ori-1', title: 'Cómo elegir carrera según tus fortalezas', author: 'Equipo de Orientación', date: '2026-04-09', content: '<p>Conoce herramientas de autoconocimiento para tomar una decisión informada.</p>', videoLink: 'https://www.youtube.com/watch?v=3LopI4YeC4I', reactions: { like: 11, love: 3, clap: 8 } },
+    ],
+    orientationArticles: [
+        { id: 'ori-a1', title: 'Marco académico para la toma de decisiones vocacionales', author: 'Equipo de Orientación', date: '2026-03-31', content: '<p>La decisión vocacional integra intereses, habilidades, valores personales y oportunidades del entorno. Se recomienda contrastar resultados de pruebas vocacionales con experiencias prácticas (talleres, mentorías y proyectos).</p>' },
+    ],
+    workshops: [
+        { id: 'wk1', title: 'Taller: Proyecto de vida', date: '2026-04-19', capacity: 45 },
+        { id: 'wk2', title: 'Taller: Perfil profesional y hoja de vida', date: '2026-04-26', capacity: 35 },
+    ],
+    medicalPosts: [
+        { id: 'med-1', title: 'Campaña de vacunación institucional', author: 'Servicio Médico', date: '2026-04-04', content: '<p>Consulta jornadas y requisitos de acceso.</p>', reactions: { like: 13, love: 1, clap: 4 } },
+        { id: 'med-2', title: 'Hábitos de sueño saludables', author: 'Servicio Médico', date: '2026-04-01', content: '<p>Pequeños cambios diarios mejoran concentración y rendimiento académico.</p>', reactions: { like: 9, love: 2, clap: 4 } }
+    ],
+    scholarshipCalls: [
+        { id: 'bc1', title: 'Beca por excelencia académica', closeDate: '2026-04-30', requirement: 'Promedio >= 8.5' },
+        { id: 'bc2', title: 'Apoyo socioeconómico semestral', closeDate: '2026-05-10', requirement: 'Estudio socioeconómico vigente' },
+    ],
+};
+
+function apWellnessKey() { return 'educat_wellness_' + (currentStudent ? currentStudent.id : 1); }
+function apGetWellnessState() {
+    const base = {
+        psychAppointments: [], sportRegistrations: [], workshopRegistrations: [], medicalAppointments: [], scholarshipRequests: [],
+        activeSection: '', feedState: {}, postReactions: {}, postComments: {}
+    };
+    try { return { ...base, ...(JSON.parse(localStorage.getItem(apWellnessKey()) || '{}')) }; } catch (e) { return base; }
 }
-function apBwRequest(service, idx) {
-    const btn=document.getElementById('bw-sent-'+idx).previousElementSibling, sent=document.getElementById('bw-sent-'+idx);
-    if(btn) btn.style.display='none';
-    if(sent) sent.style.display='flex';
-    showToast('Solicitud enviada — '+service,'success');
+function apSaveWellnessState(state) { localStorage.setItem(apWellnessKey(), JSON.stringify(state)); }
+function apStripHtmlToText(html) { const div = document.createElement('div'); div.innerHTML = html || ''; return (div.textContent || div.innerText || '').trim(); }
+function apVideoEmbedHtml(url) {
+    if (!url) return '';
+    const yt = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{6,})/.exec(url);
+    if (yt && yt[1]) return `<div style="margin-top:10px"><iframe src="https://www.youtube.com/embed/${yt[1]}" title="Video" style="width:100%;height:260px;border:1px solid rgba(11,31,58,0.1);border-radius:8px" allowfullscreen></iframe></div>`;
+    return `<div style="margin-top:10px"><a class="btn btn-sm btn-outline" href="${url}" target="_blank" rel="noopener">Ver video</a></div>`;
+}
+function apGetWellnessPosts(section) {
+    if (section === 'psychology') return WELLNESS_DATA.psychologyPosts || [];
+    if (section === 'sports') return WELLNESS_DATA.sportsPosts || [];
+    if (section === 'art') return WELLNESS_DATA.artPosts || [];
+    if (section === 'orientation') return WELLNESS_DATA.orientationPosts || [];
+    if (section === 'medical') return WELLNESS_DATA.medicalPosts || [];
+    return [];
+}
+function apGetWellnessArticles(section) {
+    if (section === 'sports') return WELLNESS_DATA.sportsArticles || [];
+    if (section === 'art') return WELLNESS_DATA.artArticles || [];
+    if (section === 'orientation') return WELLNESS_DATA.orientationArticles || [];
+    return [];
+}
+function apGetFeedConfig(section) {
+    const state = apGetWellnessState();
+    const current = (state.feedState && state.feedState[section]) || {};
+    return { query: current.query || '', sort: current.sort || 'recent', page: current.page || 1, pageSize: 4 };
+}
+function apSetFeedConfig(section, partial) {
+    const state = apGetWellnessState();
+    state.feedState = state.feedState || {};
+    state.feedState[section] = { ...(state.feedState[section] || {}), ...partial };
+    apSaveWellnessState(state);
+}
+
+function getAdminPermissionsForCurrentStudent() {
+    try {
+        const rolePerms = JSON.parse(localStorage.getItem('educat_admin_role_permissions') || '{}');
+        const userPerms = JSON.parse(localStorage.getItem('educat_admin_user_permissions') || '{}');
+        const roleId = currentUser && currentUser.role ? currentUser.role.id : null;
+        const userId = currentUser ? currentUser.id : null;
+        const base = roleId ? (rolePerms[String(roleId)] || []) : [];
+        const direct = userId ? (userPerms[String(userId)] || []) : [];
+        return Array.from(new Set([...(base || []), ...(direct || [])]));
+    } catch (e) {
+        return [];
+    }
+}
+
+function canAccessWellnessSection(section) {
+    const map = {
+        psychology: 'bienestar.psicologia',
+        sports: 'bienestar.deportes',
+        art: 'bienestar.arte',
+        orientation: 'bienestar.orientacion',
+        medical: 'bienestar.salud',
+        scholarships: 'bienestar.becas'
+    };
+    const key = map[section];
+    if (!key) return true;
+    const perms = getAdminPermissionsForCurrentStudent();
+    const anyWellnessConfig = perms.some(p => String(p || '').startsWith('bienestar.'));
+    if (!anyWellnessConfig) return true;
+    return perms.includes(key);
+}
+
+function apWellnessCardsHtml() {
+    const cards = [
+        { sec: 'psychology', title: 'Apoyo Psicológico', desc: 'Agenda citas y consulta publicaciones profesionales.', icon: '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>' },
+        { sec: 'sports', title: 'Actividad Física y Deportes', desc: 'Noticias deportivas e inscripción a convocatorias.', icon: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>' },
+        { sec: 'art', title: 'Arte y Cultura', desc: 'Eventos y publicaciones del ámbito artístico.', icon: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>' },
+        { sec: 'orientation', title: 'Orientación Vocacional', desc: 'Artículos, videos y talleres de orientación.', icon: '<circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>' },
+        { sec: 'medical', title: 'Servicio Médico y Salud', desc: 'Solicitudes médicas y contenidos de prevención.', icon: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>' },
+        { sec: 'scholarships', title: 'Apoyos Económicos y Becas', desc: 'Convocatorias vigentes y postulaciones.', icon: '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>' },
+    ];
+    const allowed = cards.filter(c => canAccessWellnessSection(c.sec));
+    if (!allowed.length) {
+        return `<div class="card"><div class="card-body"><div class="empty-state"><div class="empty-state-title">Sin módulos habilitados</div><div class="empty-state-text">Tu rol no tiene secciones de bienestar asignadas por administración.</div></div></div></div>`;
+    }
+    return `<div class="bw-grid">${allowed.map(c => `<div class="bw-card"><div class="bw-card-title-row"><span class="bw-card-mini-icon"><svg width="16" height="16" fill="none" stroke="var(--navy)" stroke-width="1.8" viewBox="0 0 24 24">${c.icon}</svg></span><div class="bw-card-title">${c.title}</div></div><p class="bw-card-desc">${c.desc}</p><button class="bw-card-btn" onclick="apOpenWellnessSection('${c.sec}')">Ingresar <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button></div>`).join('')}</div>`;
+}
+
+function apSocialReactionCount(section, post, reactionKey) {
+    const state = apGetWellnessState();
+    const key = post.id;
+    const base = (post.reactions && post.reactions[reactionKey]) || 0;
+    const mine = (((state.postReactions || {})[section] || {})[key] || '');
+    return base + (mine === reactionKey ? 1 : 0);
+}
+function apSetPostReaction(section, postId, reactionKey) {
+    const state = apGetWellnessState();
+    state.postReactions = state.postReactions || {};
+    state.postReactions[section] = state.postReactions[section] || {};
+    state.postReactions[section][postId] = state.postReactions[section][postId] === reactionKey ? '' : reactionKey;
+    apSaveWellnessState(state);
+    apOpenWellnessSection(section);
+}
+function apAddPostComment(section, postId) {
+    const input = document.getElementById(`bwCommentInput-${section}-${postId}`);
+    const text = (input ? input.value : '').trim();
+    if (!text) { showToast('Escribe un comentario.', 'error'); return; }
+    const state = apGetWellnessState();
+    state.postComments = state.postComments || {};
+    state.postComments[section] = state.postComments[section] || {};
+    state.postComments[section][postId] = state.postComments[section][postId] || [];
+    state.postComments[section][postId].push({ id: 'c-' + Date.now(), author: (currentUser && currentUser.name) || 'Estudiante', text, createdAt: new Date().toISOString() });
+    apSaveWellnessState(state);
+    apOpenWellnessSection(section);
+}
+function apOpenAllPostComments(section, postId) {
+    const state = apGetWellnessState();
+    const comments = ((((state.postComments || {})[section] || {})[postId]) || []);
+    const post = (apGetWellnessPosts(section) || []).find(p => p.id === postId);
+    document.getElementById('modalTitle').textContent = 'Comentarios' + (post ? ' — ' + post.title : '');
+    document.getElementById('modalBody').innerHTML = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${comments.length} comentario(s)</div><div class="bw-comments-list">${comments.length ? comments.slice().reverse().map(c => `<div class="bw-comment-item"><strong>${c.author}</strong><span>${new Date(c.createdAt).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span><div>${c.text}</div></div>`).join('') : '<div style="font-size:12px;color:var(--text-muted)">Sin comentarios aún.</div>'}</div>`;
+    srtSetModalSize('lg');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+function apRenderPostCard(section, post) {
+    const state = apGetWellnessState();
+    const myReaction = (((state.postReactions || {})[section] || {})[post.id] || '');
+    const comments = ((((state.postComments || {})[section] || {})[post.id]) || []);
+    const lastComment = comments.length ? comments[comments.length - 1] : null;
+    const commentsPreview = lastComment
+        ? `<div class="bw-comment-item"><strong>${lastComment.author}</strong><span>${new Date(lastComment.createdAt).toLocaleDateString('es-CO')}</span><div>${lastComment.text}</div></div>${comments.length > 1 ? `<div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="apOpenAllPostComments('${section}','${post.id}')">Leer más (${comments.length - 1} más)</button></div>` : ''}`
+        : '<div style="font-size:12px;color:var(--text-muted)">Sin comentarios aún.</div>';
+    return `<article class="bw-social-card"><div class="bw-post-head"><div class="bw-post-title">${post.title}</div><div class="bw-post-meta">${post.author ? post.author + ' · ' : ''}${new Date(post.date + 'T00:00:00').toLocaleDateString('es-CO')}</div></div><div class="bw-post-body">${post.content || ''}</div>${apVideoEmbedHtml(post.videoLink)}<div class="bw-reactions-row"><button class="bw-react-btn ${myReaction==='like'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','like')">👍 ${apSocialReactionCount(section, post, 'like')}</button><button class="bw-react-btn ${myReaction==='love'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','love')">❤️ ${apSocialReactionCount(section, post, 'love')}</button><button class="bw-react-btn ${myReaction==='clap'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','clap')">👏 ${apSocialReactionCount(section, post, 'clap')}</button></div><div class="bw-comments-wrap"><div class="bw-comments-list">${commentsPreview}</div><div class="bw-comment-form"><input id="bwCommentInput-${section}-${post.id}" class="form-input" placeholder="Escribe un comentario..."><button class="btn btn-sm btn-outline" onclick="apAddPostComment('${section}','${post.id}')">Comentar</button></div></div></article>`;
+}
+function apRenderSocialFeed(section, title, actionButtonsHtml) {
+    const cfg = apGetFeedConfig(section);
+    let posts = [...apGetWellnessPosts(section)];
+    if (cfg.query) {
+        const q = cfg.query.toLowerCase();
+        posts = posts.filter(p => (p.title || '').toLowerCase().includes(q) || (p.author || '').toLowerCase().includes(q) || apStripHtmlToText(p.content || '').toLowerCase().includes(q));
+    }
+    posts.sort((a, b) => cfg.sort === 'old' ? new Date(a.date) - new Date(b.date) : new Date(b.date) - new Date(a.date));
+    const totalPages = Math.max(1, Math.ceil(posts.length / cfg.pageSize));
+    const safePage = Math.min(Math.max(1, cfg.page), totalPages);
+    const chunk = posts.slice((safePage - 1) * cfg.pageSize, safePage * cfg.pageSize);
+    return `<div class="card"><div class="card-header"><span class="card-title">${title}</span><div style="display:flex;gap:8px;flex-wrap:wrap">${actionButtonsHtml || ''}<button class="btn btn-sm btn-outline" onclick="apOpenWellnessSection('')">Volver</button></div></div><div class="card-body"><div class="bw-feed-toolbar"><input class="form-input" placeholder="Buscar publicaciones..." value="${cfg.query}" oninput="apSetFeedConfig('${section}',{query:this.value,page:1});apOpenWellnessSection('${section}')"><select class="form-input" onchange="apSetFeedConfig('${section}',{sort:this.value,page:1});apOpenWellnessSection('${section}')"><option value="recent" ${cfg.sort==='recent'?'selected':''}>Más reciente</option><option value="old" ${cfg.sort==='old'?'selected':''}>Más antiguo</option></select></div><div class="bw-social-feed">${chunk.length ? chunk.map(p => apRenderPostCard(section, p)).join('') : '<div style="font-size:13px;color:var(--text-muted)">No hay publicaciones para estos filtros.</div>'}</div><div class="bw-pagination"><span style="font-size:12px;color:var(--text-muted)">Página ${safePage} de ${totalPages}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="apSetFeedConfig('${section}',{page:${safePage - 1}});apOpenWellnessSection('${section}')">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="apSetFeedConfig('${section}',{page:${safePage + 1}});apOpenWellnessSection('${section}')">Siguiente</button></div></div></div></div>`;
+}
+
+function apOpenWellnessArticle(section, articleId) {
+    const article = (apGetWellnessArticles(section) || []).find(a => a.id === articleId);
+    if (!article) return;
+    document.getElementById('modalTitle').textContent = article.title;
+    document.getElementById('modalBody').innerHTML = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${article.author ? article.author + ' · ' : ''}${new Date(article.date + 'T00:00:00').toLocaleDateString('es-CO')}</div><article class="bw-formal-article">${article.content || ''}</article>`;
+    srtSetModalSize('xl');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+
+function apRenderArticlesPanel(section, title) {
+    const articles = apGetWellnessArticles(section);
+    return `<div class="card" style="margin-top:14px"><div class="card-header"><span class="card-title">${title}</span></div><div class="card-body">${articles.length ? articles.map(a => `<div class="bw-article-row"><div><div class="bw-article-title">${a.title}</div><div class="bw-article-meta">${a.author ? a.author + ' · ' : ''}${new Date(a.date + 'T00:00:00').toLocaleDateString('es-CO')}</div></div><button class="btn btn-sm btn-outline" onclick="apOpenWellnessArticle('${section}','${a.id}')">Leer artículo</button></div>`).join('') : '<div style="font-size:13px;color:var(--text-muted)">Sin artículos disponibles por ahora.</div>'}</div></div>`;
+}
+
+function apRenderFormalFeed(section, title, actionButtonsHtml) {
+    const cfg = apGetFeedConfig(section);
+    let posts = [...apGetWellnessPosts(section)];
+    if (cfg.query) {
+        const q = cfg.query.toLowerCase();
+        posts = posts.filter(p => (p.title || '').toLowerCase().includes(q) || (p.author || '').toLowerCase().includes(q) || apStripHtmlToText(p.content || '').toLowerCase().includes(q));
+    }
+    posts.sort((a, b) => cfg.sort === 'old' ? new Date(a.date) - new Date(b.date) : new Date(b.date) - new Date(a.date));
+    const totalPages = Math.max(1, Math.ceil(posts.length / cfg.pageSize));
+    const safePage = Math.min(Math.max(1, cfg.page), totalPages);
+    const chunk = posts.slice((safePage - 1) * cfg.pageSize, safePage * cfg.pageSize);
+    return `<div class="card"><div class="card-header"><span class="card-title">${title}</span><div style="display:flex;gap:8px;flex-wrap:wrap">${actionButtonsHtml || ''}<button class="btn btn-sm btn-outline" onclick="apOpenWellnessSection('')">Volver</button></div></div><div class="card-body"><div class="bw-feed-toolbar"><input class="form-input" placeholder="Buscar contenido..." value="${cfg.query}" oninput="apSetFeedConfig('${section}',{query:this.value,page:1});apOpenWellnessSection('${section}')"><select class="form-input" onchange="apSetFeedConfig('${section}',{sort:this.value,page:1});apOpenWellnessSection('${section}')"><option value="recent" ${cfg.sort==='recent'?'selected':''}>Más reciente</option><option value="old" ${cfg.sort==='old'?'selected':''}>Más antiguo</option></select></div><div class="bw-formal-feed">${chunk.length ? chunk.map(p => `<div class="bw-formal-item"><div class="bw-formal-title">${p.title}</div><div class="bw-formal-meta">${p.author ? p.author + ' · ' : ''}${new Date(p.date + 'T00:00:00').toLocaleDateString('es-CO')}</div><div class="bw-formal-excerpt">${apStripHtmlToText(p.content || '').slice(0, 220)}${apStripHtmlToText(p.content || '').length > 220 ? '...' : ''}</div>${p.videoLink ? `<a class="btn btn-sm btn-outline" href="${p.videoLink}" target="_blank" rel="noopener">Ver video</a>` : ''}</div>`).join('') : '<div style="font-size:13px;color:var(--text-muted)">No hay contenidos para estos filtros.</div>'}</div><div class="bw-pagination"><span style="font-size:12px;color:var(--text-muted)">Página ${safePage} de ${totalPages}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="apSetFeedConfig('${section}',{page:${safePage - 1}});apOpenWellnessSection('${section}')">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="apSetFeedConfig('${section}',{page:${safePage + 1}});apOpenWellnessSection('${section}')">Siguiente</button></div></div></div></div>`;
+}
+
+function apBienestarHtml() {
+    return `<div style="max-width:980px;margin:0 auto"><div class="bw-info-banner"><svg width="18" height="18" fill="none" stroke="#fff" stroke-width="1.5" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg><div><div style="font-size:14px;font-weight:700;color:#fff">Servicios de Bienestar Estudiantil</div><div style="font-size:12.5px;color:rgba(255,255,255,0.65);margin-top:2px">Interfaz estilo red social, cómoda para navegar publicaciones masivas.</div></div></div><div id="bwLandingCards"></div><div id="bwSectionContainer"></div></div>`;
+}
+function apInitBienestar() {
+    const state = apGetWellnessState();
+    document.getElementById('bwLandingCards').innerHTML = apWellnessCardsHtml();
+    apOpenWellnessSection(state.activeSection || '');
+}
+function apOpenWellnessSection(section) {
+    if (section && !canAccessWellnessSection(section)) {
+        showToast('No tienes permisos para esta sección de bienestar.', 'error');
+        return;
+    }
+    const state = apGetWellnessState();
+    state.activeSection = section;
+    apSaveWellnessState(state);
+    const landing = document.getElementById('bwLandingCards');
+    if (landing) landing.style.display = section ? 'none' : '';
+    apRenderWellnessSection(section);
+}
+function apRenderWellnessSection(section) {
+    const host = document.getElementById('bwSectionContainer');
+    if (!host) return;
+    if (!section) { host.innerHTML = ''; return; }
+    const state = apGetWellnessState();
+    if (section === 'psychology') {
+        host.innerHTML = apRenderSocialFeed('psychology', 'Apoyo Psicológico', `<button class="btn btn-sm btn-primary" onclick="apOpenPsychAppointmentModal()">Agendar cita</button><button class="btn btn-sm btn-outline" onclick="apOpenPsychHistoryModal()">Mis citas</button>`);
+        return;
+    }
+    if (section === 'sports') {
+        host.innerHTML = apRenderSocialFeed('sports', 'Actividad Física y Deportes', `<button class="btn btn-sm btn-primary" onclick="apOpenSportsCallsModal()">Ver convocatorias</button>`);
+        return;
+    }
+    if (section === 'art') {
+        host.innerHTML = apRenderSocialFeed('art', 'Arte y Cultura', '');
+        return;
+    }
+    if (section === 'orientation') {
+        host.innerHTML = apRenderSocialFeed('orientation', 'Orientación Vocacional', `<button class="btn btn-sm btn-primary" onclick="apOpenWorkshopsModal()">Ver talleres</button>`);
+        return;
+    }
+    if (section === 'medical') {
+        host.innerHTML = apRenderSocialFeed('medical', 'Servicio Médico y Salud', `<button class="btn btn-sm btn-primary" onclick="apOpenMedicalRequestModal()">Solicitar atención</button>`);
+        return;
+    }
+    if (section === 'scholarships') {
+        host.innerHTML = `<div class="card"><div class="card-header"><span class="card-title">Apoyos Económicos y Becas</span><button class="btn btn-sm btn-outline" onclick="apOpenWellnessSection('')">Volver</button></div><div class="card-body"><div class="bw-call-grid">${WELLNESS_DATA.scholarshipCalls.map(c => `<div class="bw-call-card"><div class="bw-call-title">${c.title}</div><div class="bw-call-meta">Cierre: ${new Date(c.closeDate + 'T00:00:00').toLocaleDateString('es-CO')}</div><div style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px">${c.requirement}</div><button class="btn btn-sm ${state.scholarshipRequests.includes(c.id) ? 'btn-success-outline' : 'btn-primary'}" onclick="apRequestScholarship('${c.id}')">${state.scholarshipRequests.includes(c.id) ? 'Postulación enviada' : 'Postularme'}</button></div>`).join('')}</div></div></div>`;
+        return;
+    }
+}
+
+function apPsychModalRefreshSlots() {
+    const profId = (document.getElementById('psyModalProfessional') || {}).value;
+    const date = (document.getElementById('psyModalDate') || {}).value;
+    const slotSel = document.getElementById('psyModalSlot');
+    if (!slotSel) return;
+    const prof = WELLNESS_DATA.psychologists.find(p => p.id === profId) || WELLNESS_DATA.psychologists[0];
+    const dateInfo = prof && prof.dates ? prof.dates.find(d => d.date === date) : null;
+    const slots = (dateInfo && dateInfo.slots && dateInfo.slots.length) ? dateInfo.slots : ['Sin disponibilidad'];
+    slotSel.innerHTML = slots.map(s => `<option value="${s}">${s}</option>`).join('');
+}
+function apOpenPsychAppointmentModal() {
+    document.getElementById('modalTitle').textContent = 'Agendar cita psicológica';
+    document.getElementById('modalBody').innerHTML = `<div class="form-group"><label class="form-label">Psicóloga</label><select id="psyModalProfessional" class="form-input" onchange="apPsychModalRefreshSlots()">${WELLNESS_DATA.psychologists.map(p => `<option value="${p.id}">${p.name} — ${p.specialty}</option>`).join('')}</select></div><div class="form-row"><div class="form-group"><label class="form-label">Fecha disponible</label><input type="date" id="psyModalDate" class="form-input" onchange="apPsychModalRefreshSlots()"></div><div class="form-group"><label class="form-label">Hora</label><select id="psyModalSlot" class="form-input"></select></div></div><div class="form-group"><label class="form-label">Motivo de la consulta</label>${buildStudentRichEditorHtml('psyModalReasonEditor',120)}</div><button class="btn btn-primary" onclick="apSubmitPsychAppointment()">Agendar cita</button>`;
+    const first = WELLNESS_DATA.psychologists[0];
+    const dateInput = document.getElementById('psyModalDate');
+    if (first && dateInput && first.dates.length) dateInput.value = first.dates[0].date;
+    apPsychModalRefreshSlots();
+    srtSetModalSize('xl');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+function apSubmitPsychAppointment() {
+    const profId = (document.getElementById('psyModalProfessional') || {}).value;
+    const date = (document.getElementById('psyModalDate') || {}).value;
+    const slot = (document.getElementById('psyModalSlot') || {}).value;
+    const reason = srtGetHtml('psyModalReasonEditor');
+    if (!profId || !date || !slot || slot === 'Sin disponibilidad' || !reason) { showToast('Completa profesional, fecha, hora y motivo.', 'error'); return; }
+    const prof = WELLNESS_DATA.psychologists.find(p => p.id === profId);
+    const state = apGetWellnessState();
+    state.psychAppointments.push({ id: 'pa-' + Date.now(), professionalId: profId, professionalName: prof ? prof.name : 'Psicología', date, slot, reason, status: 'pendiente', createdAt: new Date().toISOString() });
+    apSaveWellnessState(state);
+    closeModal();
+    showToast('Cita psicológica agendada', 'success');
+    apOpenWellnessSection('psychology');
+}
+function apOpenPsychHistoryModal() {
+    const state = apGetWellnessState();
+    document.getElementById('modalTitle').textContent = 'Mis citas psicológicas';
+    document.getElementById('modalBody').innerHTML = `<div class="bw-mini-list">${state.psychAppointments.length ? state.psychAppointments.slice().reverse().map(a => `<div class="bw-mini-item"><strong>${a.professionalName}</strong><span>${a.date} · ${a.slot}</span><span class="badge badge-gold">${a.status}</span></div>`).join('') : '<div style="font-size:12.5px;color:var(--text-muted)">Sin citas registradas.</div>'}</div>`;
+    srtSetModalSize('lg');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+function apOpenSportsCallsModal() {
+    const state = apGetWellnessState();
+    document.getElementById('modalTitle').textContent = 'Convocatorias deportivas';
+    document.getElementById('modalBody').innerHTML = `<div class="bw-call-grid">${WELLNESS_DATA.sportCalls.map(c => `<div class="bw-call-card"><div class="bw-call-title">${c.title}</div><div class="bw-call-meta">Cierre: ${new Date(c.closeDate + 'T00:00:00').toLocaleDateString('es-CO')} · Cupos: ${c.slots}</div><button class="btn btn-sm ${state.sportRegistrations.includes(c.id) ? 'btn-success-outline' : 'btn-primary'}" onclick="apRegisterSportsCall('${c.id}')">${state.sportRegistrations.includes(c.id) ? 'Inscrito' : 'Inscribirme'}</button></div>`).join('')}</div>`;
+    srtSetModalSize('xl');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+function apOpenWorkshopsModal() {
+    const state = apGetWellnessState();
+    document.getElementById('modalTitle').textContent = 'Talleres de orientación vocacional';
+    document.getElementById('modalBody').innerHTML = `<div class="bw-call-grid">${WELLNESS_DATA.workshops.map(w => `<div class="bw-call-card"><div class="bw-call-title">${w.title}</div><div class="bw-call-meta">Fecha: ${new Date(w.date + 'T00:00:00').toLocaleDateString('es-CO')} · Cupos: ${w.capacity}</div><button class="btn btn-sm ${state.workshopRegistrations.includes(w.id) ? 'btn-success-outline' : 'btn-primary'}" onclick="apRegisterWorkshop('${w.id}')">${state.workshopRegistrations.includes(w.id) ? 'Registrado' : 'Participar'}</button></div>`).join('')}</div>`;
+    srtSetModalSize('xl');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+function apOpenMedicalRequestModal() {
+    document.getElementById('modalTitle').textContent = 'Solicitar atención médica';
+    document.getElementById('modalBody').innerHTML = `<div class="form-row"><div class="form-group"><label class="form-label">Fecha</label><input type="date" id="medDate" class="form-input"></div><div class="form-group"><label class="form-label">Hora</label><input type="time" id="medTime" class="form-input" value="08:00"></div></div><div class="form-group"><label class="form-label">Motivo</label><input id="medReason" class="form-input" placeholder="Ej: consulta general, dolor, control..."></div><button class="btn btn-primary" onclick="apRequestMedicalAppointment()">Enviar solicitud</button>`;
+    srtSetModalSize('lg');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+
+function apRegisterSportsCall(callId) {
+    const state = apGetWellnessState();
+    if (!state.sportRegistrations.includes(callId)) state.sportRegistrations.push(callId);
+    apSaveWellnessState(state);
+    showToast('Inscripción deportiva registrada', 'success');
+    apOpenWellnessSection('sports');
+    if (document.getElementById('modalBackdrop').classList.contains('show')) apOpenSportsCallsModal();
+}
+function apRegisterWorkshop(workshopId) {
+    const state = apGetWellnessState();
+    if (!state.workshopRegistrations.includes(workshopId)) state.workshopRegistrations.push(workshopId);
+    apSaveWellnessState(state);
+    showToast('Registro a taller completado', 'success');
+    apOpenWellnessSection('orientation');
+    if (document.getElementById('modalBackdrop').classList.contains('show')) apOpenWorkshopsModal();
+}
+function apRequestMedicalAppointment() {
+    const date = (document.getElementById('medDate') || {}).value;
+    const time = (document.getElementById('medTime') || {}).value;
+    const reason = ((document.getElementById('medReason') || {}).value || '').trim();
+    if (!date || !time || !reason) { showToast('Completa fecha, hora y motivo de atención médica.', 'error'); return; }
+    const state = apGetWellnessState();
+    state.medicalAppointments.push({ id: 'ma-' + Date.now(), date, time, reason, status: 'pendiente' });
+    apSaveWellnessState(state);
+    closeModal();
+    showToast('Solicitud médica enviada', 'success');
+    apOpenWellnessSection('medical');
+}
+function apRequestScholarship(callId) {
+    const state = apGetWellnessState();
+    if (!state.scholarshipRequests.includes(callId)) state.scholarshipRequests.push(callId);
+    apSaveWellnessState(state);
+    showToast('Postulación a beca registrada', 'success');
+    apOpenWellnessSection('scholarships');
 }
 
 // ═══════════════════ FIN ÁREA PERSONAL ═══════════════════════════
@@ -964,7 +1758,12 @@ function renderUnitTabs() {
     bar.innerHTML = units.map((u,i)=>`<button class="unit-tab ${i===0?'active':''}" onclick="renderUnit(${i})"><span class="unit-tab-num">${i+1}</span>${u.name}</button>`).join('');
 }
 
-function renderSubmissionSection(actId, sub) {
+function renderSubmissionSection(act, sub) {
+    const actId = act.id;
+    const allowLate = allowsLateSubmission(act);
+    const deadline = getActivityDeadline(act);
+    const isOverdueNow = !!deadline && new Date() > deadline;
+    const isLate = isSubmissionLate(act, sub);
     const iconFile=`<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
     const iconSend=`<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
     const iconCheck=`<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`;
@@ -980,7 +1779,7 @@ function renderSubmissionSection(actId, sub) {
     }
     if (sub&&sub.graded) {
         const uid='graded-'+actId;
-        return `<div class="submission-status-bar graded" style="margin-top:18px"><div class="submission-status-icon">${iconStar}</div><div class="submission-status-info"><div class="submission-status-label">Calificado</div><div class="submission-status-detail">Entregado el ${new Date(sub.submittedAt).toLocaleDateString('es-CO')}</div></div></div><div class="submission-grade-display"><div class="submission-grade-num">${sub.grade}</div><div class="submission-grade-sep"></div><div class="submission-grade-info"><div class="submission-grade-label">Retroalimentación del Docente</div><div class="submission-grade-comment">${sub.feedback||'Sin comentarios adicionales.'}</div></div></div>${commentToggle(sub.comment,uid)}`;
+        return `<div class="submission-status-bar graded" style="margin-top:18px"><div class="submission-status-icon">${iconStar}</div><div class="submission-status-info"><div class="submission-status-label">Calificado</div><div class="submission-status-detail">Entregado el ${new Date(sub.submittedAt).toLocaleDateString('es-CO')}${isLate ? ' · Con retraso' : ''}</div></div>${isLate ? '<span class="badge badge-warning">Tardia</span>' : ''}</div><div class="submission-grade-display"><div class="submission-grade-num">${sub.grade}</div><div class="submission-grade-sep"></div><div class="submission-grade-info"><div class="submission-grade-label">Retroalimentación del Docente</div><div class="submission-grade-comment">${sub.feedback||'Sin comentarios adicionales.'}</div></div></div>${commentToggle(sub.comment,uid)}`;
     }
     if (sub&&sub.editing) {
         return `<div class="submission-upload-section" style="margin-top:18px"><div class="submission-section-title"><span>Editar Entrega</span><span class="badge badge-gold">Editando</span></div><textarea class="submission-comment-input" id="sub-comment-${actId}" placeholder="Comentario para el docente (opcional)...">${sub.prevComment||''}</textarea><div class="submission-file-drop" id="sub-drop-${actId}" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleSubDrop(event,${actId})"><input type="file" multiple onchange="handleSubFile(event,${actId})"><div class="submission-file-drop-text">Arrastra archivos aquí o haz clic para seleccionar</div><div class="submission-file-drop-sub">PDF, imágenes, documentos Word</div></div><div id="sub-files-${actId}"></div><div class="submission-actions" style="gap:8px"><button class="btn btn-teal" onclick="submitActivity(${actId})">${iconSend} Guardar cambios</button><button class="btn btn-outline btn-sm" onclick="cancelEditSubmission(${actId})" style="background:transparent">Cancelar</button></div></div>`;
@@ -988,9 +1787,12 @@ function renderSubmissionSection(actId, sub) {
     if (sub&&sub.submitted) {
         const submittedDate = new Date(sub.submittedAt).toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
         const uid='sub-'+actId;
-        return `<div class="submission-status-bar submitted" style="margin-top:18px"><div class="submission-status-icon">${iconCheck}</div><div class="submission-status-info"><div class="submission-status-label">Entrega realizada</div><div class="submission-status-detail">Enviado el ${submittedDate} — Pendiente de calificación</div></div><div class="submission-status-actions"><button class="sub-action-btn edit" onclick="editSubmission(${actId})">${iconEdit} Editar</button><button class="sub-action-btn resubmit" onclick="resubmitActivity(${actId})">${iconRefresh} Reenviar</button><button class="sub-action-btn delete" onclick="deleteSubmission(${actId})">${iconTrash} Eliminar</button></div></div>${commentToggle(sub.comment,uid)}${sub.files&&sub.files.length?`<div class="announcement-section-label" style="margin-top:12px">Archivos enviados</div><div class="attachment-list">${sub.files.map(f=>`<div class="attachment-item"><div class="attachment-icon doc">${iconFile}</div><span class="attachment-name">${f.name}</span><span class="attachment-meta">${(f.size/1024).toFixed(0)} KB</span></div>`).join('')}</div>`:''}`;
+        return `<div class="submission-status-bar submitted" style="margin-top:18px"><div class="submission-status-icon">${iconCheck}</div><div class="submission-status-info"><div class="submission-status-label">Entrega realizada</div><div class="submission-status-detail">Enviado el ${submittedDate} — Pendiente de calificación</div></div>${isLate ? '<span class="badge badge-warning">Con retraso</span>' : ''}<div class="submission-status-actions"><button class="sub-action-btn edit" onclick="editSubmission(${actId})">${iconEdit} Editar</button><button class="sub-action-btn resubmit" onclick="resubmitActivity(${actId})">${iconRefresh} Reenviar</button><button class="sub-action-btn delete" onclick="deleteSubmission(${actId})">${iconTrash} Eliminar</button></div></div>${commentToggle(sub.comment,uid)}${sub.files&&sub.files.length?`<div class="announcement-section-label" style="margin-top:12px">Archivos enviados</div><div class="attachment-list">${sub.files.map(f=>`<div class="attachment-item"><div class="attachment-icon doc">${iconFile}</div><span class="attachment-name">${f.name}</span><span class="attachment-meta">${(f.size/1024).toFixed(0)} KB</span></div>`).join('')}</div>`:''}`;
     }
-    return `<div class="submission-upload-section" style="margin-top:18px"><div class="submission-section-title"><span>Entregar Actividad</span><span class="badge badge-navy">Sin enviar</span></div><textarea class="submission-comment-input" id="sub-comment-${actId}" placeholder="Comentario para el docente (opcional)..."></textarea><div class="submission-file-drop" id="sub-drop-${actId}" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleSubDrop(event,${actId})"><input type="file" multiple onchange="handleSubFile(event,${actId})"><div class="submission-file-drop-text">Arrastra archivos aquí o haz clic para seleccionar</div><div class="submission-file-drop-sub">PDF, imágenes, documentos Word</div></div><div id="sub-files-${actId}"></div><div class="submission-actions"><button class="btn btn-teal" onclick="submitActivity(${actId})">${iconSend} Enviar entrega</button></div></div>`;
+    if (isOverdueNow && !allowLate) {
+        return `<div class="submission-upload-section" style="margin-top:18px"><div class="submission-section-title"><span>Entregar Actividad</span><span class="badge badge-error">Bloqueada fuera de fecha</span></div><div class="alert alert-error" style="margin-bottom:0"><svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>La fecha de entrega ya vencio y el docente no permite entregas con retraso.</div></div>`;
+    }
+    return `<div class="submission-upload-section" style="margin-top:18px"><div class="submission-section-title"><span>Entregar Actividad</span><span class="badge ${allowLate ? 'badge-warning' : 'badge-navy'}">${allowLate ? 'Permite retraso' : 'Sin retraso'}</span></div><textarea class="submission-comment-input" id="sub-comment-${actId}" placeholder="Comentario para el docente (opcional)..."></textarea><div class="submission-file-drop" id="sub-drop-${actId}" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleSubDrop(event,${actId})"><input type="file" multiple onchange="handleSubFile(event,${actId})"><div class="submission-file-drop-text">Arrastra archivos aquí o haz clic para seleccionar</div><div class="submission-file-drop-sub">PDF, imágenes, documentos Word</div></div><div id="sub-files-${actId}"></div><div class="submission-actions"><button class="btn btn-teal" onclick="submitActivity(${actId})">${iconSend} Enviar entrega</button></div></div>`;
 }
 
 function toggleSubComment(uid) {
@@ -1001,13 +1803,39 @@ function toggleSubComment(uid) {
     if(chev) chev.style.transform=isOpen?'':'rotate(180deg)';
 }
 function deleteSubmission(actId) {
-    if(!confirm('¿Seguro que deseas eliminar esta entrega? Esta acción no se puede deshacer.')) return;
-    localStorage.removeItem('educat_sub_'+(currentStudent?currentStudent.id:1)+'_'+actId);
-    showToast('Entrega eliminada'); renderUnit(currentUnitIdx);
+    openStudentConfirmModal(
+        'Eliminar entrega',
+        '¿Seguro que deseas eliminar esta entrega? Esta acción no se puede deshacer.',
+        'Eliminar',
+        () => {
+            localStorage.removeItem('educat_sub_' + (currentStudent ? currentStudent.id : 1) + '_' + actId);
+            showToast('Entrega eliminada');
+            renderUnit(currentUnitIdx);
+        }
+    );
 }
-function editSubmission(actId) { const sub=getSubmission(actId); if(!sub) return; saveSubmission(actId,{...sub,editing:true,prevComment:sub.comment}); renderUnit(currentUnitIdx); }
-function cancelEditSubmission(actId) { const sub=getSubmission(actId); if(!sub) return; const{editing,prevComment,...rest}=sub; saveSubmission(actId,rest); renderUnit(currentUnitIdx); }
-function resubmitActivity(actId) { const sub=getSubmission(actId); if(!sub) return; saveSubmission(actId,{...sub,editing:true,prevComment:sub.comment}); renderUnit(currentUnitIdx); }
+function editSubmission(actId) {
+    const sub = getSubmission(actId);
+    if (!sub) return;
+    setStudentCardOpen(`act-${actId}-${currentCourse ? currentCourse.id : '0'}`, true);
+    saveSubmission(actId, { ...sub, editing: true, prevComment: sub.comment });
+    renderUnit(currentUnitIdx);
+}
+function cancelEditSubmission(actId) {
+    const sub = getSubmission(actId);
+    if (!sub) return;
+    const { editing, prevComment, ...rest } = sub;
+    saveSubmission(actId, rest);
+    setStudentCardOpen(`act-${actId}-${currentCourse ? currentCourse.id : '0'}`, true);
+    renderUnit(currentUnitIdx);
+}
+function resubmitActivity(actId) {
+    const sub = getSubmission(actId);
+    if (!sub) return;
+    setStudentCardOpen(`act-${actId}-${currentCourse ? currentCourse.id : '0'}`, true);
+    saveSubmission(actId, { ...sub, editing: true, prevComment: sub.comment });
+    renderUnit(currentUnitIdx);
+}
 function handleSubFile(event,actId) {
     if(!actSubmissionFiles[actId]) actSubmissionFiles[actId]=[];
     Array.from(event.target.files).forEach(f=>{ if(!actSubmissionFiles[actId].find(x=>x.name===f.name)) actSubmissionFiles[actId].push(f); });
@@ -1024,12 +1852,28 @@ function renderSubFiles(actId) {
     list.innerHTML=(actSubmissionFiles[actId]||[]).map((f,i)=>`<div class="file-chip"><svg width="14" height="14" fill="none" stroke="var(--teal)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="file-chip-name">${f.name}</span><span class="file-chip-size">${(f.size/1024).toFixed(0)} KB</span><button class="file-chip-remove" onclick="removeSubFile(${actId},${i})"><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>`).join('');
 }
 function removeSubFile(actId,idx) { if(actSubmissionFiles[actId]){actSubmissionFiles[actId].splice(idx,1);renderSubFiles(actId);} }
-function submitActivity(actId) {
+async function mapSubmissionFiles(files) {
+    const mapped = [];
+    for (const file of (files || [])) {
+        const dataUrl = await readFileAsDataUrl(file);
+        mapped.push({ name: file.name, size: file.size, type: file.type || '', dataUrl: dataUrl || null });
+    }
+    return mapped;
+}
+async function submitActivity(actId) {
+    const act = getActivityById(actId);
+    const deadline = getActivityDeadline(act);
+    const now = new Date();
+    const lateNow = !!deadline && now > deadline;
+    if (lateNow && !allowsLateSubmission(act)) {
+        showToast('El docente no permite entregas con retraso para esta actividad.', 'error');
+        return;
+    }
     const comment=(document.getElementById('sub-comment-'+actId)||{}).value||'';
     const files=actSubmissionFiles[actId]||[], existing=getSubmission(actId);
-    let finalFiles=files.map(f=>({name:f.name,size:f.size}));
+    let finalFiles=await mapSubmissionFiles(files);
     if(!finalFiles.length&&existing&&existing.files) finalFiles=existing.files;
-    saveSubmission(actId,{submitted:true,submittedAt:new Date().toISOString(),comment,files:finalFiles,graded:false,editing:false});
+    saveSubmission(actId,{submitted:true,submittedAt:new Date().toISOString(),comment,files:finalFiles,graded:false,editing:false,isLate:lateNow});
     delete actSubmissionFiles[actId];
     showToast('Actividad entregada correctamente','success'); renderUnit(currentUnitIdx);
 }
@@ -1041,12 +1885,14 @@ function renderUnit(idx) {
     const contentArea = document.getElementById('unitContentArea');
     if (!units.length) { contentArea.innerHTML='<div class="empty-state"><div class="empty-state-title">Sin contenido</div><div class="empty-state-text">Este curso aún no tiene unidades configuradas.</div></div>'; return; }
     const unit = units[idx];
-    const allActivities = MOCK.activities.filter(a=>a.course&&a.course.id===currentCourse.id);
-    const allExams      = MOCK.exams.filter(x=>x.course&&x.course.id===currentCourse.id);
-    const acts          = unit.activities ? allActivities.filter(a=>unit.activities.includes(a.id)) : [];
+    const allActivities = getCourseActivitiesMerged(currentCourse.id);
+    const allExams      = getCourseExamsMerged(currentCourse.id);
+    const acts          = unit.activities ? allActivities.filter(a=>unit.activities.includes(a.id)).filter(isActivityVisible) : [];
     const exams         = unit.exams      ? allExams.filter(x=>unit.exams.includes(x.id)) : [];
     const announcements = unit.announcements || [];
     const resources     = unit.resources || [];
+    const forums        = unit.forums || [];
+    const glossaries    = ensureUnitGlossaries(unit);
     const IC=`<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>`;
     const ICAL=`<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
     const IFILE=`<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
@@ -1054,11 +1900,189 @@ function renderUnit(idx) {
     const IBELL=`<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>`;
     const IVID=`<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>`;
     const ILINK=`<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>`;
-    const annHtml = announcements.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Anuncios del Docente</span><span class="badge badge-gold">${announcements.length}</span></div><div class="card-body" style="padding:0">${announcements.map((a,i)=>{ const isObj=typeof a==='object'&&a!==null; const title=isObj?(a.title||'Anuncio'):String(a).slice(0,80); const content=isObj?(a.content||a.title||''):String(a); const dateStr=isObj&&a.date?new Date(a.date+'T00:00:00').toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'}):''; const attachments=isObj&&Array.isArray(a.attachments)?a.attachments:[]; const cid=`ann-${currentCourse.id}-${idx}-${i}`; return `<div class="announcement-card" id="${cid}"><div class="announcement-card-header" onclick="toggleCard('${cid}')"><div class="announcement-card-icon">${IBELL}</div><div class="announcement-card-meta"><div class="announcement-card-title">${title}</div>${dateStr?`<div class="announcement-card-date">${dateStr}</div>`:''}<div class="announcement-card-preview">${content}</div></div><button class="announcement-toggle-btn" onclick="event.stopPropagation();toggleCard('${cid}')">${IC}</button></div><div class="announcement-card-body"><div class="announcement-full-text">${content}</div>${attachments.length?`<div class="announcement-section-label">Archivos adjuntos</div><div class="attachment-list">${attachments.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Descargar</a></div>`).join('')}</div>`:''}</div></div>`; }).join('')}</div></div>` : '';
-    const actsHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Talleres y Actividades</span><span class="badge badge-navy">${acts.length}</span></div><div class="card-body" style="${acts.length?'padding:0':''}">${acts.length?acts.map((a,i)=>{ const sub=getSubmission(a.id); const cid=`act-${a.id}-${currentCourse.id}`; const isGraded=sub&&sub.graded; const isSubmitted=sub&&sub.submitted&&!sub.editing; const statusBadge=isGraded?`<span class="badge badge-gold">Calificado: ${sub.grade}/10</span>`:isSubmitted?`<span class="badge badge-success">Enviado</span>`:`<span class="badge badge-navy">Pendiente</span>`; const dueDateStr=a.dueDate?new Date(a.dueDate+'T00:00:00').toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'}):''; return `<div class="activity-card" id="${cid}"><div class="activity-card-header" onclick="toggleCard('${cid}')"><div class="activity-num">${i+1}</div><div class="activity-header-meta"><div class="activity-title">${a.title}</div><div class="activity-due-row">${dueDateStr?`<span class="activity-due">${ICAL} Entrega: ${dueDateStr}</span>`:''} ${statusBadge}</div></div><button class="activity-toggle-btn" onclick="event.stopPropagation();toggleCard('${cid}')">${IC}</button></div><div class="activity-card-body"><div class="activity-description">${a.description||''}</div>${a.attachments&&a.attachments.length?`<div class="announcement-section-label" style="margin-top:16px">Material del docente</div><div class="attachment-list">${a.attachments.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Descargar</a></div>`).join('')}</div>`:''} ${renderSubmissionSection(a.id,sub)}</div></div>`; }).join(''):'<div style="color:var(--text-muted);font-size:13px;padding:4px 0">Sin talleres asignados para esta unidad.</div>'}</div></div>`;
+    const annHtml = announcements.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Anuncios del Docente</span><span class="badge badge-gold">${announcements.length}</span></div><div class="card-body" style="padding:0">${announcements.map((a,i)=>{ const isObj=typeof a==='object'&&a!==null; const title=isObj?(a.title||'Anuncio'):String(a).slice(0,80); const content=isObj?(a.content||a.title||''):String(a); const dateStr=isObj&&a.date?new Date(a.date+'T00:00:00').toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'}):''; const attachments=isObj&&Array.isArray(a.attachments)?a.attachments:[]; const cid=`ann-${currentCourse.id}-${idx}-${i}`; return `<div class="announcement-card ${isStudentCardOpen(cid)?'open':''}" id="${cid}"><div class="announcement-card-header" onclick="toggleCard('${cid}')"><div class="announcement-card-icon">${IBELL}</div><div class="announcement-card-meta"><div class="announcement-card-title">${title}</div>${dateStr?`<div class="announcement-card-date">${dateStr}</div>`:''}<div class="announcement-card-preview">${content}</div></div><button class="announcement-toggle-btn" onclick="event.stopPropagation();toggleCard('${cid}')">${IC}</button></div><div class="announcement-card-body"><div class="announcement-full-text">${content}</div>${attachments.length?`<div class="announcement-section-label">Archivos adjuntos</div><div class="attachment-list">${attachments.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Descargar</a></div>`).join('')}</div>`:''}</div></div>`; }).join('')}</div></div>` : '';
+    const actsHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Talleres y Actividades</span><span class="badge badge-navy">${acts.length}</span></div><div class="card-body" style="${acts.length?'padding:0':''}">${acts.length?acts.map((a,i)=>{ const sub=getSubmission(a.id); const cid=`act-${a.id}-${currentCourse.id}`; const isGraded=sub&&sub.graded; const isSubmitted=sub&&sub.submitted&&!sub.editing; const isLate=sub&&isSubmissionLate(a,sub); const keepOpen=isStudentCardOpen(cid)||!!(sub&&sub.editing); const statusBadge=isGraded?`<span class="badge badge-gold">Calificado: ${sub.grade}/10</span>`:isSubmitted?`<span class="badge badge-success">Enviado</span>`:`<span class="badge badge-navy">Pendiente</span>`; const dl=getActivityDeadline(a); const dueDateStr=dl?dl.toLocaleString('es-CO',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'}):''; const remaining=dl?formatRemaining(dl):''; return `<div class="activity-card ${keepOpen?'open':''}" id="${cid}"><div class="activity-card-header" onclick="toggleCard('${cid}')"><div class="activity-num">${i+1}</div><div class="activity-header-meta"><div class="activity-title">${a.title}</div><div class="activity-due-row">${dueDateStr?`<span class="activity-due">${ICAL} Entrega: ${dueDateStr}</span>`:''} ${remaining?`<span class="badge badge-warning">${remaining}</span>`:''} <span class="badge ${a.allowLateSubmission===false?'badge-navy':'badge-warning'}">${a.allowLateSubmission===false?'Sin retraso':'Permite retraso'}</span> ${statusBadge} ${isLate?'<span class="badge badge-warning">Tardia</span>':''}</div></div><button class="activity-toggle-btn" onclick="event.stopPropagation();toggleCard('${cid}')">${IC}</button></div><div class="activity-card-body"><div class="activity-description">${a.description||''}</div>${a.attachments&&a.attachments.length?`<div class="announcement-section-label" style="margin-top:16px">Material del docente</div><div class="attachment-list">${a.attachments.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Descargar</a></div>`).join('')}</div>`:''} ${a.materials&&a.materials.length?`<div class="announcement-section-label" style="margin-top:16px">Bibliografía y apoyo</div><div class="attachment-list">${a.materials.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Abrir</a></div>`).join('')}</div>`:''} ${renderSubmissionSection(a,sub)}</div></div>`; }).join(''):'<div style="color:var(--text-muted);font-size:13px;padding:4px 0">Sin talleres asignados para esta unidad.</div>'}</div></div>`;
     const examsHtml = exams.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Evaluaciones</span><span class="badge badge-error">${exams.length}</span></div><div class="card-body" style="padding:0">${exams.map((x,i)=>{ const cid=`exam-${x.id}-${currentCourse.id}`; const examDateStr=x.examDate?new Date(x.examDate+'T00:00:00').toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):''; return `<div class="exam-card" id="${cid}"><div class="exam-card-header" onclick="toggleCard('${cid}')"><div class="exam-num">${i+1}</div><div class="exam-header-meta"><div class="exam-title">${x.title}</div>${examDateStr?`<div class="exam-date">${ICAL} ${examDateStr}</div>`:''}</div></div>${x.description?`<div class="exam-card-body"><p style="font-size:14px;color:var(--text-body);line-height:1.75">${x.description}</p></div>`:''}</div>`; }).join('')}</div></div>` : '';
     const resourcesHtml = resources.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Bibliografía y Recursos</span><span class="badge badge-success">${resources.length}</span></div><div class="card-body">${resources.map(r=>`<a class="resource-card-item" href="${r.url||'#'}" target="_blank"><div class="resource-icon ${r.type||'doc'}"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${r.type==='video'?IVID:r.type==='link'?ILINK:'<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>'}</svg></div><span class="resource-name">${r.name}</span><span class="resource-type">${(r.type||'doc').toUpperCase()}</span></a>`).join('')}</div></div>` : '';
-    contentArea.innerHTML = `<div class="unit-welcome"><div class="unit-welcome-content"><div class="unit-welcome-label">Bienvenida a la Unidad</div><div class="unit-welcome-title">${unit.name}</div><div class="unit-welcome-text">${unit.welcome||''}</div></div></div><div class="unit-description-card" style="margin-bottom:20px"><div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);margin-bottom:10px">Descripción del Tema</div><p style="font-size:14px;line-height:1.75;color:var(--text-body)">${unit.description||'Sin descripción disponible.'}</p></div>${annHtml}${actsHtml}${examsHtml}${resourcesHtml}`;
+    const forumsHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Foros</span><span class="badge badge-teal">${forums.length}</span></div><div class="card-body">${forums.length ? forums.map((forum,fi)=>{ const recent=(forum.messages||[]).slice(-3).reverse(); return `<div class="forum-card" style="margin-bottom:12px"><div class="forum-card-header"><div class="forum-card-icon"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div><div class="forum-card-meta"><div class="forum-card-title">${forum.title}</div><div class="forum-card-desc">${forum.description||'Sin descripcion.'}</div></div></div><div class="forum-card-stats"><span class="forum-stat">${(forum.messages||[]).length} publicacion(es)</span></div><div class="forum-threads-body">${recent.length?recent.map(m=>`<div class="forum-thread-item"><div class="forum-thread-title">${m.authorName}</div><div class="forum-thread-meta"><span>${new Date(m.createdAt).toLocaleString('es-CO')}</span></div><div style="font-size:12.8px;color:var(--text-body);margin-top:6px;line-height:1.6">${m.text}</div></div>`).join(''):'<div style="font-size:12.5px;color:var(--text-muted)">Sin mensajes aun.</div>'}</div><div style="padding:0 20px 16px"><button class="btn btn-sm btn-teal" onclick="openStudentForumDetail(${idx},${fi})">Abrir foro completo</button></div></div>`; }).join(''):'<div style="font-size:13px;color:var(--text-muted)">No hay foros disponibles en esta unidad.</div>'}</div></div>`;
+    const glossaryHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Glosarios</span><span class="badge badge-teal">${glossaries.length}</span></div><div class="card-body">${glossaries.map((g,gi)=>{ const terms=g.terms||[]; const initials=[...new Set(terms.map(t=>(t.term||'').charAt(0).toUpperCase()).filter(Boolean))].sort(); return `<div class="forum-card" style="margin-bottom:12px"><div class="forum-card-header"><div class="forum-card-meta"><div class="forum-card-title">${g.title||'Glosario'}</div><div class="forum-card-desc">${terms.length} término(s)</div></div></div><div style="padding:0 20px 8px;display:flex;gap:6px;flex-wrap:wrap">${initials.length?initials.map(i=>`<span class="badge badge-navy">${i}</span>`).join(''):'<span style="font-size:12px;color:var(--text-muted)">Sin iniciales.</span>'}</div><div class="forum-threads-body">${terms.slice(-4).reverse().map(t=>`<div class="forum-thread-item"><div class="forum-thread-title">${t.term}</div><div style="font-size:12.8px;color:var(--text-body);line-height:1.6;margin-top:6px">${t.definition}</div></div>`).join('') || '<div style="font-size:12.5px;color:var(--text-muted)">Sin términos aún.</div>'}</div><div style="padding:0 20px 16px;display:flex;gap:8px"><button class="btn btn-sm btn-outline" onclick="addStudentGlossaryTerm(${idx},${gi})">Sugerir termino</button><button class="btn btn-sm btn-teal" onclick="openStudentGlossaryDetail(${idx},${gi},'ALL',1)">Ver completo</button></div></div>`; }).join('')}</div></div>`;
+    contentArea.innerHTML = `<div class="unit-welcome"><div class="unit-welcome-content"><div class="unit-welcome-label">Bienvenida a la Unidad</div><div class="unit-welcome-title">${unit.name}</div><div class="unit-welcome-text">${unit.welcome||''}</div></div></div><div class="unit-description-card" style="margin-bottom:20px"><div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);margin-bottom:10px">Descripción del Tema</div><p style="font-size:14px;line-height:1.75;color:var(--text-body)">${unit.description||'Sin descripción disponible.'}</p></div>${annHtml}${actsHtml}${examsHtml}${resourcesHtml}${forumsHtml}${glossaryHtml}`;
+}
+
+function postStudentForumMessage(unitIdx, forumIdx) {
+    const text = srtGetHtml('stuForumEditor');
+    if (!text) { showToast('Escribe un mensaje para participar', 'error'); return; }
+
+    const units = getUnits(currentCourse.id);
+    const forum = (units[unitIdx].forums || [])[forumIdx];
+    if (!forum) return;
+
+    forum.messages = forum.messages || [];
+    forum.messages.push({
+        id: 'fm' + Date.now(),
+        parentId: ((document.getElementById('stuForumReplyTo') || {}).value || null),
+        authorRole: 'estudiante',
+        authorName: (currentUser && currentUser.name) || 'Estudiante',
+        text,
+        createdAt: new Date().toISOString()
+    });
+    localStorage.setItem('educat_units_' + currentCourse.id, JSON.stringify(units));
+    openStudentForumDetail(unitIdx, forumIdx, 1);
+}
+
+function openStudentForumDetail(unitIdx, forumIdx, page) {
+    const units = getUnits(currentCourse.id);
+    const forum = (units[unitIdx].forums || [])[forumIdx];
+    if (!forum) return;
+    document.getElementById('modalTitle').textContent = forum.title;
+    document.getElementById('modalBody').innerHTML = `
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${forum.description || ''}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><input class="form-input" id="stuForumAuthorFilter" placeholder="Filtrar por alumno/docente" style="flex:1;min-width:220px"><select class="form-input" id="stuForumSort" style="width:auto"><option value="recent">Mas reciente</option><option value="old">Mas antiguo</option></select><button class="btn btn-sm btn-outline" onclick="renderStudentForumDetail(${unitIdx},${forumIdx},1)">Aplicar</button></div>
+        <div id="stuForumDetailList"></div>
+        <input type="hidden" id="stuForumReplyTo" value="">
+        <div id="stuForumReplyInfo" style="display:none;font-size:12px;color:var(--teal);margin-bottom:8px"></div>
+        <div style="margin-top:12px"><div style="font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text-muted);margin-bottom:8px">Publicar</div>${buildStudentRichEditorHtml('stuForumEditor',110)}<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-primary" style="flex:1" onclick="postStudentForumMessage(${unitIdx},${forumIdx})">Publicar mensaje</button><button class="btn btn-outline" type="button" onclick="clearStudentForumReply()">Cancelar respuesta</button></div></div>
+    `;
+    srtSetModalSize('xl');
+    document.getElementById('modalBackdrop').classList.add('show');
+    studentForumReplyPanels = {};
+    renderStudentForumDetail(unitIdx, forumIdx, page || 1);
+}
+
+function toggleStudentForumReplies(messageId) {
+    studentForumReplyPanels[messageId] = !studentForumReplyPanels[messageId];
+    const panel = document.getElementById('stuForumReplies_' + messageId);
+    const btn = document.getElementById('stuForumRepliesBtn_' + messageId);
+    if (!panel || !btn) return;
+    const expanded = !!studentForumReplyPanels[messageId];
+    panel.style.display = expanded ? 'block' : 'none';
+    btn.dataset.expanded = expanded ? '1' : '0';
+    btn.textContent = (expanded ? 'Ocultar respuestas' : 'Ver respuestas') + ' (' + (btn.dataset.count || '0') + ')';
+}
+
+function renderStudentForumDetail(unitIdx, forumIdx, page) {
+    const units = getUnits(currentCourse.id);
+    const forum = (units[unitIdx].forums || [])[forumIdx];
+    if (!forum) return;
+    const query = (document.getElementById('stuForumAuthorFilter') || {}).value ? document.getElementById('stuForumAuthorFilter').value.trim().toLowerCase() : '';
+    const sort = (document.getElementById('stuForumSort') || {}).value || 'recent';
+    let items = [...(forum.messages || [])];
+    if (query) items = items.filter(m => (m.authorName || '').toLowerCase().includes(query));
+    items.sort((a, b) => sort === 'old' ? new Date(a.createdAt) - new Date(b.createdAt) : new Date(b.createdAt) - new Date(a.createdAt));
+    const host = document.getElementById('stuForumDetailList');
+    if (!host) return;
+    const byParent = {};
+    items.forEach(m => {
+        const key = m.parentId || '__root__';
+        byParent[key] = byParent[key] || [];
+        byParent[key].push(m);
+    });
+    const roots = byParent['__root__'] || [];
+    const pageSize = 8;
+    const totalPages = Math.max(1, Math.ceil(roots.length / pageSize));
+    const safePage = Math.min(Math.max(1, page || 1), totalPages);
+    const chunkRoots = roots.slice((safePage - 1) * pageSize, safePage * pageSize);
+    function renderNode(node, level) {
+        const replies = byParent[node.id] || [];
+        const safeId = String(node.id || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+        const expanded = !!studentForumReplyPanels[safeId];
+        const repliesBlock = replies.length
+            ? `<div style="margin-top:8px"><button class="btn btn-sm btn-outline" id="stuForumRepliesBtn_${safeId}" data-count="${replies.length}" data-expanded="${expanded ? '1' : '0'}" onclick="toggleStudentForumReplies('${safeId}')">${expanded ? 'Ocultar respuestas' : 'Ver respuestas'} (${replies.length})</button></div><div id="stuForumReplies_${safeId}" style="display:${expanded ? 'block' : 'none'};margin-top:8px">${replies.map(r => renderNode(r, level + 1)).join('')}</div>`
+            : '';
+        return `<div class="forum-thread-item" style="margin-bottom:8px;margin-left:${Math.min(level,3)*18}px;border-left:${level? '2px solid rgba(11,31,58,0.08)' : 'none'}"><div class="forum-thread-title">${node.authorName}</div><div class="forum-thread-meta"><span>${new Date(node.createdAt).toLocaleString('es-CO')}</span></div><div style="font-size:13px;color:var(--text-body);line-height:1.65;margin-top:6px">${node.text}</div><div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="setStudentForumReplyTarget('${node.id}','${(node.authorName || '').replace(/'/g, "\\'")}')">Responder</button></div>${repliesBlock}</div>`;
+    }
+    host.innerHTML = `${chunkRoots.length ? chunkRoots.map(r => renderNode(r, 0)).join('') : '<div style="font-size:13px;color:var(--text-muted)">Sin publicaciones para los filtros.</div>'}<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px"><span style="font-size:12px;color:var(--text-muted)">Pagina ${safePage} de ${totalPages}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="renderStudentForumDetail(${unitIdx},${forumIdx},${safePage-1})">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="renderStudentForumDetail(${unitIdx},${forumIdx},${safePage+1})">Siguiente</button></div></div>`;
+}
+
+function setStudentForumReplyTarget(messageId, authorName) {
+    const input = document.getElementById('stuForumReplyTo');
+    const info = document.getElementById('stuForumReplyInfo');
+    if (!input || !info) return;
+    input.value = messageId;
+    info.style.display = '';
+    info.textContent = 'Respondiendo a: ' + (authorName || 'mensaje');
+}
+
+function clearStudentForumReply() {
+    const input = document.getElementById('stuForumReplyTo');
+    const info = document.getElementById('stuForumReplyInfo');
+    if (input) input.value = '';
+    if (info) { info.style.display = 'none'; info.textContent = ''; }
+}
+
+function addStudentGlossaryTerm(unitIdx, glossaryIdx) {
+    document.getElementById('modalTitle').textContent = 'Sugerir termino al glosario';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="form-group"><label class="form-label">Termino</label><input type="text" class="form-input" id="stuGlossTerm" placeholder="Ej: Estequiometria"></div>
+        <div class="form-group"><label class="form-label">Definicion</label>${buildStudentRichEditorHtml('stuGlossEditor',100)}</div>
+        <button class="btn btn-primary" style="width:100%" onclick="saveStudentGlossaryTerm(${unitIdx},${glossaryIdx})">Guardar sugerencia</button>
+    `;
+    srtSetModalSize('xl');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+
+function saveStudentGlossaryTerm(unitIdx, glossaryIdx) {
+    const term = document.getElementById('stuGlossTerm').value.trim();
+    const definition = srtGetHtml('stuGlossEditor');
+    if (!term || !definition) { showToast('Termino y definicion son obligatorios', 'error'); return; }
+
+    const units = getUnits(currentCourse.id);
+    const unit = units[unitIdx];
+    if (!unit) return;
+    const glossaries = ensureUnitGlossaries(unit);
+    const glossary = glossaries[glossaryIdx];
+    if (!glossary) return;
+    glossary.terms = glossary.terms || [];
+    glossary.terms.push({
+        id: 'g' + Date.now(),
+        term,
+        definition,
+        createdBy: 'estudiante',
+        studentId: currentStudent ? currentStudent.id : null,
+        authorName: (currentUser && currentUser.name) || 'Estudiante'
+    });
+    localStorage.setItem('educat_units_' + currentCourse.id, JSON.stringify(units));
+    closeModal();
+    renderUnit(unitIdx);
+    showToast('Termino agregado al glosario', 'success');
+}
+
+function openStudentGlossaryDetail(unitIdx, glossaryIdx, initial, page) {
+    const units = getUnits(currentCourse.id);
+    const unit = units[unitIdx];
+    if (!unit) return;
+    const glossaries = ensureUnitGlossaries(unit);
+    const glossary = glossaries[glossaryIdx];
+    if (!glossary) return;
+    const terms = glossary.terms || [];
+    const initials = [...new Set(terms.map(t => (t.term || '').charAt(0).toUpperCase()).filter(Boolean))].sort();
+    document.getElementById('modalTitle').textContent = 'Glosario completo';
+    document.getElementById('modalBody').innerHTML = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${glossary.title || 'Glosario'}</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><input class="form-input" id="stuGlossSearch" placeholder="Buscar termino" style="flex:1;min-width:220px"><select class="form-input" id="stuGlossSort" style="width:auto"><option value="recent">Mas reciente</option><option value="alpha">A-Z</option></select><button class="btn btn-sm btn-outline" onclick="renderStudentGlossaryDetail(${unitIdx},${glossaryIdx},'ALL',1)">Aplicar</button></div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"><button class="btn btn-sm btn-outline" onclick="renderStudentGlossaryDetail(${unitIdx},${glossaryIdx},'ALL',1)">Todas</button>${initials.map(i=>`<button class="btn btn-sm btn-outline" onclick="renderStudentGlossaryDetail(${unitIdx},${glossaryIdx},'${i}',1)">${i}</button>`).join('')}</div><div id="stuGlossDetailList"></div>`;
+    srtSetModalSize('xl');
+    document.getElementById('modalBackdrop').classList.add('show');
+    renderStudentGlossaryDetail(unitIdx, glossaryIdx, initial || 'ALL', page || 1);
+}
+
+function renderStudentGlossaryDetail(unitIdx, glossaryIdx, initial, page) {
+    const units = getUnits(currentCourse.id);
+    const unit = units[unitIdx];
+    if (!unit) return;
+    const glossaries = ensureUnitGlossaries(unit);
+    const glossary = glossaries[glossaryIdx];
+    if (!glossary) return;
+    const query = (document.getElementById('stuGlossSearch') || {}).value ? document.getElementById('stuGlossSearch').value.trim().toLowerCase() : '';
+    const sort = (document.getElementById('stuGlossSort') || {}).value || 'recent';
+    let items = [...(glossary.terms || [])];
+    if (initial && initial !== 'ALL') items = items.filter(t => (t.term || '').toUpperCase().startsWith(initial));
+    if (query) items = items.filter(t => (t.term || '').toLowerCase().includes(query));
+    items.sort((a, b) => sort === 'alpha' ? (a.term || '').localeCompare(b.term || '') : ((b.createdAt || '')).localeCompare(a.createdAt || ''));
+    const pageSize = 12;
+    const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+    const safePage = Math.min(Math.max(1, page || 1), totalPages);
+    const chunk = items.slice((safePage - 1) * pageSize, safePage * pageSize);
+    const host = document.getElementById('stuGlossDetailList');
+    if (!host) return;
+    host.innerHTML = `${chunk.length ? chunk.map(t=>`<div class="glossary-term-item"><div class="glossary-term-letter">${(t.term||'?').charAt(0).toUpperCase()}</div><div class="glossary-term-content"><div class="glossary-term-word">${t.term}</div><div class="glossary-term-def">${t.definition}</div></div></div>`).join('') : '<div style="font-size:13px;color:var(--text-muted)">Sin terminos para este filtro.</div>'}<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px"><span style="font-size:12px;color:var(--text-muted)">Pagina ${safePage} de ${totalPages}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="renderStudentGlossaryDetail(${unitIdx},${glossaryIdx},'${initial}',${safePage-1})">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="renderStudentGlossaryDetail(${unitIdx},${glossaryIdx},'${initial}',${safePage+1})">Siguiente</button></div></div>`;
 }
 
 document.getElementById('fileInput').addEventListener('change', e => {
@@ -1077,14 +2101,55 @@ function renderFileList() {
 }
 function removeFile(idx) { selectedFiles.splice(idx,1); renderFileList(); }
 
-document.getElementById('btnReportarAusencia').addEventListener('click', () => {
+function readFileAsDataUrl(file) {
+    return new Promise(resolve => {
+        const maxBytes = 10 * 1024 * 1024;
+        if (!file || file.size > maxBytes) { resolve(null); return; }
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(file);
+    });
+}
+
+async function mapAbsenceSupportFiles(files) {
+    const mapped = [];
+    for (const file of files) {
+        const dataUrl = await readFileAsDataUrl(file);
+        mapped.push({ name: file.name, size: file.size, type: file.type || '', dataUrl: dataUrl || null });
+    }
+    return mapped;
+}
+
+document.getElementById('btnReportarAusencia').addEventListener('click', async () => {
     const curso=document.getElementById('ausCurso'), fecha=document.getElementById('ausFecha').value, motivo=document.getElementById('ausMotivo').value, descripcion=document.getElementById('ausDescripcion').value.trim();
     document.getElementById('ausenciaOk').style.display='none';
     if(!curso.value||!fecha||!motivo||!descripcion){showToast('Completa todos los campos obligatorios','error');return;}
     const sid=currentStudent?currentStudent.id:1, key='educat_ausencias_'+sid;
     const historial=JSON.parse(localStorage.getItem(key)||'[]');
-    historial.push({fecha,curso:curso.options[curso.selectedIndex].text,motivo:motivo+(descripcion?' — '+descripcion.slice(0,60):''),archivos:selectedFiles.length,ts:Date.now()});
+    const supportFiles = await mapAbsenceSupportFiles(selectedFiles);
+    const record = {
+        id: 'abs-' + Date.now(),
+        studentId: sid,
+        studentName: (currentUser && currentUser.name) || 'Estudiante',
+        studentCode: (currentStudent && currentStudent.studentCode) || '',
+        courseId: parseInt(curso.value),
+        courseName: curso.options[curso.selectedIndex].text,
+        fecha,
+        motivo,
+        descripcion,
+        archivos: selectedFiles.length,
+        files: supportFiles,
+        status: 'pending',
+        ts: Date.now()
+    };
+    historial.push(record);
     localStorage.setItem(key,JSON.stringify(historial));
+
+    const central = JSON.parse(localStorage.getItem('educat_absence_reports') || '[]');
+    central.push(record);
+    localStorage.setItem('educat_absence_reports', JSON.stringify(central));
+
     document.getElementById('ausenciaOk').style.display='flex';
     curso.value=''; document.getElementById('ausMotivo').value=''; document.getElementById('ausDescripcion').value='';
     selectedFiles=[]; renderFileList();
@@ -1108,8 +2173,19 @@ async function init() {
 
 document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => navigateTo(btn.dataset.section)));
 document.getElementById('menuToggle').addEventListener('click', () => { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sidebarOverlay').classList.toggle('show'); });
-document.getElementById('sidebarOverlay').addEventListener('click', () => { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarOverlay').classList.remove('show'); });
+document.getElementById('sidebarCloseBtn').addEventListener('click', () => { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarOverlay').classList.remove('show'); });
 document.getElementById('logoutBtn').addEventListener('click', () => { localStorage.removeItem('educat_auth'); localStorage.removeItem('educat_email'); sessionStorage.removeItem('educat_auth'); sessionStorage.removeItem('educat_email'); window.location.href='login.html'; });
 document.getElementById('saveProfileBtn').addEventListener('click', saveProfile);
+
+window.addEventListener('storage', (ev) => {
+    if (!ev || !ev.key || !currentCourse) return;
+    if (ev.key === ('educat_units_' + currentCourse.id)) {
+        renderUnit(currentUnitIdx || 0);
+        return;
+    }
+    if (ev.key.startsWith('educat_sub_')) {
+        renderUnit(currentUnitIdx || 0);
+    }
+});
 
 init();

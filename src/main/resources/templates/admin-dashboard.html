@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducaT - Portal Administrador</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Jost:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/admin-dashboard.css">
+</head>
+<body>
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <div class="sidebar-logo">E</div>
+        <span class="sidebar-brand">Educa<span>T</span></span>
+        <span class="sidebar-badge">Admin</span>
+        <button class="sidebar-close-btn" id="sidebarCloseBtn" type="button" title="Cerrar menu" aria-label="Cerrar menu">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+    </div>
+    <div class="sidebar-user">
+        <div class="user-avatar">
+            <svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <div class="user-info">
+            <div class="user-name" id="sidebarUserName">Administrador</div>
+            <div class="user-role" id="sidebarRole">Gestión institucional</div>
+        </div>
+    </div>
+    <nav class="sidebar-nav">
+        <div class="nav-group">
+            <div class="nav-group-label">Principal</div>
+            <button class="nav-item active" data-section="overview">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                Resumen
+            </button>
+        </div>
+        <div class="nav-group">
+            <div class="nav-group-label">Administración</div>
+            <button class="nav-item" data-section="cursos">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+                Cursos y asignaciones
+            </button>
+            <button class="nav-item" data-section="roles">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+                Roles y permisos
+            </button>
+            <button class="nav-item" data-section="certificados">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
+                Certificados
+            </button>
+            <button class="nav-item" data-section="instructivos">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+                Instructivos
+            </button>
+            <button class="nav-item" data-section="formularios">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                Formularios de evaluación
+            </button>
+            <button class="nav-item" data-section="importacion">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Importar Datos
+            </button>
+            <button class="nav-item" data-section="calificacion">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
+                Sistema de calificación
+            </button>
+        </div>
+    </nav>
+    <div class="sidebar-footer">
+        <button class="btn-logout" id="logoutBtn">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Cerrar sesión
+        </button>
+    </div>
+</aside>
+
+<div class="main">
+    <header class="topbar">
+        <div class="topbar-left">
+            <button class="menu-toggle" id="menuToggle">
+                <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <div class="topbar-title-area">
+                <div class="page-title" id="pageTitle">Resumen</div>
+                <div class="page-subtitle" id="pageSubtitle">Portal Administrador - Configuración académica e institucional</div>
+            </div>
+        </div>
+        <div class="topbar-right">
+            <span class="topbar-date" id="currentDate"></span>
+        </div>
+    </header>
+
+    <div class="main-body">
+        <div class="content" id="mainContent">
+            <section class="section-panel active" id="panel-overview">
+                <div class="stats-row">
+                    <div class="stat-card"><div class="stat-value" id="statCourses">0</div><div class="stat-label">Cursos</div></div>
+                    <div class="stat-card"><div class="stat-value" id="statTeachers">0</div><div class="stat-label">Docentes</div></div>
+                    <div class="stat-card"><div class="stat-value" id="statStudents">0</div><div class="stat-label">Estudiantes</div></div>
+                    <div class="stat-card"><div class="stat-value" id="statCerts">0</div><div class="stat-label">Certificados</div></div>
+                </div>
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">Accesos rápidos</span></div>
+                        <div class="card-body quick-grid">
+                            <button class="btn btn-teal" onclick="navigateTo('cursos')">Crear curso</button>
+                            <button class="btn btn-outline" onclick="navigateTo('roles')">Gestionar roles</button>
+                            <button class="btn btn-outline" onclick="navigateTo('formularios')">Editar formularios</button>
+                            <button class="btn btn-outline" onclick="navigateTo('calificacion')">Configurar cálculo</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">Modelo activo de calificación</span></div>
+                        <div class="card-body" id="activeGradingModel">Cargando...</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section-panel" id="panel-cursos">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Crear curso</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info" style="margin-bottom:14px">
+                            Crea cursos y asígnales docente, nivel, grado y capacidad máxima para una estructura académica flexible.
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Nombre del curso</label>
+                                <input class="form-input" id="courseName" placeholder="Ej: Matemáticas 10A">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Docente</label>
+                                <select class="form-input" id="courseTeacher"></select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Nivel académico</label>
+                                <select class="form-input" id="courseLevel"></select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Grado</label>
+                                <div class="multi-check" id="courseGradeMulti">
+                                    <button type="button" class="form-input multi-check-trigger" onclick="toggleCourseGradeMenu()">
+                                        <span id="courseGradeLabel">Seleccionar grados</span>
+                                        <span style="opacity:.6">▾</span>
+                                    </button>
+                                    <div class="multi-check-menu" id="courseGradeMenu"></div>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Capacidad máxima</label>
+                                <input class="form-input" id="courseCapacity" type="number" min="1" max="120" step="1" value="35">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Descripción</label>
+                            <textarea class="form-input" id="courseDescription" style="min-height:90px"></textarea>
+                        </div>
+                        <button class="btn btn-teal" id="btnCreateCourse">Guardar curso</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Asignar estudiantes a curso</span></div>
+                    <div class="card-body">
+                        <div class="alert alert-info" style="margin-bottom:14px">
+                            Usa el asistente para seleccionar estudiantes y cursos por nivel con búsqueda, filtros y paginación.
+                        </div>
+                        <button class="btn btn-outline" id="btnOpenStudentCourseModal">Abrir asistente de asignación</button>
+                        <div id="courseEnrollmentList" class="table-wrap" style="margin-top:16px"></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Niveles académicos</span></div>
+                    <div class="card-body">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Nombre del nivel</label>
+                                <input class="form-input" id="levelName" placeholder="Ej: Primaria, Bachillerato, Grado 10">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Descripción</label>
+                                <input class="form-input" id="levelDescription" placeholder="Descripción opcional">
+                            </div>
+                        </div>
+                        <button class="btn btn-teal" id="btnCreateLevel">Crear nivel</button>
+                        <div class="alert alert-info" style="margin:14px 0">
+                            Define niveles y grados. Luego asigna docentes a nivel. El asistente inteligente asignará estudiantes por nivel/grado.
+                        </div>
+                        <div class="form-row" style="margin-top:8px">
+                            <div class="form-group">
+                                <label class="form-label">Nivel para crear grado</label>
+                                <select class="form-input" id="gradeLevel"></select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Nombre del grado</label>
+                                <input class="form-input" id="gradeName" placeholder="Ej: 10, 10A, Once A">
+                            </div>
+                            <div class="form-group" style="align-self:end">
+                                <button class="btn btn-outline" id="btnCreateGrade">Crear grado</button>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Nivel para docente</label>
+                                <select class="form-input" id="assignTeacherLevel"></select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Grados que imparte</label>
+                                <div class="multi-check" id="assignTeacherGradeMulti">
+                                    <button type="button" class="form-input multi-check-trigger" onclick="toggleAssignTeacherGradeMenu()">
+                                        <span id="assignTeacherGradeLabel">Seleccionar grados</span>
+                                        <span style="opacity:.6">▾</span>
+                                    </button>
+                                    <div class="multi-check-menu" id="assignTeacherGradeMenu"></div>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Docente a nivel</label>
+                                <select class="form-input" id="assignLevelTeacher"></select>
+                            </div>
+                            <div class="form-group" style="align-self:end">
+                                <button class="btn btn-outline" id="btnAssignTeacherLevel">Asignar docente al nivel</button>
+                            </div>
+                        </div>
+                        <div class="form-row" style="margin-top:8px">
+                            <div class="form-group">
+                                <label class="form-label">Buscar nivel/curso/docente</label>
+                                <input class="form-input" id="levelsSearch" placeholder="Ej: Secundaria, Matemáticas, Laura...">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Filtro rápido</label>
+                                <select class="form-input" id="levelsFilter">
+                                    <option value="all">Todos</option>
+                                    <option value="with-courses">Con cursos</option>
+                                    <option value="with-teachers">Con docentes</option>
+                                    <option value="without-courses">Sin cursos</option>
+                                    <option value="without-teachers">Sin docentes</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div id="levelsTable" class="table-wrap" style="margin-top:16px"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section-panel" id="panel-roles">
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">Roles</span></div>
+                        <div class="card-body">
+                            <div class="form-row">
+                                <div class="form-group"><input class="form-input" id="roleName" placeholder="Nombre del rol"></div>
+                                <div class="form-group"><button class="btn btn-teal" id="btnCreateRole">Crear rol</button></div>
+                            </div>
+                            <div class="form-row" style="margin-top:8px">
+                                <div class="form-group"><input class="form-input" id="rolesSearch" placeholder="Buscar rol..."></div>
+                            </div>
+                            <div id="rolesList"></div>
+                            <div class="pager">
+                                <button class="btn btn-sm btn-outline" id="rolesPrevPage">Anterior</button>
+                                <span id="rolesPageInfo">0/0</span>
+                                <button class="btn btn-sm btn-outline" id="rolesNextPage">Siguiente</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">Permisos por rol</span></div>
+                        <div class="card-body">
+                            <div class="form-row">
+                                <div class="form-group"><input class="form-input" id="permRoleSearch" placeholder="Buscar rol para permisos..."></div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Rol</label>
+                                <select class="form-input" id="permRole"></select>
+                            </div>
+                            <div class="pager" style="margin-top:-6px;margin-bottom:10px">
+                                <button class="btn btn-sm btn-outline" id="permRolePrevPage">Anterior</button>
+                                <span id="permRolePageInfo">0/0</span>
+                                <button class="btn btn-sm btn-outline" id="permRoleNextPage">Siguiente</button>
+                            </div>
+                            <div id="permissionsChecklist" class="perm-grid"></div>
+                            <button class="btn btn-outline" id="btnSavePerms">Guardar permisos</button>
+                            <hr style="border:none;border-top:1px solid rgba(11,31,58,0.1);margin:18px 0">
+                            <div class="form-row">
+                                <div class="form-group"><input class="form-input" id="permUserSearch" placeholder="Buscar usuario para permisos..."></div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Permisos directos por usuario</label>
+                                <select class="form-input" id="permUser"></select>
+                            </div>
+                            <div class="pager" style="margin-top:-6px;margin-bottom:10px">
+                                <button class="btn btn-sm btn-outline" id="permUserPrevPage">Anterior</button>
+                                <span id="permUserPageInfo">0/0</span>
+                                <button class="btn btn-sm btn-outline" id="permUserNextPage">Siguiente</button>
+                            </div>
+                            <div id="userPermissionsChecklist" class="perm-grid"></div>
+                            <button class="btn btn-outline" id="btnSaveUserPerms">Guardar permisos de usuario</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section-panel" id="panel-certificados">
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Emitir certificado</span></div>
+                    <div class="card-body">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Estudiante</label>
+                                <select class="form-input" id="certStudent"></select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Nombre del certificado</label>
+                                <input class="form-input" id="certName" placeholder="Ej: Certificado de estudio">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Archivo del certificado</label>
+                            <input type="file" class="form-input" id="certFileInput" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
+                            <div class="muted" style="margin-top:6px">Carga el archivo desde el dispositivo (PDF recomendado).</div>
+                        </div>
+                        <button class="btn btn-teal" id="btnCreateCert">Guardar certificado</button>
+                        <div id="certificatesTable" class="table-wrap" style="margin-top:16px"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section-panel" id="panel-instructivos">
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Instructivos del área personal del estudiante</span></div>
+                    <div class="card-body">
+                        <button class="btn btn-teal" id="btnNewGuide">Nuevo instructivo</button>
+                        <div id="guidesList" style="margin-top:14px"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section-panel" id="panel-formularios">
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Banco de preguntas</span></div>
+                    <div class="card-body">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Formulario</label>
+                                <select class="form-input" id="formType">
+                                    <option value="eval">Evaluación docente</option>
+                                    <option value="autoeval">Autoevaluación</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="align-self:end">
+                                <button class="btn btn-teal" id="btnNewQuestion">Agregar pregunta</button>
+                            </div>
+                        </div>
+                        <div id="questionsList"></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Respuestas enviadas por estudiantes</span>
+                        <button class="btn btn-outline btn-sm" id="btnExportResponses">Generar reporte CSV</button>
+                    </div>
+                    <div class="card-body" id="responsesList"></div>
+                </div>
+            </section>
+
+            <section class="section-panel" id="panel-importacion">
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Importación masiva de estudiantes</span></div>
+                    <div class="card-body">
+                        <div class="alert alert-info" style="margin-bottom:12px">Sube CSV o Excel, mapea columnas dinámicamente, revisa vista previa y valida antes de importar.</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Formato del archivo</label>
+                                <select class="form-input" id="importFileType">
+                                    <option value="auto">Detectar automáticamente</option>
+                                    <option value="csv">CSV</option>
+                                    <option value="excel">Excel (XLS/XLSX)</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="csvDelimiterGroup">
+                                <label class="form-label">Separador CSV</label>
+                                <select class="form-input" id="importCsvDelimiter">
+                                    <option value=",">Coma (,)</option>
+                                    <option value=";">Punto y coma (;)</option>
+                                    <option value="|">Barra vertical (|)</option>
+                                    <option value="\t">Tabulación (TAB)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Archivo (CSV/XLSX)</label>
+                                <input type="file" class="form-input" id="importFileInput" accept=".csv,.xlsx,.xls">
+                            </div>
+                            <div class="form-group" style="align-self:end">
+                                <button class="btn btn-outline" id="btnAnalyzeImport">Analizar archivo</button>
+                            </div>
+                        </div>
+                        <div class="form-row" id="importMappingRow" style="display:none">
+                            <div class="form-group"><label class="form-label">Identificación/Código</label><select class="form-input" id="mapStudentCode"></select></div>
+                            <div class="form-group"><label class="form-label">Nombre</label><select class="form-input" id="mapName"></select></div>
+                            <div class="form-group"><label class="form-label">Nivel</label><select class="form-input" id="mapLevel"></select></div>
+                            <div class="form-group"><label class="form-label">Grado</label><select class="form-input" id="mapGrade"></select></div>
+                            <div class="form-group"><label class="form-label">Curso (opcional)</label><select class="form-input" id="mapCourse"></select></div>
+                            <div class="form-group"><label class="form-label">Asignación (opcional)</label><select class="form-input" id="mapAssignmentMode"></select></div>
+                            <div class="form-group" style="align-self:end"><button class="btn btn-teal" id="btnPreviewImport">Vista previa</button></div>
+                        </div>
+                        <div id="importValidationSummary" class="muted" style="margin-top:10px"></div>
+                        <div id="importPreviewTable" class="table-wrap" style="margin-top:12px"></div>
+                        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+                            <button class="btn btn-outline" id="btnImportStudents">Importar en lote</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Asignación automática por reglas</span></div>
+                    <div class="card-body">
+                        <div class="form-row">
+                            <div class="form-group"><label class="form-label">Nombre de regla</label><input class="form-input" id="ruleName" placeholder="Ej: Grado 10 a cursos disponibles"></div>
+                            <div class="form-group"><label class="form-label">Grados (separados por coma)</label><input class="form-input" id="ruleGrades" placeholder="Ej: 10,10A,10B"></div>
+                            <div class="form-group"><label class="form-label">Modo</label><select class="form-input" id="ruleMode"><option value="balanced">Balanceado</option></select></div>
+                            <div class="form-group"><label class="form-label">Estado</label><select class="form-input" id="ruleActive"><option value="true">Activa</option><option value="false">Inactiva</option></select></div>
+                            <div class="form-group" style="align-self:end"><button class="btn btn-teal" id="btnCreateRule">Crear regla</button></div>
+                        </div>
+                        <div id="rulesList" style="margin-top:12px"></div>
+                        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+                            <button class="btn btn-outline" id="btnApplyRules">Aplicar reglas a estudiantes registrados</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Zona de riesgo</span></div>
+                    <div class="card-body">
+                        <div class="alert alert-error" style="margin-bottom:12px">Esta acción borra todos los usuarios/estudiantes y sus matrículas del panel actual.</div>
+                        <button class="btn btn-danger" id="btnDeleteAllUsers">Borrar todos los usuarios</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section-panel" id="panel-calificacion">
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Modelo institucional</span></div>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label class="form-label">Modelo principal</label>
+                            <select class="form-input" id="gradingModel">
+                                <option value="simple">Promedio aritmético simple</option>
+                                <option value="weighted">Promedio ponderado por porcentajes</option>
+                                <option value="period-weighted">Períodos/cortes con peso diferente</option>
+                                <option value="none">Ninguno (carga manual)</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">¿Docente puede cambiar el modelo?</label>
+                                <select class="form-input" id="allowTeacherCustom">
+                                    <option value="true">Sí</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Forzar modelo al docente (opcional)</label>
+                                <select class="form-input" id="forcedModel">
+                                    <option value="">Sin restricción</option>
+                                    <option value="simple">Promedio simple</option>
+                                    <option value="weighted">Pesos globales por categoría</option>
+                                    <option value="item-individual">Porcentajes individuales por ítem</option>
+                                    <option value="none">Ninguno (sin cálculo automático)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Mínimo % de parciales</label>
+                                <input type="number" class="form-input" id="examMinPercent" min="0" max="100" step="1">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Máximo % de parciales</label>
+                                <input type="number" class="form-input" id="examMaxPercent" min="0" max="100" step="1">
+                            </div>
+                        </div>
+                        <button class="btn btn-teal" id="btnSaveGrading">Guardar política</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Guía para el administrador</span></div>
+                    <div class="card-body" id="gradingGuide"></div>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+
+<div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal modal-lg" id="modalDialog">
+        <div class="modal-header">
+            <span class="modal-title" id="modalTitle">Formulario</span>
+            <button class="modal-close" id="modalClose">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
+    </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="/js/admin-dashboard.js"></script>
+</body>
+</html>
+

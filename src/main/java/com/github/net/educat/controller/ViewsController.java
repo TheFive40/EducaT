@@ -36,4 +36,9 @@ public class ViewsController {
     public String teacherDashboard() {
         return "teacher-dashboard";
     }
+
+    @GetMapping("/admin-dashboard")
+    public String adminDashboard() {
+        return "admin-dashboard";
+    }
 }

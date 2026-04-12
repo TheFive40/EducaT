@@ -18,6 +18,9 @@
         <div class="sidebar-logo">E</div>
         <span class="sidebar-brand">Educa<span>T</span></span>
         <span class="sidebar-badge">Docente</span>
+        <button class="sidebar-close-btn" id="sidebarCloseBtn" type="button" title="Cerrar menu" aria-label="Cerrar menu">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
     </div>
     <div class="sidebar-user">
         <div class="user-avatar">
@@ -345,20 +348,11 @@
             <section class="section-panel" id="panel-horarios">
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-title">Horarios de Clases</span>
+                        <span class="card-title">Vista Semanal</span>
                         <button class="btn btn-teal btn-sm" id="btnNewSchedule">
                             <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                             Nuevo Horario
                         </button>
-                    </div>
-                    <div class="card-body" id="horariosContainer">
-                        <div class="loading"><div class="spinner"></div>Cargando...</div>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-title">Vista Semanal</span>
                     </div>
                     <div class="card-body" id="horariosWeekView">
                         <div class="week-grid" id="weekGrid"></div>
@@ -506,7 +500,7 @@
 </div>
 
 <div class="modal-backdrop" id="modalBackdrop">
-    <div class="modal modal-lg">
+    <div class="modal modal-lg" id="modalDialog">
         <div class="modal-header">
             <span class="modal-title" id="modalTitle">Formulario</span>
             <button class="modal-close" id="modalClose">
