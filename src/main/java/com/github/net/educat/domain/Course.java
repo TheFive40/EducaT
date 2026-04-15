@@ -13,6 +13,8 @@ public class Course {
     private String name;
     @Column(columnDefinition = "TEXT")
     private String description;
+    @Column(name = "course_code", unique = true, length = 24)
+    private String courseCode;
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "teacher_id")
     private Teacher teacher;

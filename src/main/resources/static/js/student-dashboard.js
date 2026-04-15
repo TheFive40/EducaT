@@ -137,6 +137,81 @@ const DEFAULT_UNITS = {
 function getAuth() { return localStorage.getItem('educat_auth') || sessionStorage.getItem('educat_auth'); }
 function getEmail() { return localStorage.getItem('educat_email') || sessionStorage.getItem('educat_email'); }
 
+const LOCAL_KEYS = {
+    courses: 'educat_local_courses',
+    enrollments: 'educat_local_enrollments'
+};
+
+function readLocalArray(key) {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(key) || '[]');
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function writeLocalArray(key, data) {
+    localStorage.setItem(key, JSON.stringify(Array.isArray(data) ? data : []));
+}
+
+function getLocalCourses() {
+    return readLocalArray(LOCAL_KEYS.courses);
+}
+
+function getLocalEnrollments() {
+    return readLocalArray(LOCAL_KEYS.enrollments);
+}
+
+function getActiveStudentId() {
+    return String((currentStudent && currentStudent.id) || (MOCK.student && MOCK.student.id) || '');
+}
+
+function getLocalStudentEnrollments(studentId) {
+    const sid = String(studentId || '');
+    if (!sid) return [];
+    const localCourses = getLocalCourses();
+    const byId = {};
+    localCourses.forEach(c => { byId[String(c.id)] = c; });
+    return getLocalEnrollments()
+        .filter(e => String(e.studentId || (e.student || {}).id || '') === sid)
+        .map(e => {
+            const cid = String(e.courseId || (e.course || {}).id || '');
+            const course = byId[cid] || e.course || null;
+            if (!course) return null;
+            return {
+                id: e.id || ('enr-local-' + Date.now()),
+                studentId: sid,
+                courseId: cid,
+                course,
+                enrollmentDate: e.enrollmentDate || new Date().toISOString()
+            };
+        })
+        .filter(Boolean);
+}
+
+function tryJoinCourseByCodeLocal(code) {
+    const sid = getActiveStudentId();
+    const cleanCode = String(code || '').trim().toLowerCase();
+    const courses = getLocalCourses();
+    const course = courses.find(c => String(c.courseCode || '').trim().toLowerCase() === cleanCode);
+    if (!course) return { success: false, message: 'Código inválido o curso inexistente' };
+
+    const enrollmentsLocal = getLocalEnrollments();
+    const cid = String(course.id || '');
+    const exists = enrollmentsLocal.some(e => String(e.studentId || (e.student || {}).id || '') === sid && String(e.courseId || (e.course || {}).id || '') === cid);
+    if (exists) return { success: false, message: 'Ya estás matriculado en este curso' };
+
+    enrollmentsLocal.push({
+        id: 'enr-local-' + Date.now(),
+        studentId: sid,
+        courseId: cid,
+        enrollmentDate: new Date().toISOString()
+    });
+    writeLocalArray(LOCAL_KEYS.enrollments, enrollmentsLocal);
+    return { success: true, message: 'Te matriculaste correctamente', course };
+}
+
 async function apiFetch(url, options = {}) {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 3000);
@@ -152,6 +227,16 @@ async function tryFetch(url) {
     const res = await apiFetch(url);
     if (res && res.ok) { try { return await res.json(); } catch (e) {} }
     return null;
+}
+
+async function postJson(url, payload) {
+    const res = await apiFetch(url, { method: 'POST', body: JSON.stringify(payload || {}) });
+    if (!res) throw new Error('No response');
+    const txt = await res.text();
+    let data = null;
+    try { data = txt ? JSON.parse(txt) : null; } catch (e) { data = null; }
+    if (!res.ok) throw new Error((data && data.message) || txt || ('HTTP ' + res.status));
+    return data;
 }
 
 function showToast(msg, type = '') {
@@ -618,6 +703,8 @@ async function loadOverview() {
     attendance   = MOCK.attendance;
     certificates = MOCK.certificates;
     schedules    = MOCK.schedules;
+    const localEnrollments = getLocalStudentEnrollments(getActiveStudentId());
+    if (localEnrollments.length) enrollments = localEnrollments;
     renderOverviewContent();
     const sid = currentStudent ? currentStudent.id : 0;
     Promise.all([
@@ -645,11 +732,56 @@ async function loadCursos() {
           <div class="course-card-body">
             <div class="course-card-desc">${c.description?c.description.slice(0,90)+(c.description.length>90?'...':''):'Sin descripción'}</div>
             <div class="course-card-meta"><span>Desde ${date}</span></div>
+            <div class="course-card-meta"><span>Código: <strong>${c.courseCode || 'Sin código'}</strong></span></div>
             <div class="course-card-actions"><button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openCourseView(${c.id||0})">Ver contenido</button></div>
           </div>
         </div>`;
     }).join('') + '</div>';
 }
+
+function openStudentJoinCourseModal() {
+    document.getElementById('modalTitle').textContent = 'Unirse a curso por código';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="form-group"><label class="form-label">Código del curso</label><input class="form-input" id="joinCourseCodeStudentInput" placeholder="Ej: CUR-AB12CD34"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+            <button class="btn btn-primary" onclick="joinCourseByCodeAsStudent()">Unirme</button>
+        </div>`;
+    srtSetModalSize('lg');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+
+async function joinCourseByCodeAsStudent() {
+    const input = document.getElementById('joinCourseCodeStudentInput');
+    const code = (input && input.value ? input.value : '').trim();
+    if (!code) return showToast('Ingresa un código de curso', 'error');
+    try {
+        const role = (currentUser && currentUser.role && currentUser.role.name) ? currentUser.role.name : 'ESTUDIANTE';
+        let resp = null;
+        try {
+            resp = await postJson('/api/courses/join-by-code', { courseCode: code, userId: currentUser.id, role });
+        } catch (e) {
+            resp = tryJoinCourseByCodeLocal(code);
+        }
+        if (!resp || resp.success === false) return showToast((resp && resp.message) || 'No se pudo unir al curso', 'error');
+        closeModal();
+        const sid = currentStudent ? currentStudent.id : 0;
+        const enrData = await tryFetch('/api/enrollments/student/' + sid);
+        if (enrData && enrData.length) {
+            enrollments = enrData;
+        } else {
+            const localEnrollments = getLocalStudentEnrollments(getActiveStudentId());
+            if (localEnrollments.length) enrollments = localEnrollments;
+        }
+        await loadOverview();
+        await loadCursos();
+        showToast(resp.message || 'Te matriculaste correctamente', 'success');
+    } catch (e) {
+        showToast('No se pudo procesar el código del curso', 'error');
+    }
+}
+
+window.joinCourseByCodeAsStudent = joinCourseByCodeAsStudent;
 
 async function loadClases() {
     const container = document.getElementById('clasesContainer');
@@ -997,7 +1129,7 @@ function apRenderGuideMode(guideId, mode) {
 
     if (mode === 'pdf') {
         if (!guide.pdfUrl) {
-            target.innerHTML = '<div class="guide-empty">Este instructivo no tiene PDF cargado por ahora.</div>';
+            target.innerHTML = apGuideAttachmentsHtml(guide) || '<div class="guide-empty">Este instructivo no tiene PDF cargado por ahora.</div>';
             return;
         }
         target.innerHTML = `
@@ -1005,6 +1137,7 @@ function apRenderGuideMode(guideId, mode) {
                 <a class="btn btn-outline btn-sm" href="${guide.pdfUrl}" target="_blank" rel="noopener">Abrir PDF en nueva pestaña</a>
             </div>
             <iframe class="guide-pdf-frame" src="${guide.pdfUrl}" title="${guide.title}"></iframe>
+            ${apGuideAttachmentsHtml(guide)}
         `;
         return;
     }
@@ -1012,7 +1145,35 @@ function apRenderGuideMode(guideId, mode) {
     target.innerHTML = apGuideTextHtml(guide);
 }
 
+function apNormalizeGuideAttachments(rawAttachments) {
+    return (Array.isArray(rawAttachments) ? rawAttachments : []).map((file, idx) => ({
+        id: file && file.id ? String(file.id) : ('s-gatt-' + idx),
+        name: String((file && file.name) || 'archivo'),
+        type: String((file && file.type) || 'archivo'),
+        dataUrl: String((file && file.dataUrl) || '')
+    })).filter(file => file.dataUrl.startsWith('data:') || file.dataUrl.startsWith('http') || file.dataUrl.startsWith('/'));
+}
+
+function apGuideAttachmentsHtml(guide) {
+    const attachments = apNormalizeGuideAttachments((guide || {}).attachments);
+    if (!attachments.length) return '';
+    return `<section class="guide-section" style="margin-top:12px">
+        <h4 class="guide-sec-title">Archivos adjuntos</h4>
+        <div style="display:flex;flex-direction:column;gap:8px">
+            ${attachments.map(file => `<a class="btn btn-outline btn-sm" style="justify-content:space-between" href="${escapeHtml(file.dataUrl)}" download="${escapeHtml(file.name)}" target="_blank" rel="noopener">
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(file.name)}</span>
+                <span class="muted">${escapeHtml(file.type)}</span>
+            </a>`).join('')}
+        </div>
+    </section>`;
+}
+
 function apGuideTextHtml(guide) {
+    const richHtml = String((guide && guide.richHtml) || '').trim();
+    const attachmentsHtml = apGuideAttachmentsHtml(guide);
+    if (richHtml) {
+        return `<section class="guide-section">${richHtml}</section>${attachmentsHtml}`;
+    }
     const sections = (guide.textSections || []).map(section => {
         const heading = section.heading ? `<h4 class="guide-sec-title">${section.heading}</h4>` : '';
         const paragraphs = (section.paragraphs || []).map(p => `<p class="guide-paragraph">${p}</p>`).join('');
@@ -1023,10 +1184,10 @@ function apGuideTextHtml(guide) {
     }).join('');
 
     if (!sections) {
-        return '<div class="guide-empty">No hay contenido en texto para este instructivo.</div>';
+        return attachmentsHtml || '<div class="guide-empty">No hay contenido en texto para este instructivo.</div>';
     }
 
-    return `<article class="guide-text-reader">${sections}</article>`;
+    return `<article class="guide-text-reader">${sections}</article>${attachmentsHtml}`;
 }
 
 // ── 1.2 Certificados ──────────────────────────────────────────────
@@ -1210,6 +1371,10 @@ function apBuildQs(prefix, courseId, questions, disabled) {
         }
         if (q.type==='rating10') {
             input = `<div class="eval-rating-group eval-rating-10">${[0,1,2,3,4,5,6,7,8,9,10].map(n=>`<button class="eval-rating-btn${val===n?' selected':''}" onclick="apSetEval('${prefix}','${courseId}','${q.id}',${n},this,'rating10')" data-val="${n}" ${disabled?'disabled':''}>${n}</button>`).join('')}<span class="eval-rating-labels"><span>Deficiente</span><span>Sobresaliente</span></span></div>`;
+        }
+        if (q.type==='single') {
+            const opts = Array.isArray(q.options) ? q.options : [];
+            input = `<div class="eval-multi-group">${opts.map(opt => `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text-body)"><input type="radio" name="single-${prefix}-${courseId}-${q.id}" ${val===opt?'checked':''} ${disabled?'disabled':''} onchange="apSetEval('${prefix}','${courseId}','${q.id}','${String(opt).replace(/'/g, "\\'")}',this,'single')">${opt}</label>`).join('') || '<div style="font-size:12px;color:var(--text-muted)">Sin opciones configuradas.</div>'}</div>`;
         }
         if (q.type==='open') {
             input = `<textarea class="eval-open-input" rows="3" placeholder="Escribe aquí..." ${disabled?'disabled':''} oninput="apSetEval('${prefix}','${courseId}','${q.id}',this.value,this,'open')">${val||''}</textarea>`;
@@ -2176,9 +2341,27 @@ document.getElementById('menuToggle').addEventListener('click', () => { document
 document.getElementById('sidebarCloseBtn').addEventListener('click', () => { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarOverlay').classList.remove('show'); });
 document.getElementById('logoutBtn').addEventListener('click', () => { localStorage.removeItem('educat_auth'); localStorage.removeItem('educat_email'); sessionStorage.removeItem('educat_auth'); sessionStorage.removeItem('educat_email'); window.location.href='login.html'; });
 document.getElementById('saveProfileBtn').addEventListener('click', saveProfile);
+const btnJoinCourseCodeStudent = document.getElementById('btnJoinCourseCodeStudent');
+if (btnJoinCourseCodeStudent) btnJoinCourseCodeStudent.addEventListener('click', openStudentJoinCourseModal);
 
 window.addEventListener('storage', (ev) => {
-    if (!ev || !ev.key || !currentCourse) return;
+    if (!ev || !ev.key) return;
+    if (ev.key === LOCAL_KEYS.courses || ev.key === LOCAL_KEYS.enrollments) {
+        loadOverview();
+        loadCursos();
+        return;
+    }
+    if (ev.key === 'educat_admin_instructivos') {
+        AP_GUIDES = loadAdminGuidesOrDefault();
+        const subView = document.getElementById('personalSubView');
+        const title = document.getElementById('personalSubTitle');
+        if (subView && subView.classList.contains('show') && title && String(title.textContent || '').toLowerCase().includes('instructivos')) {
+            const content = document.getElementById('personalSubContent');
+            if (content) content.innerHTML = apInstructivosHtml();
+        }
+        return;
+    }
+    if (!currentCourse) return;
     if (ev.key === ('educat_units_' + currentCourse.id)) {
         renderUnit(currentUnitIdx || 0);
         return;

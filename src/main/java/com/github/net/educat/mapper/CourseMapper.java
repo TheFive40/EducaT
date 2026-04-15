@@ -16,6 +16,7 @@ public class CourseMapper {
                 .id(course.getId())
                 .name(course.getName())
                 .description(course.getDescription())
+                .courseCode(course.getCourseCode())
                 .teacher(course.getTeacher() != null ? teacherMapper.toResponse(course.getTeacher()) : null)
                 .build();
     }

@@ -3,6 +3,7 @@ let authHeader = '';
 let currentUser = null;
 let currentTeacher = null;
 let teacherCourses = [];
+let availableTeacherCourses = [];
 let currentCourse = null;
 let currentUnitIdx = 0;
 let currentSubmissionsActivityId = null;
@@ -127,6 +128,89 @@ const DEFAULT_UNITS = {
 function getAuth() { return localStorage.getItem('educat_auth') || sessionStorage.getItem('educat_auth'); }
 function getEmail() { return localStorage.getItem('educat_email') || sessionStorage.getItem('educat_email'); }
 
+const LOCAL_KEYS = {
+    courses: 'educat_local_courses',
+    enrollments: 'educat_local_enrollments'
+};
+
+const TEACHER_GUIDES_KEY = 'educat_admin_instructivos';
+
+function readLocalArray(key) {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(key) || '[]');
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function writeLocalArray(key, data) {
+    localStorage.setItem(key, JSON.stringify(Array.isArray(data) ? data : []));
+}
+
+function getLocalCourses() {
+    return readLocalArray(LOCAL_KEYS.courses);
+}
+
+function getLocalEnrollments() {
+    return readLocalArray(LOCAL_KEYS.enrollments);
+}
+
+function getTeacherCourseLocalSets() {
+    const localCourses = getLocalCourses();
+    const localEnrollments = getLocalEnrollments();
+    const myTeacherId = String((currentTeacher && currentTeacher.id) || '');
+    const myUserId = String((currentUser && currentUser.id) || '');
+    const mine = [];
+    const available = [];
+    localCourses.forEach(c => {
+        const teacherId = String((c.teacher || {}).id || '');
+        const teacherUserId = String(((c.teacher || {}).user || {}).id || '');
+        const cid = String(c.id || '');
+        const studentsCount = localEnrollments.filter(e => String(e.courseId || (e.course || {}).id || '') === cid).length;
+        const normalized = { ...c, studentsCount };
+        if (!teacherId && !teacherUserId) {
+            available.push(normalized);
+            return;
+        }
+        if ((myTeacherId && teacherId === myTeacherId) || (myUserId && teacherUserId === myUserId)) {
+            mine.push(normalized);
+        }
+    });
+    return { mine, available };
+}
+
+function claimCourseByCodeLocal(courseCode) {
+    const code = String(courseCode || '').trim().toLowerCase();
+    const localCourses = getLocalCourses();
+    const idx = localCourses.findIndex(c => String(c.courseCode || '').trim().toLowerCase() === code);
+    if (idx < 0) return { success: false, message: 'Código inválido o curso inexistente' };
+    const current = localCourses[idx] || {};
+    const currentTeacherId = String((current.teacher || {}).id || '');
+    const myTeacherId = String((currentTeacher && currentTeacher.id) || '');
+    if (currentTeacherId && currentTeacherId !== myTeacherId) {
+        return { success: false, message: 'El curso ya tiene otro docente asignado' };
+    }
+    if (currentTeacherId && currentTeacherId === myTeacherId) {
+        return { success: true, message: 'Ya estás asignado a este curso', course: current };
+    }
+
+    const claimed = {
+        ...current,
+        teacher: {
+            id: currentTeacher && currentTeacher.id ? currentTeacher.id : current.id,
+            specialization: (currentTeacher && currentTeacher.specialization) || 'Docente',
+            user: {
+                id: currentUser && currentUser.id ? currentUser.id : null,
+                name: (currentUser && currentUser.name) || 'Docente'
+            }
+        }
+    };
+    localCourses[idx] = claimed;
+    writeLocalArray(LOCAL_KEYS.courses, localCourses);
+    return { success: true, message: 'Curso tomado correctamente', course: claimed };
+}
+
 /* ─── Modal file attachment helpers ─────────────────────────────────────────── */
 const modalFiles = {};
 
@@ -223,6 +307,22 @@ function modalDropAreaNoVideo(key, label) {
     <div class="file-list" id="mfiles-${key}" style="margin-top:8px"></div>`;
 }
 
+function modalDropAreaNoImages(key, label) {
+    return `<div class="file-drop-area" id="mdrop-${key}" style="padding:16px"
+            ondragover="event.preventDefault();document.getElementById('mdrop-${key}').classList.add('drag-over')"
+            ondragleave="document.getElementById('mdrop-${key}').classList.remove('drag-over')"
+            ondrop="handleModalDrop(event,'${key}')">
+        <input type="file" multiple accept="video/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
+               onchange="handleModalFile(event,'${key}')">
+        <div class="file-drop-icon">
+            <svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div class="file-drop-text" style="font-size:13px">${label || 'Arrastra archivos o haz clic para seleccionar'}</div>
+        <div class="file-drop-sub">Videos y documentos (las imágenes van dentro del editor)</div>
+    </div>
+    <div class="file-list" id="mfiles-${key}" style="margin-top:8px"></div>`;
+}
+
 function parseYoutubeLinks(rawText) {
     return (rawText || '')
         .split(/\r?\n/)
@@ -276,6 +376,16 @@ async function tryFetch(url) {
     return null;
 }
 
+async function postJson(url, payload) {
+    const res = await apiFetch(url, { method: 'POST', body: JSON.stringify(payload || {}) });
+    if (!res) throw new Error('No response');
+    const txt = await res.text();
+    let data = null;
+    try { data = txt ? JSON.parse(txt) : null; } catch (e) { data = null; }
+    if (!res.ok) throw new Error((data && data.message) || txt || ('HTTP ' + res.status));
+    return data;
+}
+
 function showToast(msg, type = '') {
     const t = document.createElement('div');
     t.className = 'toast ' + (type ? type + '-toast' : '');
@@ -323,6 +433,8 @@ const trtState = {
     savedRangeByEditor: {},
     activeImageByEditor: {},
     draggedImage: null,
+    resizingImage: null,
+    resizeListenersBound: false,
 };
 
 function buildRichEditorHtml(editorId, minHeight) {
@@ -376,6 +488,7 @@ function buildRichEditorHtml(editorId, minHeight) {
                 <button class="trt-btn" type="button" title="Imagen izquierda" onclick="trtImageAlign('${editorId}','left')">Img L</button>
                 <button class="trt-btn" type="button" title="Imagen centrada" onclick="trtImageAlign('${editorId}','center')">Img C</button>
                 <button class="trt-btn" type="button" title="Imagen derecha" onclick="trtImageAlign('${editorId}','right')">Img R</button>
+                <button class="trt-btn" type="button" title="Insertar texto debajo de imagen" onclick="trtInsertTextAfterImage('${editorId}')">Texto +</button>
                 <button class="trt-btn" type="button" title="Quitar imagen seleccionada" onclick="trtRemoveActiveImage('${editorId}')">Quitar Img</button>
             </div>
             <span class="trt-sep"></span>
@@ -439,6 +552,118 @@ function trtEnsureEditor(editorId) {
         }
     });
     el.addEventListener('dragend', () => { trtState.draggedImage = null; });
+    el.addEventListener('mousedown', ev => {
+        const handle = ev.target.closest('.trt-image-resize');
+        if (!handle) return;
+        const wrap = handle.closest('.trt-image-wrap');
+        const img = wrap ? wrap.querySelector('img') : null;
+        if (!wrap || !img) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        trtSelectImage(editorId, wrap);
+        trtState.resizingImage = {
+            editorId,
+            wrap,
+            img,
+            startX: ev.clientX,
+            startWidth: img.getBoundingClientRect().width
+        };
+    });
+    el.addEventListener('keydown', ev => {
+        const selected = trtState.activeImageByEditor[editorId];
+        if (!selected) return;
+        if (ev.key === 'Delete' || ev.key === 'Backspace') {
+            ev.preventDefault();
+            selected.remove();
+            trtState.activeImageByEditor[editorId] = null;
+            return;
+        }
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            trtInsertTextAfterImage(editorId);
+            return;
+        }
+        if (ev.altKey && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {
+            ev.preventDefault();
+            trtMoveImageByLine(editorId, ev.key === 'ArrowUp' ? -1 : 1);
+        }
+    });
+
+    if (!trtState.resizeListenersBound) {
+        trtState.resizeListenersBound = true;
+        document.addEventListener('mousemove', ev => {
+            const rs = trtState.resizingImage;
+            if (!rs) return;
+            const editor = document.getElementById(rs.editorId);
+            if (!editor || !rs.img) return;
+            const maxWidth = Math.max(140, editor.clientWidth - 24);
+            const next = Math.max(120, Math.min(maxWidth, rs.startWidth + (ev.clientX - rs.startX)));
+            rs.img.style.width = `${next}px`;
+            rs.img.style.maxWidth = 'none';
+        });
+        document.addEventListener('mouseup', () => {
+            if (!trtState.resizingImage) return;
+            const editorIdActive = trtState.resizingImage.editorId;
+            trtState.resizingImage = null;
+            trtSaveSelection(editorIdActive);
+        });
+    }
+    el.addEventListener('paste', async ev => {
+        const cd = ev.clipboardData;
+        if (!cd) return;
+        const imageFiles = Array.from(cd.files || []).filter(f => String((f || {}).type || '').startsWith('image/'));
+        if (imageFiles.length) {
+            ev.preventDefault();
+            for (const file of imageFiles) {
+                if (!file) continue;
+                if (file.size > 15 * 1024 * 1024) {
+                    showToast('La imagen pegada supera 15MB', 'error');
+                    continue;
+                }
+                const dataUrl = await trtReadFileAsDataUrl(file);
+                if (dataUrl) trtInsertImageFromSource(editorId, dataUrl, file.name || 'imagen pegada');
+            }
+            return;
+        }
+        const imageItems = Array.from(cd.items || []).filter(it => String(it.type || '').startsWith('image/'));
+        if (imageItems.length) {
+            ev.preventDefault();
+            for (const item of imageItems) {
+                const file = item.getAsFile ? item.getAsFile() : null;
+                if (!file) continue;
+                if (file.size > 15 * 1024 * 1024) {
+                    showToast('La imagen pegada supera 15MB', 'error');
+                    continue;
+                }
+                const dataUrl = await trtReadFileAsDataUrl(file);
+                if (dataUrl) trtInsertImageFromSource(editorId, dataUrl, file.name || 'imagen pegada');
+            }
+            return;
+        }
+
+        const html = cd.getData('text/html') || '';
+        if (html && /<img\b/i.test(html)) {
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const sources = Array.from(doc.querySelectorAll('img'))
+                .map(img => ({ src: String(img.getAttribute('src') || '').trim(), alt: String(img.getAttribute('alt') || '').trim() }))
+                .filter(x => /^https?:\/\//i.test(x.src) || /^data:image\//i.test(x.src) || /^blob:/i.test(x.src));
+            if (sources.length) {
+                ev.preventDefault();
+                for (const img of sources.slice(0, 5)) {
+                    const safeSrc = await trtNormalizeImageSourceForEmbedding(img.src);
+                    if (safeSrc) trtInsertImageFromSource(editorId, safeSrc, img.alt || 'imagen pegada');
+                }
+                return;
+            }
+        }
+
+        const plainText = String(cd.getData('text/plain') || '').trim();
+        if (/^https?:\/\//i.test(plainText) && /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(plainText)) {
+            ev.preventDefault();
+            const safeSrc = await trtNormalizeImageSourceForEmbedding(plainText);
+            if (safeSrc) trtInsertImageFromSource(editorId, safeSrc, 'imagen pegada');
+        }
+    });
 }
 function trtRangeFromPoint(x, y) {
     if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
@@ -490,7 +715,37 @@ function trtPickColor(editorId) {
 }
 function trtInsertImageLink(editorId) {
     trtSaveSelection(editorId);
-    trtOpenMiniDialog('Insertar imagen', `<div class="form-group"><label class="form-label" for="trtImgUrl">URL de imagen</label><input type="url" class="form-input" id="trtImgUrl" placeholder="https://..."></div><div class="form-group"><label class="form-label" for="trtImgAlt">Texto alternativo</label><input type="text" class="form-input" id="trtImgAlt" placeholder="Descripcion de la imagen"></div><button class="btn btn-teal" style="width:100%" onclick="trtApplyImage('${editorId}')">Insertar imagen</button><div style="margin-top:10px;font-size:12px;color:var(--text-muted)">Tip: luego puedes arrastrar la imagen para reubicarla.</div>`);
+    trtOpenMiniDialog('Insertar imagen por enlace', `
+        <div class="form-group">
+            <label class="form-label" for="trtImgUrl">URL de imagen</label>
+            <input type="url" class="form-input" id="trtImgUrl" placeholder="https://...">
+            <div style="font-size:12px;color:var(--text-muted);margin-top:6px">También puedes pegar una imagen con Ctrl+V.</div>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="trtImgAltInput">Texto alternativo (opcional)</label>
+            <input type="text" class="form-input" id="trtImgAltInput" placeholder="Descripción de la imagen">
+        </div>
+        <button class="btn btn-teal" style="width:100%" onclick="trtApplyImage('${editorId}')">Insertar imagen</button>
+    `);
+}
+
+async function trtNormalizeImageSourceForEmbedding(src) {
+    const raw = String(src || '').trim();
+    if (!raw) return '';
+    if (/^data:image\//i.test(raw)) return raw;
+    if (!/^https?:\/\//i.test(raw) && !/^blob:/i.test(raw)) return '';
+    try {
+        const response = await fetch(raw);
+        if (!response.ok) return /^blob:/i.test(raw) ? '' : raw;
+        const blob = await response.blob();
+        if (!String(blob.type || '').startsWith('image/')) return /^blob:/i.test(raw) ? '' : raw;
+        if (blob.size > 15 * 1024 * 1024) return /^blob:/i.test(raw) ? '' : raw;
+        const file = new File([blob], 'pasted-image', { type: blob.type || 'image/png' });
+        const dataUrl = await trtReadFileAsDataUrl(file);
+        return dataUrl || (/^blob:/i.test(raw) ? '' : raw);
+    } catch (e) {
+        return /^blob:/i.test(raw) ? '' : raw;
+    }
 }
 function trtInsertLink(editorId) {
     trtSaveSelection(editorId);
@@ -546,8 +801,28 @@ function trtApplyLink(editorId) {
 }
 function trtApplyImage(editorId) {
     const url = ((document.getElementById('trtImgUrl') || {}).value || '').trim();
-    const alt = ((document.getElementById('trtImgAlt') || {}).value || '').trim();
+    const alt = ((document.getElementById('trtImgAltInput') || {}).value || ((document.getElementById('trtImgAlt') || {}).value || '')).trim();
     if (!url) { showToast('Ingresa la URL de la imagen', 'error'); return; }
+    trtInsertImageFromSource(editorId, url, alt || 'imagen');
+    trtCloseMiniDialog();
+    trtSaveSelection(editorId);
+}
+
+function trtReadFileAsDataUrl(file) {
+    return new Promise(resolve => {
+        try {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => resolve('');
+            reader.readAsDataURL(file);
+        } catch (e) {
+            resolve('');
+        }
+    });
+}
+
+function trtInsertImageFromSource(editorId, src, alt) {
+    if (!src) return;
     trtFocus(editorId);
     trtRestoreSelection(editorId);
     const sel = window.getSelection();
@@ -562,7 +837,7 @@ function trtApplyImage(editorId) {
     wrap.className = 'trt-image-wrap';
     wrap.setAttribute('contenteditable', 'false');
     wrap.setAttribute('draggable', 'true');
-    wrap.innerHTML = `<img src="${url}" alt="${alt || 'imagen'}" style="max-width:100%;height:auto;display:block;border-radius:8px"><span class="trt-image-grip" title="Arrastra para mover">::</span>`;
+    wrap.innerHTML = `<img src="${src}" alt="${alt || 'imagen'}" style="max-width:100%;height:auto;display:block;border-radius:8px"><span class="trt-image-grip" title="Arrastra para mover">::</span><span class="trt-image-resize" title="Arrastra para redimensionar"></span>`;
     range.insertNode(wrap);
     const spacer = document.createTextNode(' ');
     wrap.after(spacer);
@@ -572,9 +847,7 @@ function trtApplyImage(editorId) {
         sel.removeAllRanges();
         sel.addRange(range);
     }
-    trtCloseMiniDialog();
     trtSelectImage(editorId, wrap);
-    trtSaveSelection(editorId);
 }
 function trtSelectImage(editorId, wrap) {
     const editor = document.getElementById(editorId);
@@ -603,9 +876,83 @@ function trtRemoveActiveImage(editorId) {
     imgWrap.remove();
     trtState.activeImageByEditor[editorId] = null;
 }
+
+function trtInsertTextAfterImage(editorId) {
+    const imgWrap = trtState.activeImageByEditor[editorId];
+    const editor = document.getElementById(editorId);
+    if (!imgWrap || !editor) return;
+    const p = document.createElement('p');
+    p.innerHTML = '<br>';
+    if (imgWrap.nextSibling) {
+        imgWrap.parentNode.insertBefore(p, imgWrap.nextSibling);
+    } else {
+        imgWrap.parentNode.appendChild(p);
+    }
+    const range = document.createRange();
+    range.setStart(p, 0);
+    range.collapse(true);
+    const sel = window.getSelection();
+    if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+    }
+    trtSelectImage(editorId, null);
+    trtSaveSelection(editorId);
+}
+
+function trtMoveImageByLine(editorId, direction) {
+    const imgWrap = trtState.activeImageByEditor[editorId];
+    if (!imgWrap || !imgWrap.parentNode) return;
+    const parent = imgWrap.parentNode;
+    const sibling = direction < 0 ? imgWrap.previousSibling : imgWrap.nextSibling;
+    if (!sibling) return;
+    if (direction < 0) {
+        parent.insertBefore(imgWrap, sibling);
+    } else {
+        parent.insertBefore(sibling, imgWrap);
+    }
+    trtSaveSelection(editorId);
+}
 function trtGetHtml(editorId) {
     const el = document.getElementById(editorId);
     return el ? el.innerHTML.trim() : '';
+}
+
+function htmlEscape(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function stripHtmlToText(value) {
+    const div = document.createElement('div');
+    div.innerHTML = String(value || '');
+    return String(div.textContent || div.innerText || '').trim();
+}
+
+function sanitizeRichHtml(value) {
+    const div = document.createElement('div');
+    div.innerHTML = String(value || '');
+    div.querySelectorAll('script,style,iframe,object,embed').forEach(el => el.remove());
+    div.querySelectorAll('*').forEach(el => {
+        Array.from(el.attributes || []).forEach(attr => {
+            const name = String(attr.name || '').toLowerCase();
+            const val = String(attr.value || '');
+            if (name.startsWith('on')) el.removeAttribute(attr.name);
+            if ((name === 'href' || name === 'src') && /^\s*javascript:/i.test(val)) el.removeAttribute(attr.name);
+        });
+    });
+    return div.innerHTML;
+}
+
+function toRichHtml(value) {
+    const raw = String(value || '');
+    if (!raw.trim()) return '';
+    if (/<\/?[a-z][\s\S]*>/i.test(raw)) return sanitizeRichHtml(raw);
+    return htmlEscape(raw).replace(/\n/g, '<br>');
 }
 
 function getUnits(courseId) {
@@ -916,6 +1263,7 @@ function navigateTo(section) {
         asistencia: ['Control de Asistencia', 'Registro de asistencia por clase'],
         horarios: ['Horarios', 'Programación de clases'],
         estudiantes: ['Estudiantes', 'Gestión del estudiantado'],
+        instructivos: ['Instructivos', 'Publica guías para docentes y estudiantes'],
         perfil: ['Mi Perfil', 'Datos del docente'],
     };
     if (titles[section]) {
@@ -931,12 +1279,19 @@ function navigateTo(section) {
     else if (section === 'asistencia') loadAsistencia();
     else if (section === 'horarios') loadHorarios();
     else if (section === 'estudiantes') loadEstudiantes();
+    else if (section === 'instructivos') loadInstructivos();
     else if (section === 'perfil') loadPerfil();
 }
 
 async function loadOverview() {
+    const localSets = getTeacherCourseLocalSets();
+    if (localSets.mine.length || localSets.available.length) {
+        teacherCourses = localSets.mine;
+    }
     const coursesData = await tryFetch('/api/courses/teacher/' + (currentTeacher ? currentTeacher.id : 0));
-    teacherCourses = (coursesData && coursesData.length) ? coursesData : MOCK.courses;
+    if (!localSets.mine.length && !localSets.available.length) {
+        teacherCourses = (coursesData && coursesData.length) ? coursesData : MOCK.courses;
+    }
     const activitiesData = await tryFetch('/api/activities');
     const actividades = (activitiesData && activitiesData.length) ? activitiesData : MOCK.activities;
     const examsData = await tryFetch('/api/exams');
@@ -1010,7 +1365,14 @@ ${diff !== null ? `<span style="font-size:11px;font-weight:700;color:${col};flex
 }
 
 async function loadCursos() {
-    if (!teacherCourses.length) teacherCourses = MOCK.courses;
+    const localSets = getTeacherCourseLocalSets();
+    if (localSets.mine.length || localSets.available.length) {
+        teacherCourses = localSets.mine;
+        availableTeacherCourses = localSets.available;
+    }
+    if (!teacherCourses.length && !availableTeacherCourses.length) {
+        if (!teacherCourses.length) teacherCourses = MOCK.courses;
+    }
     document.getElementById('cursosGrid').innerHTML = '<div class="grid-3">' + teacherCourses.map(c => {
         const cj = JSON.stringify(c).replace(/"/g, '&quot;');
         const units = getUnits(c.id);
@@ -1021,6 +1383,7 @@ async function loadCursos() {
 </div>
 <div class="card-body" style="padding:16px 20px">
     <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;line-height:1.5">${c.description ? c.description.slice(0, 85) + '...' : ''}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">Código: <strong>${c.courseCode || 'Sin código'}</strong></div>
     <div class="course-card-actions">
         <button class="btn btn-teal btn-sm" onclick="event.stopPropagation();openCourseView(${cj})">
             <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/></svg>
@@ -1034,7 +1397,103 @@ async function loadCursos() {
 </div>
 </div>`;
     }).join('') + '</div>';
+
+    const host = document.getElementById('availableCoursesGrid');
+    if (!host) return;
+    if (!availableTeacherCourses.length) {
+        const data = await tryFetch('/api/courses/available/teacher');
+        availableTeacherCourses = (data && data.length) ? data : [];
+    }
+    if (!availableTeacherCourses.length) {
+        host.innerHTML = '<div class="empty-state"><div class="empty-state-title">Sin cursos disponibles</div><div class="empty-state-text">Todos los cursos ya tienen docente asignado.</div></div>';
+        return;
+    }
+    host.innerHTML = '<div class="grid-3">' + availableTeacherCourses.map(c => `<div class="course-card">
+        <div class="course-card-top"><div class="course-card-name">${c.name || 'Curso'}</div><div class="course-card-teacher">Código: ${c.courseCode || 'Sin código'}</div></div>
+        <div class="card-body" style="padding:16px 20px">
+            <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;line-height:1.5">${(c.description || 'Sin descripción').slice(0, 110)}</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn btn-sm btn-teal" onclick="claimCourseAsTeacher('${String(c.courseCode || '').replace(/'/g, "\\'")}')">Tomar curso</button>
+                <button class="btn btn-sm btn-outline" onclick="claimAndOpenCourseAsTeacher('${String(c.courseCode || '').replace(/'/g, "\\'")}')">Tomar e ingresar</button>
+            </div>
+        </div>
+    </div>`).join('') + '</div>';
 }
+
+function openTeacherJoinCourseModal() {
+    document.getElementById('modalTitle').textContent = 'Unirse a curso por código';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="form-group"><label class="form-label">Código del curso</label><input class="form-input" id="joinCourseCodeTeacherInput" placeholder="Ej: CUR-AB12CD34"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+            <button class="btn btn-teal" onclick="joinCourseByCodeAsTeacher()">Unirme</button>
+        </div>`;
+    setModalSize('lg');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+
+async function joinCourseByCodeAsTeacher() {
+    const input = document.getElementById('joinCourseCodeTeacherInput');
+    const code = (input && input.value ? input.value : '').trim();
+    if (!code) return showToast('Ingresa un código de curso', 'error');
+    try {
+        const role = (currentUser && currentUser.role && currentUser.role.name) ? currentUser.role.name : 'DOCENTE';
+        let resp = null;
+        try {
+            resp = await postJson('/api/courses/join-by-code', { courseCode: code, userId: currentUser.id, role });
+        } catch (e) {
+            resp = claimCourseByCodeLocal(code);
+        }
+        if (!resp || resp.success === false) return showToast((resp && resp.message) || 'No se pudo unir al curso', 'error');
+        closeModal();
+        await loadOverview();
+        await loadCursos();
+        showToast(resp.message || 'Curso vinculado', 'success');
+    } catch (e) {
+        showToast('No se pudo procesar el código del curso', 'error');
+    }
+}
+
+async function claimCourseByCode(courseCode) {
+    if (!courseCode) return null;
+    const role = (currentUser && currentUser.role && currentUser.role.name) ? currentUser.role.name : 'DOCENTE';
+    try {
+        return await postJson('/api/courses/join-by-code', { courseCode, userId: currentUser.id, role });
+    } catch (e) {
+        return claimCourseByCodeLocal(courseCode);
+    }
+}
+
+async function claimCourseAsTeacher(courseCode) {
+    if (!courseCode) return;
+    try {
+        const resp = await claimCourseByCode(courseCode);
+        if (!resp || resp.success === false) return showToast((resp && resp.message) || 'No fue posible tomar el curso', 'error');
+        await loadOverview();
+        await loadCursos();
+        showToast(resp.message || 'Curso tomado correctamente', 'success');
+    } catch (e) {
+        showToast('No fue posible tomar el curso', 'error');
+    }
+}
+
+async function claimAndOpenCourseAsTeacher(courseCode) {
+    if (!courseCode) return;
+    try {
+        const resp = await claimCourseByCode(courseCode);
+        if (!resp || resp.success === false) return showToast((resp && resp.message) || 'No fue posible tomar el curso', 'error');
+        await loadOverview();
+        await loadCursos();
+        showToast(resp.message || 'Curso tomado correctamente', 'success');
+        if (resp.course) openCourseView(resp.course);
+    } catch (e) {
+        showToast('No fue posible tomar el curso', 'error');
+    }
+}
+
+window.joinCourseByCodeAsTeacher = joinCourseByCodeAsTeacher;
+window.claimCourseAsTeacher = claimCourseAsTeacher;
+window.claimAndOpenCourseAsTeacher = claimAndOpenCourseAsTeacher;
 
 function loadEntregas() {
     const coursesSel = document.getElementById('subCourseFilter');
@@ -1812,6 +2271,122 @@ function loadPerfil() {
     </div>`).join('');
 }
 
+function readTeacherGuides() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(TEACHER_GUIDES_KEY) || '[]');
+        return Array.isArray(raw) ? raw : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveTeacherGuides(guides) {
+    localStorage.setItem(TEACHER_GUIDES_KEY, JSON.stringify(Array.isArray(guides) ? guides : []));
+}
+
+function guideRichHtmlToSections(html) {
+    const clean = sanitizeRichHtml(html || '');
+    const div = document.createElement('div');
+    div.innerHTML = clean;
+    const paragraphs = Array.from(div.querySelectorAll('p')).map(p => stripHtmlToText(p.innerHTML)).filter(Boolean);
+    const bullets = Array.from(div.querySelectorAll('li')).map(li => stripHtmlToText(li.innerHTML)).filter(Boolean);
+    const fallbackText = stripHtmlToText(div.innerText || div.textContent || '');
+    const finalParagraphs = paragraphs.length ? paragraphs : (fallbackText ? [fallbackText] : []);
+    return [{ heading: 'Contenido', paragraphs: finalParagraphs, bullets }];
+}
+
+function loadInstructivos() {
+    const host = document.getElementById('teacherGuidesBoard');
+    if (!host) return;
+    const guides = readTeacherGuides();
+    host.innerHTML = guides.length
+        ? guides.map(g => `<div class="card-check" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+            <div style="min-width:240px;flex:1">
+                <strong>${htmlEscape(g.title || 'Instructivo')}</strong>
+                <div class="muted" style="margin-top:4px">${htmlEscape(g.detail || '')}</div>
+                <div class="muted" style="margin-top:4px">Formato: ${g.hasPdf ? 'PDF' : 'Texto'}${g.hasPdf && g.hasText ? ' + Texto' : ''}</div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <button class="btn btn-sm btn-outline" onclick="openTeacherGuideModal('${String(g.id)}')">Editar</button>
+                <button class="btn btn-sm btn-outline" onclick="deleteTeacherGuide('${String(g.id)}')">Eliminar</button>
+            </div>
+        </div>`).join('')
+        : '<div class="empty-state"><div class="empty-state-title">Sin instructivos</div><div class="empty-state-text">Crea el primer instructivo para docentes y estudiantes.</div></div>';
+}
+
+function openTeacherGuideModal(guideId) {
+    const guides = readTeacherGuides();
+    const guide = guides.find(g => String(g.id) === String(guideId)) || {
+        id: '', title: '', detail: '', hasPdf: false, hasText: true, pdfUrl: '', richHtml: ''
+    };
+    openModal((guideId ? 'Editar' : 'Nuevo') + ' instructivo', `
+        <div class="form-group"><label class="form-label">Título</label><input class="form-input" id="tgTitle" value="${htmlEscape(guide.title || '')}" placeholder="Ej: Guía de evaluaciones"></div>
+        <div class="form-group"><label class="form-label">Descripción breve</label><input class="form-input" id="tgDetail" value="${htmlEscape(guide.detail || '')}" placeholder="Resumen del instructivo"></div>
+        <div class="form-group"><label class="form-label">Contenido (editor avanzado)</label>${buildRichEditorHtml('teacherGuideEditor', 220)}</div>
+        <div class="form-row">
+            <div class="form-group"><label class="form-label">PDF por URL (opcional)</label><input class="form-input" id="tgPdfUrl" value="${htmlEscape(guide.pdfUrl || '')}" placeholder="https://... o data:application/pdf..."></div>
+            <div class="form-group"><label class="form-label">Adjuntar PDF</label><input type="file" class="form-input" id="tgPdfFile" accept="application/pdf"></div>
+        </div>
+        <button class="btn btn-teal" style="width:100%" onclick="saveTeacherGuideFromModal('${String(guide.id || '')}')">Guardar instructivo</button>
+    `);
+    setTimeout(() => {
+        const editor = document.getElementById('teacherGuideEditor');
+        if (editor) editor.innerHTML = toRichHtml(guide.richHtml || '');
+        trtEnsureEditor('teacherGuideEditor');
+    }, 0);
+}
+
+async function saveTeacherGuideFromModal(guideId) {
+    const title = String((document.getElementById('tgTitle') || {}).value || '').trim();
+    const detail = String((document.getElementById('tgDetail') || {}).value || '').trim();
+    const editorHtml = sanitizeRichHtml(trtGetHtml('teacherGuideEditor'));
+    const pdfUrlInput = String((document.getElementById('tgPdfUrl') || {}).value || '').trim();
+    const pdfFileEl = document.getElementById('tgPdfFile');
+    let pdfUrl = pdfUrlInput;
+    if (!title) return showToast('Ingresa el título del instructivo', 'error');
+    if (!editorHtml && !pdfUrl) return showToast('Agrega contenido o adjunta un PDF', 'error');
+
+    const pdfFile = pdfFileEl && pdfFileEl.files && pdfFileEl.files[0] ? pdfFileEl.files[0] : null;
+    if (pdfFile) {
+        if (String(pdfFile.type || '') !== 'application/pdf') return showToast('Solo se permiten archivos PDF', 'error');
+        if (pdfFile.size > 10 * 1024 * 1024) return showToast('El PDF supera 10MB', 'error');
+        const dataUrl = await trtReadFileAsDataUrl(pdfFile);
+        if (!dataUrl) return showToast('No se pudo leer el PDF', 'error');
+        pdfUrl = dataUrl;
+    }
+
+    const payload = {
+        id: guideId || ('guide-' + Date.now()),
+        title,
+        detail,
+        hasText: !!editorHtml,
+        hasPdf: !!pdfUrl,
+        pdfUrl,
+        richHtml: editorHtml,
+        textSections: guideRichHtmlToSections(editorHtml),
+        audience: ['DOCENTE', 'ESTUDIANTE'],
+        updatedAt: new Date().toISOString()
+    };
+
+    const guides = readTeacherGuides();
+    const idx = guides.findIndex(g => String(g.id) === String(payload.id));
+    if (idx >= 0) guides[idx] = { ...guides[idx], ...payload };
+    else guides.unshift(payload);
+    saveTeacherGuides(guides);
+    closeModal();
+    loadInstructivos();
+    showToast('Instructivo guardado', 'success');
+}
+
+function deleteTeacherGuide(guideId) {
+    openConfirmModal('Eliminar instructivo', '¿Deseas eliminar este instructivo?', () => {
+        const next = readTeacherGuides().filter(g => String(g.id) !== String(guideId));
+        saveTeacherGuides(next);
+        loadInstructivos();
+        showToast('Instructivo eliminado', 'success');
+    }, 'Eliminar');
+}
+
 async function saveProfile() {
     const name = document.getElementById('profName').value.trim();
     const email = document.getElementById('profEmail').value.trim();
@@ -1938,6 +2513,8 @@ function renderUnit(idx) {
         const isObj = typeof a === 'object' && a !== null;
         const title = isObj ? (a.title || 'Anuncio') : String(a).slice(0, 80);
         const content = isObj ? (a.content || '') : String(a);
+        const contentHtml = toRichHtml(content);
+        const contentPreview = stripHtmlToText(contentHtml);
         const dateStr = isObj && a.date ? new Date(a.date + 'T00:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
         const atts = isObj && Array.isArray(a.attachments) ? a.attachments : [];
         const cid = `ann-t-${currentCourse.id}-${idx}-${ai}`;
@@ -1947,7 +2524,7 @@ function renderUnit(idx) {
                         <div class="announcement-card-meta">
                             <div class="announcement-card-title">${title}</div>
                             ${dateStr ? `<div class="announcement-card-date">${dateStr}</div>` : ''}
-                            <div class="announcement-card-preview">${content}</div>
+                            <div class="announcement-card-preview">${htmlEscape(contentPreview)}</div>
                         </div>
                         <div style="display:flex;gap:4px;flex-shrink:0">
                             <button class="btn-icon" onclick="event.stopPropagation();editAnnouncementModal(${idx},${ai})" title="Editar">${IEDIT}</button>
@@ -1956,7 +2533,7 @@ function renderUnit(idx) {
                         </div>
                     </div>
                     <div class="announcement-card-body">
-                        <div class="announcement-full-text">${content}</div>
+                        <div class="announcement-full-text">${contentHtml}</div>
                         ${atts.length ? `<div class="announcement-section-label" style="margin-top:14px">Archivos adjuntos</div>${attachmentsHtml(atts)}` : ''}
                     </div>
                 </div>`;
@@ -3162,25 +3739,24 @@ function addAnnouncementModal(unitIdx) {
         </div>
         <div class="form-group">
             <label class="form-label">Contenido</label>
-            <textarea class="form-input" id="mAnnContent"
-                placeholder="Escribe el anuncio completo para los estudiantes. Puedes incluir instrucciones, recordatorios, aclaraciones, etc."
-                style="min-height:160px"></textarea>
+            ${buildRichEditorHtml('mAnnContentEditor', 170)}
+            <div style="font-size:12px;color:var(--text-muted);margin-top:6px">Puedes pegar imágenes directamente desde Google o portapapeles (Ctrl+V).</div>
         </div>
         <div class="form-group">
             <label class="form-label">Fecha</label>
             <input type="date" class="form-input" id="mAnnDate" value="${new Date().toISOString().split('T')[0]}">
         </div>
         <div class="form-group">
-            <label class="form-label">Archivos adjuntos <span style="font-weight:400;color:var(--text-muted)">(imágenes, videos, PDFs, documentos)</span></label>
-            ${modalDropArea(key, 'Arrastra imágenes, videos o documentos aquí')}
+            <label class="form-label">Archivos adjuntos <span style="font-weight:400;color:var(--text-muted)">(videos y documentos)</span></label>
+            ${modalDropAreaNoImages(key, 'Arrastra videos o documentos aquí')}
         </div>
         <button class="btn btn-teal" style="width:100%" onclick="saveAnnouncement(${unitIdx},'${key}')">Publicar anuncio</button>`);
 }
 
 function saveAnnouncement(unitIdx, key) {
     const title = document.getElementById('mAnnTitle').value.trim();
-    const content = document.getElementById('mAnnContent').value.trim();
-    if (!title || !content) { showToast('Título y contenido son obligatorios', 'error'); return; }
+    const content = toRichHtml(trtGetHtml('mAnnContentEditor'));
+    if (!title || !stripHtmlToText(content)) { showToast('Título y contenido son obligatorios', 'error'); return; }
     const attachments = getModalAttachments(key, []);
     const units = getUnits(currentCourse.id);
     units[unitIdx].announcements = units[unitIdx].announcements || [];
@@ -3205,6 +3781,7 @@ function editAnnouncementModal(unitIdx, annIdx) {
     const key = 'ann-edit-' + unitIdx + '-' + annIdx;
     clearModalFiles(key);
     const existingAtts = isObj && Array.isArray(a.attachments) ? a.attachments : [];
+    const rawContent = isObj ? (a.content || String(a)) : String(a);
     openModal('Editar Anuncio', `
         <div class="form-group">
             <label class="form-label">Título</label>
@@ -3212,8 +3789,8 @@ function editAnnouncementModal(unitIdx, annIdx) {
         </div>
         <div class="form-group">
             <label class="form-label">Contenido</label>
-            <textarea class="form-input" id="mAnnContent"
-                style="min-height:160px">${isObj ? (a.content || String(a)) : String(a)}</textarea>
+            ${buildRichEditorHtml('mAnnContentEditor', 170)}
+            <div style="font-size:12px;color:var(--text-muted);margin-top:6px">Puedes pegar imágenes directamente desde Google o portapapeles (Ctrl+V).</div>
         </div>
         <div class="form-group">
             <label class="form-label">Fecha</label>
@@ -3222,15 +3799,20 @@ function editAnnouncementModal(unitIdx, annIdx) {
         <div class="form-group">
             <label class="form-label">Archivos adjuntos</label>
             ${renderExistingAttachments(existingAtts, key, unitIdx, annIdx)}
-            ${modalDropArea(key, 'Agregar nuevos archivos')}
+            ${modalDropAreaNoImages(key, 'Agregar nuevos videos o documentos')}
         </div>
         <button class="btn btn-teal" style="width:100%" onclick="updateAnnouncement(${unitIdx},${annIdx},'${key}')">Guardar cambios</button>`);
+    const editor = document.getElementById('mAnnContentEditor');
+    if (editor) {
+        editor.innerHTML = toRichHtml(rawContent);
+        trtEnsureEditor('mAnnContentEditor');
+    }
 }
 
 function updateAnnouncement(unitIdx, annIdx, key) {
     const title = document.getElementById('mAnnTitle').value.trim();
-    const content = document.getElementById('mAnnContent').value.trim();
-    if (!title || !content) { showToast('Título y contenido son obligatorios', 'error'); return; }
+    const content = toRichHtml(trtGetHtml('mAnnContentEditor'));
+    if (!title || !stripHtmlToText(content)) { showToast('Título y contenido son obligatorios', 'error'); return; }
     const units = getUnits(currentCourse.id);
     const existing = units[unitIdx].announcements[annIdx];
     const isObj = typeof existing === 'object' && existing !== null;
@@ -3914,10 +4496,28 @@ document.getElementById('btnGradeAll').addEventListener('click', () => {
 });
 
 document.getElementById('saveProfileBtn').addEventListener('click', saveProfile);
+const btnNewTeacherGuide = document.getElementById('btnNewTeacherGuide');
+if (btnNewTeacherGuide) btnNewTeacherGuide.addEventListener('click', () => openTeacherGuideModal(''));
 
 document.getElementById('btnBackToList').addEventListener('click', () => {
     document.getElementById('submissionDetailView').style.display = 'none';
     renderEntregasList();
+});
+
+const btnJoinCourseCodeTeacher = document.getElementById('btnJoinCourseCodeTeacher');
+if (btnJoinCourseCodeTeacher) btnJoinCourseCodeTeacher.addEventListener('click', openTeacherJoinCourseModal);
+
+window.addEventListener('storage', (ev) => {
+    if (!ev || !ev.key) return;
+    if (ev.key === LOCAL_KEYS.courses || ev.key === LOCAL_KEYS.enrollments) {
+        loadOverview();
+        loadCursos();
+        return;
+    }
+    if (ev.key === TEACHER_GUIDES_KEY) {
+        const panel = document.getElementById('panel-instructivos');
+        if (panel && panel.classList.contains('active')) loadInstructivos();
+    }
 });
 
 init();

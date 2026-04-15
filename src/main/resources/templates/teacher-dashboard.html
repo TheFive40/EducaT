@@ -68,6 +68,10 @@
         </div>
         <div class="nav-group">
             <div class="nav-group-label">Personal</div>
+            <button class="nav-item" data-section="instructivos">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+                Instructivos
+            </button>
             <button class="nav-item" data-section="perfil">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 Mi Perfil
@@ -209,12 +213,24 @@
                 <div class="card">
                     <div class="card-header">
                         <span class="card-title">Mis Cursos</span>
-                        <span style="font-size:13px;color:var(--text-muted)">Haz clic en un curso para gestionar su contenido</span>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                            <button class="btn btn-sm btn-teal" id="btnJoinCourseCodeTeacher" title="Unirse por código">+</button>
+                            <span style="font-size:13px;color:var(--text-muted)">Haz clic en un curso para gestionar su contenido</span>
+                        </div>
                     </div>
                     <div class="card-body">
                         <div id="cursosGrid">
                             <div class="loading"><div class="spinner"></div>Cargando cursos...</div>
                         </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Cursos disponibles</span>
+                        <span style="font-size:13px;color:var(--text-muted)">Puedes tomar cursos sin docente usando el botón "Tomar curso"</span>
+                    </div>
+                    <div class="card-body" id="availableCoursesGrid">
+                        <div class="empty-state"><div class="empty-state-text">Cargando cursos disponibles...</div></div>
                     </div>
                 </div>
             </section>
@@ -430,6 +446,19 @@
                 </div>
             </section>
 
+            <section class="section-panel" id="panel-instructivos">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Instructivos docentes</span>
+                        <button class="btn btn-sm btn-teal" id="btnNewTeacherGuide">Nuevo instructivo</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info" style="margin-bottom:12px">Puedes crear instructivos con editor avanzado y adjuntar PDF. Lo publicado se comparte con estudiantes.</div>
+                        <div id="teacherGuidesBoard"></div>
+                    </div>
+                </div>
+            </section>
+
         </div>
 
         <div class="course-view" id="courseView">
@@ -513,6 +542,6 @@
 
 <div class="toast-container" id="toastContainer"></div>
 
-<script src="/js/teacher-dashboard.js"></script>
+<script src="/js/teacher-dashboard.js?v=20260412-02"></script>
 </body>
 </html>

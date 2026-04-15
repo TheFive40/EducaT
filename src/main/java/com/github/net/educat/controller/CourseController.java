@@ -1,6 +1,8 @@
 package com.github.net.educat.controller;
 
 import com.github.net.educat.dto.request.CourseRequest;
+import com.github.net.educat.dto.request.CourseJoinByCodeRequest;
+import com.github.net.educat.dto.response.CourseJoinByCodeResponse;
 import com.github.net.educat.dto.response.CourseResponse;
 import com.github.net.educat.application.CourseService;
 import jakarta.validation.Valid;
@@ -28,9 +30,17 @@ public class CourseController {
     public ResponseEntity<List<CourseResponse>> findByTeacher(@PathVariable Integer teacherId) {
         return ResponseEntity.ok(courseService.findByTeacherId(teacherId));
     }
+    @GetMapping("/available/teacher")
+    public ResponseEntity<List<CourseResponse>> findAvailableForTeacher() {
+        return ResponseEntity.ok(courseService.findAvailableForTeacher());
+    }
     @PostMapping
     public ResponseEntity<CourseResponse> save(@Valid @RequestBody CourseRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(courseService.save(request));
+    }
+    @PostMapping("/join-by-code")
+    public ResponseEntity<CourseJoinByCodeResponse> joinByCode(@Valid @RequestBody CourseJoinByCodeRequest request) {
+        return ResponseEntity.ok(courseService.joinByCode(request));
     }
     @PutMapping("/{id}")
     public ResponseEntity<CourseResponse> update(@PathVariable Integer id, @Valid @RequestBody CourseRequest request) {

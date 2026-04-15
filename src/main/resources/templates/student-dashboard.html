@@ -137,7 +137,10 @@
 
             <section class="section-panel" id="panel-cursos">
                 <div class="card">
-                    <div class="card-header"><span class="card-title">Cursos Matriculados</span></div>
+                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                        <span class="card-title">Cursos Matriculados</span>
+                        <button class="btn btn-sm btn-primary" id="btnJoinCourseCodeStudent" title="Unirse por código">+</button>
+                    </div>
                     <div class="card-body">
                         <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px">Selecciona un curso para acceder a su contenido completo, actividades, evaluaciones y materiales.</p>
                         <div id="cursosContainer"><div class="loading"><div class="spinner"></div>Cargando cursos...</div></div>

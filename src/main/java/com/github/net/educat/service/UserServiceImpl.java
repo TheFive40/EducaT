@@ -13,8 +13,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -36,8 +38,7 @@ public class UserServiceImpl implements UserService {
     }
     @Override
     public UserResponse save(UserRequest request) {
-        Role role = roleRepository.findById(request.getRoleId())
-                .orElseThrow(() -> new EntityNotFoundException("Role not found: " + request.getRoleId()));
+        Role role = resolveRoleForRegistration(request);
         User user = userMapper.toEntity(request);
         user.setRole(role);
         user.setPassword(passwordEncoder.encode(request.getPassword()));
@@ -48,8 +49,11 @@ public class UserServiceImpl implements UserService {
     public UserResponse update(Integer id, UserRequest request) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("User not found: " + id));
-        Role role = roleRepository.findById(request.getRoleId())
-                .orElseThrow(() -> new EntityNotFoundException("Role not found: " + request.getRoleId()));
+        Role role = user.getRole();
+        if (request.getRoleId() != null) {
+            role = roleRepository.findById(request.getRoleId())
+                    .orElseThrow(() -> new EntityNotFoundException("Role not found: " + request.getRoleId()));
+        }
         user.setName(request.getName());
         user.setEmail(request.getEmail());
         user.setRole(role);
@@ -63,5 +67,27 @@ public class UserServiceImpl implements UserService {
     public void delete(Integer id) {
         if (!userRepository.existsById(id)) throw new EntityNotFoundException("User not found: " + id);
         userRepository.deleteById(id);
+    }
+
+    private Role resolveRoleForRegistration(UserRequest request) {
+        if (request.getRoleId() != null) {
+            return roleRepository.findById(request.getRoleId())
+                    .orElseThrow(() -> new EntityNotFoundException("Role not found: " + request.getRoleId()));
+        }
+        String inferred = inferRoleNameByEmail(request.getEmail());
+        return roleRepository.findFirstByNameIgnoreCase(inferred)
+                .or(() -> roleRepository.findFirstByNameIgnoreCase("ESTUDIANTE"))
+                .orElseThrow(() -> new EntityNotFoundException("Role not found for registration"));
+    }
+
+    private String inferRoleNameByEmail(String email) {
+        String value = String.valueOf(email == null ? "" : email).toLowerCase(Locale.ROOT);
+        if (value.contains("admin") || value.startsWith("rector") || value.startsWith("coordinacion")) {
+            return "ADMIN";
+        }
+        if (value.contains("docente") || value.contains("teacher") || value.contains("prof")) {
+            return "DOCENTE";
+        }
+        return "ESTUDIANTE";
     }
 }

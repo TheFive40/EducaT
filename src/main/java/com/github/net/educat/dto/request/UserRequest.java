@@ -11,7 +11,6 @@ public class UserRequest {
     private String email;
     @NotBlank @Size(min = 8)
     private String password;
-    @NotNull
     private Integer roleId;
     private Boolean status;
 }

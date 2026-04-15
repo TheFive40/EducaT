@@ -60,7 +60,6 @@ document.getElementById('registerBtn').addEventListener('click', async () => {
     const email = document.getElementById('email').value.trim();
     const password = document.getElementById('password').value;
     const confirm = document.getElementById('confirmPassword').value;
-    const roleId = parseInt(document.querySelector('input[name=role]:checked').value);
     const terms = document.getElementById('terms').checked;
 
     ['nameErr', 'emailErr', 'passErr', 'confirmErr'].forEach(id => fieldErr(id, false));
@@ -81,7 +80,7 @@ document.getElementById('registerBtn').addEventListener('click', async () => {
     btn.disabled = true;
 
     try {
-        const body = { name, email, password, roleId, status: true };
+        const body = { name, email, password, status: true };
         const res = await fetch(API + '/api/users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

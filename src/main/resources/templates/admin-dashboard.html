@@ -58,7 +58,7 @@
             </button>
             <button class="nav-item" data-section="formularios">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-                Formularios de evaluación
+                Formularios
             </button>
             <button class="nav-item" data-section="importacion">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -123,11 +123,25 @@
             <section class="section-panel" id="panel-cursos">
                 <div class="card">
                     <div class="card-header">
+                        <span class="card-title">Cursos creados</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info" style="margin-bottom:14px">
+                            Visualiza código del curso, docente asignado y cantidad de estudiantes. Puedes eliminar cursos desde aquí.
+                        </div>
+                        <div id="adminCoursesCards"></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
                         <span class="card-title">Crear curso</span>
                     </div>
                     <div class="card-body">
                         <div class="alert alert-info" style="margin-bottom:14px">
                             Crea cursos y asígnales docente, nivel, grado y capacidad máxima para una estructura académica flexible.
+                        </div>
+                        <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px">
+                            <button class="btn btn-outline btn-sm" id="btnCreateTestTeachers">Crear docentes de prueba</button>
                         </div>
                         <div class="form-row">
                             <div class="form-group">
@@ -135,7 +149,7 @@
                                 <input class="form-input" id="courseName" placeholder="Ej: Matemáticas 10A">
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Docente</label>
+                                <label class="form-label">Docente (opcional)</label>
                                 <select class="form-input" id="courseTeacher"></select>
                             </div>
                             <div class="form-group">
@@ -146,8 +160,8 @@
                                 <label class="form-label">Grado</label>
                                 <div class="multi-check" id="courseGradeMulti">
                                     <button type="button" class="form-input multi-check-trigger" onclick="toggleCourseGradeMenu()">
-                                        <span id="courseGradeLabel">Seleccionar grados</span>
-                                        <span style="opacity:.6">▾</span>
+                                        <span id="courseGradeLabel" class="multi-check-label">Seleccionar grados</span>
+                                        <span class="multi-check-caret">▾</span>
                                     </button>
                                     <div class="multi-check-menu" id="courseGradeMenu"></div>
                                 </div>
@@ -213,8 +227,8 @@
                                 <label class="form-label">Grados que imparte</label>
                                 <div class="multi-check" id="assignTeacherGradeMulti">
                                     <button type="button" class="form-input multi-check-trigger" onclick="toggleAssignTeacherGradeMenu()">
-                                        <span id="assignTeacherGradeLabel">Seleccionar grados</span>
-                                        <span style="opacity:.6">▾</span>
+                                        <span id="assignTeacherGradeLabel" class="multi-check-label">Seleccionar grados</span>
+                                        <span class="multi-check-caret">▾</span>
                                     </button>
                                     <div class="multi-check-menu" id="assignTeacherGradeMenu"></div>
                                 </div>
@@ -309,22 +323,50 @@
                 <div class="card">
                     <div class="card-header"><span class="card-title">Emitir certificado</span></div>
                     <div class="card-body">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label class="form-label">Estudiante</label>
-                                <select class="form-input" id="certStudent"></select>
+                        <div class="cert-builder-grid">
+                            <div class="cert-filters-panel">
+                                <div class="assign-head">Filtrar estudiantes</div>
+                                <div class="form-group">
+                                    <label class="form-label">Nivel</label>
+                                    <select class="form-input" id="certFilterLevel" onchange="setCertFilterLevel(this.value)"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Grado</label>
+                                    <select class="form-input" id="certFilterGrade" onchange="setCertFilterGrade(this.value)"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Curso</label>
+                                    <select class="form-input" id="certFilterCourse" onchange="setCertFilterCourse(this.value)"></select>
+                                </div>
+                                <div class="form-group" style="margin-bottom:10px">
+                                    <label class="form-label">Buscar estudiante</label>
+                                    <input class="form-input" id="certStudentQuery" placeholder="Nombre o código" oninput="setCertStudentQuery(this.value)">
+                                </div>
+                                <div class="cert-filter-actions">
+                                    <button class="btn btn-sm btn-outline" type="button" onclick="selectAllFilteredCertStudents()">Seleccionar filtrados</button>
+                                    <button class="btn btn-sm btn-outline" type="button" onclick="selectCurrentPageCertStudents()">Seleccionar página</button>
+                                    <button class="btn btn-sm btn-outline" type="button" onclick="clearCertStudentSelection()">Limpiar selección</button>
+                                </div>
+                                <div class="muted" id="certSelectionSummary" style="margin-top:8px"></div>
                             </div>
-                            <div class="form-group">
+                            <div class="cert-picker-panel">
+                                <div class="assign-head">Estudiantes</div>
+                                <div id="certStudentPicker" class="cert-student-picker"></div>
+                                <div id="certStudentPickerPager" style="margin-top:10px"></div>
+                            </div>
+                        </div>
+                        <div class="form-row" style="margin-top:12px">
+                            <div class="form-group" style="margin-bottom:0">
                                 <label class="form-label">Nombre del certificado</label>
                                 <input class="form-input" id="certName" placeholder="Ej: Certificado de estudio">
                             </div>
+                            <div class="form-group" style="margin-bottom:0">
+                                <label class="form-label">Archivo del certificado</label>
+                                <input type="file" class="form-input" id="certFileInput" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
+                                <div class="muted" style="margin-top:6px">Carga el archivo desde el dispositivo (PDF recomendado).</div>
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label class="form-label">Archivo del certificado</label>
-                            <input type="file" class="form-input" id="certFileInput" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
-                            <div class="muted" style="margin-top:6px">Carga el archivo desde el dispositivo (PDF recomendado).</div>
-                        </div>
-                        <button class="btn btn-teal" id="btnCreateCert">Guardar certificado</button>
+                        <button class="btn btn-teal" id="btnCreateCert" style="margin-top:12px">Emitir certificado(s)</button>
                         <div id="certificatesTable" class="table-wrap" style="margin-top:16px"></div>
                     </div>
                 </div>
@@ -342,7 +384,7 @@
 
             <section class="section-panel" id="panel-formularios">
                 <div class="card">
-                    <div class="card-header"><span class="card-title">Banco de preguntas</span></div>
+                    <div class="card-header"><span class="card-title">Constructor de formularios</span></div>
                     <div class="card-body">
                         <div class="form-row">
                             <div class="form-group">
@@ -351,20 +393,109 @@
                                     <option value="eval">Evaluación docente</option>
                                     <option value="autoeval">Autoevaluación</option>
                                 </select>
+                                <div class="muted" id="formTypeHint" style="margin-top:6px"></div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Título visible</label>
+                                <input class="form-input" id="formTitleInput" placeholder="Ej: Evaluación periodo 2">
                             </div>
                             <div class="form-group" style="align-self:end">
-                                <button class="btn btn-teal" id="btnNewQuestion">Agregar pregunta</button>
+                                <div class="form-builder-actions">
+                                    <button class="btn btn-outline" id="btnOpenFormBuilderWindow">Abrir constructor en ventana completa</button>
+                                    <button class="btn btn-outline" id="btnNewCustomForm">Nuevo formulario personalizable</button>
+                                    <button class="btn btn-teal form-builder-save" id="btnSaveFormBuilder">Guardar formulario</button>
+                                </div>
+                                <div class="muted" id="formBuilderReadOnlyHint" style="margin-top:8px"></div>
                             </div>
                         </div>
+                        <div class="card-list" id="customAudiencePanel" style="padding:10px;display:none">
+                            <div class="assign-head">Acceso del formulario personalizable</div>
+                            <div class="form-group" style="margin-bottom:8px">
+                                <label class="form-label">¿Quién puede hacer el formulario?</label>
+                                <select class="form-input" id="formAudienceMode" onchange="setCustomAudienceMode(this.value)">
+                                    <option value="anyone">Cualquiera (autenticado o no)</option>
+                                    <option value="registered">Todos los usuarios registrados</option>
+                                    <option value="roles">Solo roles seleccionados</option>
+                                </select>
+                            </div>
+                            <div class="muted" style="margin:4px 0 8px">"Todos los usuarios registrados" incluye usuarios sin permisos o sin rol asignado.</div>
+                            <div id="formAudienceRoles" class="card-list" style="max-height:120px"></div>
+                        </div>
                         <div id="questionsList"></div>
+                        <div class="form-builder-bottom-actions">
+                            <button class="btn btn-outline" id="btnAddBuilderQuestion">Añadir pregunta</button>
+                        </div>
+                        <div class="form-live-preview" id="formLivePreview"></div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+                            <button class="btn btn-outline" id="btnOpenFormPreviewPopup">Previsualizar (emergente)</button>
+                            <button class="btn btn-outline" id="btnShareFormLink">Compartir link</button>
+                            <button class="btn btn-outline" id="btnViewFormResponses">Ver respuestas</button>
+                            <button class="btn btn-outline" id="btnExportFormResponses">Exportar respuestas CSV</button>
+                        </div>
+                        <div class="form-row" style="margin-top:10px">
+                            <div class="form-group">
+                                <label class="form-label">Respuestas desde</label>
+                                <input class="form-input" id="responsesFromDate" type="date">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Respuestas hasta</label>
+                                <input class="form-input" id="responsesToDate" type="date">
+                            </div>
+                        </div>
+                        <div id="formResponsesBoard" style="margin-top:12px"></div>
                     </div>
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-title">Respuestas enviadas por estudiantes</span>
-                        <button class="btn btn-outline btn-sm" id="btnExportResponses">Generar reporte CSV</button>
+                        <span class="card-title">Encuestas en tiempo real</span>
+                        <button class="btn btn-outline btn-sm" id="btnExportSurveyResults">Descargar Excel</button>
                     </div>
-                    <div class="card-body" id="responsesList"></div>
+                    <div class="card-body">
+                        <div class="assign-head" style="margin-bottom:8px">Crear y configurar encuesta</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Pregunta de encuesta</label>
+                                <input class="form-input" id="surveyQuestion" placeholder="Ej: ¿Qué jornada prefieres para tutorías?">
+                                <div class="survey-upload-inline" style="margin-top:8px">
+                                    <input type="file" id="surveyQuestionMediaInput" accept="image/*,.svg" style="display:none" onchange="setSurveyQuestionMedia(this.files); this.value='';">
+                                    <button class="btn btn-sm btn-outline" type="button" onclick="document.getElementById('surveyQuestionMediaInput').click()">Añadir foto/icono a la pregunta</button>
+                                    <button class="btn btn-sm btn-outline" type="button" onclick="clearSurveyQuestionMedia()">Quitar</button>
+                                </div>
+                                <div id="surveyQuestionMediaPreview" style="margin-top:8px"></div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">¿Requiere autenticación?</label>
+                                <select class="form-input" id="surveyAuthRequired">
+                                    <option value="true" selected>Si, requiere login</option>
+                                    <option value="false">No, pública</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Roles que pueden responder</label>
+                                <div id="surveyRoleSelector" class="card-list" style="max-height:110px"></div>
+                            </div>
+                            <div class="form-group" style="align-self:end">
+                                <button class="btn btn-outline" id="btnAddSurveyOption">Añadir opción</button>
+                                <button class="btn btn-outline" id="btnPreviewSurveyDraft">Previsualizar</button>
+                                <button class="btn btn-teal" id="btnCreateSurvey">Crear encuesta</button>
+                            </div>
+                        </div>
+                        <div class="form-row" style="margin-top:8px">
+                            <div class="form-group">
+                                <label class="form-label">Inicia en (opcional)</label>
+                                <input class="form-input" id="surveyStartsAt" type="datetime-local">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Finaliza en (opcional)</label>
+                                <input class="form-input" id="surveyEndsAt" type="datetime-local">
+                            </div>
+                        </div>
+                        <div id="surveyOptionsBuilder"></div>
+                        <div class="assign-head" style="margin-top:14px">Encuestas activas</div>
+                        <div id="surveyActiveBoard" style="margin-top:14px"></div>
+                        <div class="assign-head" style="margin-top:14px">Historial de encuestas</div>
+                        <div id="surveyHistoryBoard" style="margin-top:14px"></div>
+                    </div>
                 </div>
             </section>
 

@@ -40,7 +40,7 @@
         <div class="auth-steps">
             <div class="auth-step">
                 <div class="auth-step-num">1</div>
-                <span class="auth-step-text"><strong>Completa el formulario</strong> con tus datos personales y elige tu rol en la plataforma.</span>
+                <span class="auth-step-text"><strong>Completa el formulario</strong> con tus datos personales; el sistema detecta automáticamente tu rol.</span>
             </div>
             <div class="auth-step">
                 <div class="auth-step-num">2</div>
@@ -138,38 +138,8 @@
         </div>
 
         <div class="section-divider">Rol en la plataforma</div>
-
-        <div class="form-group">
-            <div class="role-selector" id="roleSelector">
-                <div class="role-option">
-                    <input type="radio" name="role" id="roleStudent" value="3" checked>
-                    <label class="role-label" for="roleStudent">
-                        <div class="role-label-icon">
-                            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
-                        </div>
-                        <span class="role-label-text">Estudiante</span>
-                    </label>
-                </div>
-                <div class="role-option">
-                    <input type="radio" name="role" id="roleTeacher" value="2">
-                    <label class="role-label" for="roleTeacher">
-                        <div class="role-label-icon">
-                            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-                        </div>
-                        <span class="role-label-text">Docente</span>
-                    </label>
-                </div>
-                <div class="role-option">
-                    <input type="radio" name="role" id="roleAdmin" value="1">
-                    <label class="role-label" for="roleAdmin">
-                        <div class="role-label-icon">
-                            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M20 12h2M2 12h2M19.07 19.07l-1.41-1.41M4.93 19.07l1.41-1.41M12 20v2M12 2v2"/></svg>
-                        </div>
-                        <span class="role-label-text">Admin</span>
-                    </label>
-                </div>
-            </div>
-            <div class="field-error" id="roleErr">Selecciona un rol.</div>
+        <div class="alert alert-info" style="margin-bottom:12px">
+            El rol se asigna automáticamente según tu perfil institucional.
         </div>
 
         <label class="terms-row">

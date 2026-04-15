@@ -8,6 +8,5 @@ public class CourseRequest {
     @NotBlank
     private String name;
     private String description;
-    @NotNull
     private Integer teacherId;
 }
