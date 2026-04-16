@@ -17,6 +17,11 @@ public class ViewsController {
         return "register";
     }
 
+    @GetMapping("/enrollment")
+    public String enrollment() {
+        return "enrollment";
+    }
+
     @GetMapping("/")
     public String home() {
         return "index";

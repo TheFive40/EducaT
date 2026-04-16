@@ -38,11 +38,26 @@ public class UserServiceImpl implements UserService {
     }
     @Override
     public UserResponse save(UserRequest request) {
+        String name = normalize(request.getName());
+        String email = normalizeEmail(request.getEmail());
+        if (name.isBlank()) throw new IllegalArgumentException("El nombre es obligatorio");
+        if (email.isBlank()) throw new IllegalArgumentException("El correo es obligatorio");
+        if (request.getPassword() == null || request.getPassword().isBlank()) {
+            throw new IllegalArgumentException("La contraseña es obligatoria para crear usuario");
+        }
+        if (userRepository.existsByEmail(email)) {
+            throw new IllegalArgumentException("Ya existe un usuario con el correo: " + email);
+        }
         Role role = resolveRoleForRegistration(request);
         User user = userMapper.toEntity(request);
+        user.setName(name);
+        user.setEmail(email);
+        user.setDocumentId(normalize(request.getDocumentId()));
+        user.setPhone(normalize(request.getPhone()));
         user.setRole(role);
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setCreatedAt(LocalDateTime.now());
+        user.setStatus(request.getStatus() != null ? request.getStatus() : Boolean.TRUE);
         return userMapper.toResponse(userRepository.save(user));
     }
     @Override
@@ -54,10 +69,24 @@ public class UserServiceImpl implements UserService {
             role = roleRepository.findById(request.getRoleId())
                     .orElseThrow(() -> new EntityNotFoundException("Role not found: " + request.getRoleId()));
         }
-        user.setName(request.getName());
-        user.setEmail(request.getEmail());
+        String name = normalize(request.getName());
+        String email = normalizeEmail(request.getEmail());
+        if (name.isBlank()) throw new IllegalArgumentException("El nombre es obligatorio");
+        if (email.isBlank()) throw new IllegalArgumentException("El correo es obligatorio");
+        if (!email.equalsIgnoreCase(String.valueOf(user.getEmail()))) {
+            boolean exists = userRepository.findByEmail(email)
+                    .map(other -> !other.getId().equals(user.getId()))
+                    .orElse(false);
+            if (exists) throw new IllegalArgumentException("Ya existe un usuario con el correo: " + email);
+        }
+        user.setName(name);
+        user.setEmail(email);
+        user.setDocumentId(normalize(request.getDocumentId()));
+        user.setPhone(normalize(request.getPhone()));
         user.setRole(role);
-        user.setStatus(request.getStatus());
+        if (request.getStatus() != null) {
+            user.setStatus(request.getStatus());
+        }
         if (request.getPassword() != null && !request.getPassword().isBlank()) {
             user.setPassword(passwordEncoder.encode(request.getPassword()));
         }
@@ -89,5 +118,13 @@ public class UserServiceImpl implements UserService {
             return "DOCENTE";
         }
         return "ESTUDIANTE";
+    }
+
+    private String normalize(String value) {
+        return String.valueOf(value == null ? "" : value).trim();
+    }
+
+    private String normalizeEmail(String value) {
+        return normalize(value).toLowerCase(Locale.ROOT);
     }
 }

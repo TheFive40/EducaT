@@ -8,6 +8,8 @@ public class UserResponse {
     private Integer id;
     private String name;
     private String email;
+    private String documentId;
+    private String phone;
     private RoleResponse role;
     private Boolean status;
     private LocalDateTime createdAt;

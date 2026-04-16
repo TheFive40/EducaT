@@ -298,6 +298,7 @@
                                 <button class="btn btn-sm btn-outline" id="permRoleNextPage">Siguiente</button>
                             </div>
                             <div id="permissionsChecklist" class="perm-grid"></div>
+                            <div class="pager" id="permissionsChecklistPager" style="margin-top:6px;margin-bottom:10px"></div>
                             <button class="btn btn-outline" id="btnSavePerms">Guardar permisos</button>
                             <hr style="border:none;border-top:1px solid rgba(11,31,58,0.1);margin:18px 0">
                             <div class="form-row">
@@ -313,7 +314,66 @@
                                 <button class="btn btn-sm btn-outline" id="permUserNextPage">Siguiente</button>
                             </div>
                             <div id="userPermissionsChecklist" class="perm-grid"></div>
+                            <div class="pager" id="userPermissionsChecklistPager" style="margin-top:6px;margin-bottom:10px"></div>
                             <button class="btn btn-outline" id="btnSaveUserPerms">Guardar permisos de usuario</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">Gestión de usuarios</span></div>
+                        <div class="card-body">
+                            <div class="alert alert-info" style="margin-bottom:12px">
+                                Registra usuarios, asigna rol y define estado de acceso desde este panel.
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Nombre completo</label>
+                                    <input class="form-input" id="adminUserName" placeholder="Ej: Ana María López">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Correo</label>
+                                    <input class="form-input" id="adminUserEmail" type="email" placeholder="usuario@dominio.com">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Contraseña temporal</label>
+                                    <input class="form-input" id="adminUserPassword" type="password" placeholder="Mínimo 8 caracteres">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Rol</label>
+                                    <select class="form-input" id="adminUserRole"></select>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Documento (opcional)</label>
+                                    <input class="form-input" id="adminUserDocument" placeholder="CC / ID">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Teléfono (opcional)</label>
+                                    <input class="form-input" id="adminUserPhone" placeholder="Ej: +57 3000000000">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Estado</label>
+                                    <select class="form-input" id="adminUserStatus">
+                                        <option value="true">Activo</option>
+                                        <option value="false">Inactivo</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" style="align-self:end">
+                                    <button class="btn btn-teal" id="btnCreateAdminUser">Crear usuario</button>
+                                </div>
+                            </div>
+                            <div class="form-row" style="margin-top:8px">
+                                <div class="form-group">
+                                    <label class="form-label">Buscar usuario</label>
+                                    <input class="form-input" id="adminUsersSearch" placeholder="Nombre, correo o rol...">
+                                </div>
+                            </div>
+                            <div id="adminUsersList" class="admin-users-list"></div>
+                            <div class="pager">
+                                <button class="btn btn-sm btn-outline" id="adminUsersPrevPage">Anterior</button>
+                                <span id="adminUsersPageInfo">0/0</span>
+                                <button class="btn btn-sm btn-outline" id="adminUsersNextPage">Siguiente</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -332,11 +392,15 @@
                                 </div>
                                 <div class="form-group">
                                     <label class="form-label">Grado</label>
-                                    <select class="form-input" id="certFilterGrade" onchange="setCertFilterGrade(this.value)"></select>
+                                    <input class="form-input" id="certGradeQuery" placeholder="Buscar grado" oninput="setCertGradeQuery(this.value)">
+                                    <div id="certFilterGradeCards" class="cert-filter-card-grid" style="margin-top:8px"></div>
+                                    <div id="certFilterGradePager" style="margin-top:8px"></div>
                                 </div>
                                 <div class="form-group">
                                     <label class="form-label">Curso</label>
-                                    <select class="form-input" id="certFilterCourse" onchange="setCertFilterCourse(this.value)"></select>
+                                    <input class="form-input" id="certCourseQuery" placeholder="Buscar curso" oninput="setCertCourseQuery(this.value)">
+                                    <div id="certFilterCourseCards" class="cert-filter-card-grid" style="margin-top:8px"></div>
+                                    <div id="certFilterCoursePager" style="margin-top:8px"></div>
                                 </div>
                                 <div class="form-group" style="margin-bottom:10px">
                                     <label class="form-label">Buscar estudiante</label>
@@ -418,7 +482,7 @@
                                     <option value="roles">Solo roles seleccionados</option>
                                 </select>
                             </div>
-                            <div class="muted" style="margin:4px 0 8px">"Todos los usuarios registrados" incluye usuarios sin permisos o sin rol asignado.</div>
+                            <div class="muted" style="margin:4px 0 8px">"Todos los usuarios registrados" incluye a todos los usuarios del sistema</div>
                             <div id="formAudienceRoles" class="card-list" style="max-height:120px"></div>
                         </div>
                         <div id="questionsList"></div>

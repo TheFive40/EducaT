@@ -51,6 +51,85 @@
     padding: 8px 10px;
 }
 
+.admin-users-list {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#panel-roles .card-header {
+    padding-top: 10px;
+    padding-bottom: 10px;
+}
+
+#panel-roles .card-body {
+    padding-top: 10px;
+    padding-bottom: 10px;
+}
+
+#panel-roles .perm-grid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+#panel-roles #permissionsChecklist,
+#panel-roles #userPermissionsChecklist {
+    max-height: 220px;
+    overflow: auto;
+    padding-right: 4px;
+}
+
+#panel-roles #permissionsChecklist .card-check,
+#panel-roles #userPermissionsChecklist .card-check {
+    padding: 6px 8px;
+    font-size: 12px;
+    margin-bottom: 4px !important;
+}
+
+#panel-roles .pager {
+    margin-top: 6px;
+    margin-bottom: 8px;
+}
+
+.admin-user-item {
+    border: 1px solid rgba(11, 31, 58, 0.1);
+    border-radius: 10px;
+    background: #fbfdff;
+    padding: 10px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    align-items: center;
+}
+
+.admin-user-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-dark);
+}
+
+.admin-user-meta {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.admin-user-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.admin-user-actions .form-input {
+    width: 150px;
+    min-height: 34px;
+    padding-top: 7px;
+    padding-bottom: 7px;
+}
+
 .guide-item,
 .question-item {
     border: 1px solid rgba(11, 31, 58, 0.1);
@@ -1113,6 +1192,7 @@
     display: grid;
     grid-template-columns: minmax(260px, 320px) 1fr;
     gap: 14px;
+    align-items: stretch;
 }
 
 .cert-filters-panel,
@@ -1123,31 +1203,101 @@
     padding: 12px;
 }
 
+.cert-picker-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+}
+
 .cert-filter-actions {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
 }
 
+.cert-filter-card-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    max-height: 230px;
+    overflow: auto;
+    padding-right: 2px;
+}
+
+.cert-filter-card {
+    width: 100%;
+    text-align: left;
+    border: 1px solid rgba(11, 31, 58, 0.12);
+    border-radius: 10px;
+    background: #fbfdff;
+    padding: 9px 10px;
+    cursor: pointer;
+    transition: all .16s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.cert-filter-card:hover {
+    border-color: rgba(12, 59, 103, 0.32);
+    background: #fff;
+    box-shadow: 0 8px 18px rgba(11, 31, 58, 0.08);
+}
+
+.cert-filter-card.selected {
+    border-color: rgba(12, 59, 103, 0.46);
+    background: rgba(12, 59, 103, 0.08);
+}
+
+.cert-filter-card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-dark);
+}
+
+.cert-filter-card-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.cert-filter-card-check {
+    width: 15px;
+    height: 15px;
+    accent-color: #185281;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.cert-filter-card-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
 .cert-student-picker {
-    max-height: 360px;
+    min-height: 0;
+    max-height: none;
+    height: 100%;
     overflow: auto;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding-right: 2px;
+    gap: 10px;
+    padding-right: 6px;
+    flex: 1;
 }
 
 .cert-student-item {
     border: 1px solid rgba(11, 31, 58, 0.1);
-    border-radius: 10px;
-    padding: 10px;
+    border-radius: 12px;
+    padding: 14px;
     display: flex;
-    gap: 10px;
+    gap: 12px;
     align-items: flex-start;
     cursor: pointer;
     background: #fbfdff;
     transition: all .16s ease;
+    min-height: 92px;
 }
 
 .cert-student-item:hover {
@@ -1228,9 +1378,31 @@ body.builder-fullscreen-mode #panel-formularios > .card {
         grid-template-columns: 1fr;
     }
 
+    .admin-user-item {
+        grid-template-columns: 1fr;
+    }
+
+    .admin-user-actions {
+        justify-content: flex-start;
+    }
+
+    .admin-user-actions .form-input {
+        width: 100%;
+    }
+
     .public-survey-card,
     .cert-builder-grid {
         grid-template-columns: 1fr;
+    }
+
+    .cert-picker-panel {
+        min-height: 0;
+        height: auto;
+    }
+
+    .cert-student-picker {
+        min-height: 320px;
+        max-height: 420px;
     }
 }
 

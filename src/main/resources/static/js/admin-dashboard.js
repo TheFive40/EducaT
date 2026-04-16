@@ -158,6 +158,17 @@ const state = {
         permUserSearch: '',
         permUserPage: 1,
         permUserPageSize: 20,
+        permRoleChecklistPage: 1,
+        permRoleChecklistPageSize: 10,
+        permUserChecklistPage: 1,
+        permUserChecklistPageSize: 10,
+        adminUsersSearch: '',
+        adminUsersRoleFilter: 'all',
+        adminUsersPage: 1,
+        adminUsersPageSize: 8,
+        adminUsersSelectedIds: [],
+        adminUsersFilteredIds: [],
+        adminUsersCurrentPageIds: [],
         formBuilderPage: 1,
         formBuilderPageSize: 5,
         formDraft: { type: 'eval', title: '', questions: [] },
@@ -177,7 +188,15 @@ const state = {
         adminCoursesPageSize: 6,
         certFilterLevel: '',
         certFilterGrade: '',
+        certFilterGrades: [],
         certFilterCourse: '',
+        certFilterCourses: [],
+        certGradeQuery: '',
+        certCourseQuery: '',
+        certGradePage: 1,
+        certCoursePage: 1,
+        certFilterCardsPageSize: 8,
+        certCourseCardsPageSize: 6,
         certStudentQuery: '',
         certSelectedStudentIds: [],
         certFilteredStudentIds: [],
@@ -1378,17 +1397,358 @@ function assignTeacherToLevel() {
     showToast('Docente asignado al nivel', 'success');
 }
 
-function createRole() {
+async function createRole() {
     const roleNameEl = document.getElementById('roleName');
     const name = String((roleNameEl || {}).value || '').trim();
     if (!name) return showToast('Ingresa el nombre del rol', 'error');
     if ((state.roles || []).some(r => String(r.name || '').toLowerCase() === name.toLowerCase())) {
         return showToast('Ese rol ya existe', 'error');
     }
-    state.roles.push({ id: Date.now(), name });
+
+    let created = null;
+    try {
+        created = await api('/api/roles', {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify({ name })
+        });
+    } catch (e) {
+        created = { id: Date.now(), name };
+    }
+
+    state.roles.push(created);
+    saveStorage(STORAGE_KEYS.localRoles, state.roles || []);
     if (roleNameEl) roleNameEl.value = '';
     renderRolesSection();
     showToast('Rol creado', 'success');
+}
+
+function normalizeAdminUsersQuery(user) {
+    const roleName = String((((user || {}).role || {}).name) || '');
+    return `${String((user || {}).name || '')} ${String((user || {}).email || '')} ${roleName}`.toLowerCase();
+}
+
+function getAdminUsersRoleFilterValue(user) {
+    const roleId = String((((user || {}).role || {}).id) || '').trim();
+    return roleId || 'no-role';
+}
+
+function matchesAdminUsersRoleFilter(user, filterValue) {
+    const value = String(filterValue || 'all');
+    const roleId = String((((user || {}).role || {}).id) || '').trim();
+    if (value === 'all') return true;
+    if (value === 'no-role') return !roleId;
+    if (value === 'with-role') return !!roleId;
+    return roleId === value;
+}
+
+function buildAdminUsersRoleFilterOptions() {
+    const base = [
+        { id: 'all', name: 'Todos los usuarios' },
+        { id: 'no-role', name: 'Sin rol asignado' },
+        { id: 'with-role', name: 'Con cualquier rol' }
+    ];
+    const roleOptions = asArray(state.roles).map(r => ({ id: String(r.id), name: 'Rol: ' + String(r.name || 'Sin nombre') }));
+    return base.concat(roleOptions);
+}
+
+function renderAdminUsersRoleFilterSelect() {
+    const select = document.getElementById('adminUsersRoleFilter');
+    if (!select) return;
+    const options = buildAdminUsersRoleFilterOptions();
+    select.innerHTML = options.map(opt => `<option value="${escapeHtml(String(opt.id))}">${escapeHtml(String(opt.name))}</option>`).join('');
+    const valid = new Set(options.map(opt => String(opt.id)));
+    const current = String(state.ui.adminUsersRoleFilter || 'all');
+    select.value = valid.has(current) ? current : 'all';
+    state.ui.adminUsersRoleFilter = select.value;
+}
+
+function renderAdminUsersBulkRoleSelect() {
+    fillSelect(
+        'adminUsersBulkRole',
+        asArray(state.roles),
+        role => `<option value="${String(role.id)}">${escapeHtml(role.name || 'Rol')}</option>`,
+        'Selecciona rol'
+    );
+}
+
+function toggleAdminUserSelection(userId, checked) {
+    const id = String(userId || '');
+    const selected = new Set(asArray(state.ui.adminUsersSelectedIds).map(String));
+    if (checked) selected.add(id);
+    else selected.delete(id);
+    state.ui.adminUsersSelectedIds = Array.from(selected);
+    renderRolesSection();
+}
+
+function selectCurrentPageAdminUsers() {
+    const selected = new Set(asArray(state.ui.adminUsersSelectedIds).map(String));
+    asArray(state.ui.adminUsersCurrentPageIds).forEach(id => selected.add(String(id)));
+    state.ui.adminUsersSelectedIds = Array.from(selected);
+    renderRolesSection();
+}
+
+function selectFilteredAdminUsers() {
+    const selected = new Set(asArray(state.ui.adminUsersSelectedIds).map(String));
+    asArray(state.ui.adminUsersFilteredIds).forEach(id => selected.add(String(id)));
+    state.ui.adminUsersSelectedIds = Array.from(selected);
+    renderRolesSection();
+}
+
+function clearAdminUsersSelection() {
+    state.ui.adminUsersSelectedIds = [];
+    renderRolesSection();
+}
+
+async function persistAdminUserRoleStatus(user, roleId, status) {
+    const role = asArray(state.roles).find(r => String(r.id) === String(roleId || ''));
+    if (!role) throw new Error('Rol inválido');
+    try {
+        return await api('/api/users/' + String(user.id), {
+            method: 'PUT',
+            headers: headers(),
+            body: JSON.stringify({
+                name: user.name,
+                email: user.email,
+                roleId: role.id,
+                status,
+                documentId: user.documentId || '',
+                phone: user.phone || ''
+            })
+        });
+    } catch (e) {
+        return {
+            ...user,
+            role: { id: role.id, name: role.name },
+            status
+        };
+    }
+}
+
+async function assignRoleToSelectedAdminUsers() {
+    const roleId = String((document.getElementById('adminUsersBulkRole') || {}).value || '');
+    const selectedIds = new Set(asArray(state.ui.adminUsersSelectedIds).map(String));
+    if (!roleId) return showToast('Selecciona el rol a asignar', 'error');
+    if (!selectedIds.size) return showToast('Selecciona al menos un usuario', 'error');
+
+    const users = asArray(state.users).filter(u => selectedIds.has(String((u || {}).id || '')));
+    if (!users.length) return showToast('No hay usuarios válidos seleccionados', 'error');
+
+    let updated = 0;
+    for (let i = 0; i < users.length; i += 1) {
+        const user = users[i];
+        const status = (user || {}).status === false ? false : true;
+        try {
+            const saved = await persistAdminUserRoleStatus(user, roleId, status);
+            upsertUserInState(saved);
+            updated += 1;
+        } catch (e) {
+            // continuar con los demás
+        }
+    }
+
+    saveStorage(STORAGE_KEYS.localUsers, state.users || []);
+    if (updated) {
+        showToast('Rol asignado a ' + updated + ' usuario(s)', 'success');
+        renderRolesSection();
+        return;
+    }
+    showToast('No se pudo asignar el rol', 'error');
+}
+
+function getRoleOptionsHtml(selectedRoleId) {
+    const selected = String(selectedRoleId || '');
+    return asArray(state.roles)
+        .map(r => `<option value="${String(r.id)}" ${String(r.id) === selected ? 'selected' : ''}>${escapeHtml(r.name || 'Rol')}</option>`)
+        .join('');
+}
+
+function clearAdminUserForm() {
+    const ids = ['adminUserName', 'adminUserEmail', 'adminUserPassword', 'adminUserDocument', 'adminUserPhone'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    const statusEl = document.getElementById('adminUserStatus');
+    if (statusEl) statusEl.value = 'true';
+}
+
+function upsertUserInState(user) {
+    const id = String((user || {}).id || '');
+    if (!id) return;
+    const idx = asArray(state.users).findIndex(u => String((u || {}).id || '') === id);
+    if (idx >= 0) {
+        state.users[idx] = user;
+        return;
+    }
+    state.users.unshift(user);
+}
+
+function fillAdminUserRoleSelect() {
+    fillSelect(
+        'adminUserRole',
+        asArray(state.roles),
+        role => `<option value="${String(role.id)}">${escapeHtml(role.name || 'Rol')}</option>`,
+        'Selecciona rol'
+    );
+}
+
+async function createAdminUser() {
+    const name = String((document.getElementById('adminUserName') || {}).value || '').trim();
+    const email = String((document.getElementById('adminUserEmail') || {}).value || '').trim().toLowerCase();
+    const password = String((document.getElementById('adminUserPassword') || {}).value || '');
+    const documentId = String((document.getElementById('adminUserDocument') || {}).value || '').trim();
+    const phone = String((document.getElementById('adminUserPhone') || {}).value || '').trim();
+    const roleId = String((document.getElementById('adminUserRole') || {}).value || '');
+    const status = String((document.getElementById('adminUserStatus') || {}).value || 'true') === 'true';
+
+    if (!name) return showToast('Ingresa el nombre del usuario', 'error');
+    if (!email) return showToast('Ingresa el correo del usuario', 'error');
+    if (password.length < 8) return showToast('La contraseña debe tener mínimo 8 caracteres', 'error');
+    if (!roleId) return showToast('Selecciona un rol para el usuario', 'error');
+
+    const role = asArray(state.roles).find(r => String(r.id) === roleId);
+    if (!role) return showToast('Rol inválido', 'error');
+
+    let created = null;
+    try {
+        created = await api('/api/users', {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify({ name, email, password, roleId: role.id, status, documentId, phone })
+        });
+    } catch (e) {
+        if (asArray(state.users).some(u => String((u.email || '')).toLowerCase() === email)) {
+            return showToast('Ya existe un usuario con ese correo', 'error');
+        }
+        created = {
+            id: Date.now(),
+            name,
+            email,
+            documentId,
+            phone,
+            role: { id: role.id, name: role.name },
+            status,
+            createdAt: new Date().toISOString()
+        };
+    }
+
+    upsertUserInState(created);
+    saveStorage(STORAGE_KEYS.localUsers, state.users || []);
+    clearAdminUserForm();
+    state.ui.adminUsersPage = 1;
+    renderRolesSection();
+    showToast('Usuario creado correctamente', 'success');
+}
+
+async function saveAdminUserRow(userId) {
+    const user = asArray(state.users).find(u => String((u || {}).id || '') === String(userId || ''));
+    if (!user) return showToast('Usuario no encontrado', 'error');
+
+    const roleEl = document.getElementById('adminUserRoleRow-' + String(user.id));
+    const statusEl = document.getElementById('adminUserStatusRow-' + String(user.id));
+    const roleId = String((roleEl || {}).value || '');
+    const status = String((statusEl || {}).value || 'true') === 'true';
+    if (!roleId) return showToast('Selecciona un rol', 'error');
+
+    let saved = null;
+    try {
+        saved = await persistAdminUserRoleStatus(user, roleId, status);
+    } catch (e) {
+        return showToast('Rol inválido', 'error');
+    }
+
+    upsertUserInState(saved);
+    saveStorage(STORAGE_KEYS.localUsers, state.users || []);
+    renderRolesSection();
+    showToast('Usuario actualizado', 'success');
+}
+
+async function deleteAdminUser(userId) {
+    const id = String(userId || '');
+    const user = asArray(state.users).find(u => String((u || {}).id || '') === id);
+    if (!user) return;
+    if (!window.confirm('¿Eliminar usuario ' + String(user.name || user.email || '') + '?')) return;
+
+    try {
+        await api('/api/users/' + id, { method: 'DELETE', headers: headers(false) });
+    } catch (e) {
+        // fallback local
+    }
+
+    state.users = asArray(state.users).filter(u => String((u || {}).id || '') !== id);
+    delete state.userPerms[id];
+    saveStorage(STORAGE_KEYS.localUsers, state.users || []);
+    saveStorage(STORAGE_KEYS.userPerms, state.userPerms || {});
+    renderRolesSection();
+    showToast('Usuario eliminado', 'success');
+}
+
+function renderAdminUsersSection() {
+    fillAdminUserRoleSelect();
+    renderAdminUsersRoleFilterSelect();
+    renderAdminUsersBulkRoleSelect();
+
+    const host = document.getElementById('adminUsersList');
+    if (!host) return;
+    const summaryEl = document.getElementById('adminUsersSelectionSummary');
+
+    const query = String(state.ui.adminUsersSearch || '').trim().toLowerCase();
+    const roleFilter = String(state.ui.adminUsersRoleFilter || 'all');
+    const filtered = asArray(state.users).filter(u => {
+        const textOk = !query || normalizeAdminUsersQuery(u).includes(query);
+        const roleOk = matchesAdminUsersRoleFilter(u, roleFilter);
+        return textOk && roleOk;
+    });
+
+    const validIds = new Set(asArray(state.users).map(u => String((u || {}).id || '')));
+    state.ui.adminUsersSelectedIds = asArray(state.ui.adminUsersSelectedIds).map(String).filter(id => validIds.has(id));
+    state.ui.adminUsersFilteredIds = asArray(filtered).map(u => String((u || {}).id || ''));
+
+    const paged = paginateItems(filtered, state.ui.adminUsersPage, state.ui.adminUsersPageSize || 8);
+    state.ui.adminUsersPage = paged.page;
+    state.ui.adminUsersCurrentPageIds = asArray(paged.items).map(u => String((u || {}).id || ''));
+    setPagerInfo('adminUsersPageInfo', paged.page, paged.totalPages);
+    const selectedSet = new Set(asArray(state.ui.adminUsersSelectedIds).map(String));
+
+    host.innerHTML = paged.items.length
+        ? paged.items.map(u => {
+            const id = String((u || {}).id || '');
+            const roleId = String((((u || {}).role || {}).id) || '');
+            const roleName = String((((u || {}).role || {}).name) || 'Sin rol');
+            const email = String((u || {}).email || 'Sin correo');
+            const statusValue = (u || {}).status === false ? 'false' : 'true';
+            const statusText = statusValue === 'true' ? 'Activo' : 'Inactivo';
+            const docText = String((u || {}).documentId || '').trim();
+            const phoneText = String((u || {}).phone || '').trim();
+            const details = [
+                email,
+                'Rol: ' + roleName,
+                'Estado: ' + statusText,
+                docText ? ('Documento: ' + docText) : '',
+                phoneText ? ('Tel: ' + phoneText) : ''
+            ].filter(Boolean).join(' | ');
+            return `<div class="admin-user-item">
+                <div>
+                    <div class="admin-user-title"><label style="display:inline-flex;align-items:center;gap:8px"><input type="checkbox" ${selectedSet.has(id) ? 'checked' : ''} onchange="toggleAdminUserSelection('${escapeJsSingle(id)}', this.checked)">${escapeHtml(String((u || {}).name || 'Usuario'))}</label></div>
+                    <div class="admin-user-meta">${escapeHtml(details)}</div>
+                </div>
+                <div class="admin-user-actions">
+                    <select class="form-input" id="adminUserRoleRow-${escapeHtml(id)}">${getRoleOptionsHtml(roleId)}</select>
+                    <select class="form-input" id="adminUserStatusRow-${escapeHtml(id)}">
+                        <option value="true" ${statusValue === 'true' ? 'selected' : ''}>Activo</option>
+                        <option value="false" ${statusValue === 'false' ? 'selected' : ''}>Inactivo</option>
+                    </select>
+                    <button class="btn btn-sm btn-outline" onclick="saveAdminUserRow('${escapeJsSingle(id)}')">Guardar</button>
+                    <button class="btn btn-sm btn-outline" onclick="deleteAdminUser('${escapeJsSingle(id)}')">Eliminar</button>
+                </div>
+            </div>`;
+        }).join('')
+        : '<div class="muted">No hay usuarios para mostrar.</div>';
+
+    if (summaryEl) {
+        summaryEl.textContent = `Seleccionados: ${selectedSet.size} | Filtrados: ${filtered.length} | Mostrando: ${paged.items.length}`;
+    }
 }
 
 function getRolePerms() {
@@ -1401,23 +1761,77 @@ function getUserPerms() {
     return userId ? ((state.userPerms[userId] || []).map(String)) : [];
 }
 
-function renderPermissionChecklist(containerId, selectedPerms) {
+function toggleRolePerm(permission, checked) {
+    const roleId = String((document.getElementById('permRole') || {}).value || '');
+    if (!roleId) return;
+    const selected = new Set(asArray(state.rolePerms[roleId]).map(String));
+    if (checked) selected.add(String(permission));
+    else selected.delete(String(permission));
+    state.rolePerms[roleId] = Array.from(selected);
+}
+
+function toggleUserPerm(permission, checked) {
+    const userId = String((document.getElementById('permUser') || {}).value || '');
+    if (!userId) return;
+    const selected = new Set(asArray(state.userPerms[userId]).map(String));
+    if (checked) selected.add(String(permission));
+    else selected.delete(String(permission));
+    state.userPerms[userId] = Array.from(selected);
+}
+
+function renderPermissionChecklist(containerId, selectedPerms, mode) {
     const host = document.getElementById(containerId);
     if (!host) return;
     const selected = new Set((selectedPerms || []).map(String));
-    host.innerHTML = PERMISSIONS.map(p => `
+    const isRoleMode = mode === 'roleperm';
+    const pageKey = isRoleMode ? 'permRoleChecklistPage' : 'permUserChecklistPage';
+    const sizeKey = isRoleMode ? 'permRoleChecklistPageSize' : 'permUserChecklistPageSize';
+    const pagerId = isRoleMode ? 'permissionsChecklistPager' : 'userPermissionsChecklistPager';
+    const paged = paginateItems(PERMISSIONS, state.ui[pageKey], state.ui[sizeKey] || 10);
+    state.ui[pageKey] = paged.page;
+    const onChangeFn = isRoleMode ? 'toggleRolePerm' : 'toggleUserPerm';
+    host.innerHTML = paged.items.map(p => `
         <label class="card-check" style="border:1px solid rgba(11,31,58,0.08);border-radius:8px;margin-bottom:6px">
-            <input type="checkbox" value="${escapeHtml(p)}" ${selected.has(p) ? 'checked' : ''}>
+            <input type="checkbox" value="${escapeHtml(p)}" ${selected.has(p) ? 'checked' : ''} onchange="${onChangeFn}('${escapeJsSingle(p)}', this.checked)">
             <span>${escapeHtml(PERMISSION_LABELS[p] || p)}</span>
         </label>
     `).join('');
+
+    const pager = document.getElementById(pagerId);
+    if (pager) {
+        const prevFn = isRoleMode ? 'permRoleChecklistPrevPage' : 'permUserChecklistPrevPage';
+        const nextFn = isRoleMode ? 'permRoleChecklistNextPage' : 'permUserChecklistNextPage';
+        pager.innerHTML = `
+            <button class="btn btn-sm btn-outline" ${paged.page <= 1 ? 'disabled' : ''} onclick="${prevFn}()">Anterior</button>
+            <span>${paged.page}/${paged.totalPages}</span>
+            <button class="btn btn-sm btn-outline" ${paged.page >= paged.totalPages ? 'disabled' : ''} onclick="${nextFn}()">Siguiente</button>
+        `;
+    }
+}
+
+function permRoleChecklistPrevPage() {
+    state.ui.permRoleChecklistPage = Math.max(1, (state.ui.permRoleChecklistPage || 1) - 1);
+    renderRolesSection();
+}
+
+function permRoleChecklistNextPage() {
+    state.ui.permRoleChecklistPage = (state.ui.permRoleChecklistPage || 1) + 1;
+    renderRolesSection();
+}
+
+function permUserChecklistPrevPage() {
+    state.ui.permUserChecklistPage = Math.max(1, (state.ui.permUserChecklistPage || 1) - 1);
+    renderRolesSection();
+}
+
+function permUserChecklistNextPage() {
+    state.ui.permUserChecklistPage = (state.ui.permUserChecklistPage || 1) + 1;
+    renderRolesSection();
 }
 
 function saveRolePerms() {
     const roleId = String((document.getElementById('permRole') || {}).value || '');
     if (!roleId) return showToast('Selecciona un rol', 'error');
-    const checked = Array.from(document.querySelectorAll('#permissionsChecklist input[type="checkbox"]:checked')).map(i => String(i.value));
-    state.rolePerms[roleId] = checked;
     saveStorage(STORAGE_KEYS.rolePerms, state.rolePerms);
     showToast('Permisos de rol guardados', 'success');
 }
@@ -1425,8 +1839,6 @@ function saveRolePerms() {
 function saveUserPerms() {
     const userId = String((document.getElementById('permUser') || {}).value || '');
     if (!userId) return showToast('Selecciona un usuario', 'error');
-    const checked = Array.from(document.querySelectorAll('#userPermissionsChecklist input[type="checkbox"]:checked')).map(i => String(i.value));
-    state.userPerms[userId] = checked;
     saveStorage(STORAGE_KEYS.userPerms, state.userPerms);
     showToast('Permisos de usuario guardados', 'success');
 }
@@ -1462,8 +1874,9 @@ function renderRolesSection() {
     setPagerInfo('permUserPageInfo', usersPaged.page, usersPaged.totalPages);
     fillPagedSelect('permUser', usersPaged.items, u => `<option value="${u.id}">${escapeHtml(u.name || u.email || 'Usuario')}</option>`, 'Selecciona usuario', true);
 
-    renderPermissionChecklist('permissionsChecklist', getRolePerms());
-    renderPermissionChecklist('userPermissionsChecklist', getUserPerms());
+    renderPermissionChecklist('permissionsChecklist', getRolePerms(), 'roleperm');
+    renderPermissionChecklist('userPermissionsChecklist', getUserPerms(), 'userperm');
+    renderAdminUsersSection();
 }
 
 function getLevelNameById(levelId) {
@@ -1519,23 +1932,133 @@ function getCertificateStudentRecords() {
 
 function setCertFilterLevel(levelId) {
     state.ui.certFilterLevel = String(levelId || '');
+    state.ui.certGradePage = 1;
+    state.ui.certCoursePage = 1;
+    state.ui.certFilterCourse = '';
+    state.ui.certFilterCourses = [];
+    state.ui.certFilterGrade = '';
+    state.ui.certFilterGrades = [];
     state.ui.certStudentsPage = 1;
-    if (state.ui.certFilterGrade) {
-        const valid = asArray(getGradesByLevel(state.ui.certFilterLevel)).some(g => String(g.id) === String(state.ui.certFilterGrade));
-        if (!valid) state.ui.certFilterGrade = '';
-    }
     renderCertificatesSection();
 }
 
 function setCertFilterGrade(gradeId) {
-    state.ui.certFilterGrade = String(gradeId || '');
+    const gid = String(gradeId || '');
+    if (!gid) {
+        state.ui.certFilterGrade = '';
+        state.ui.certFilterGrades = [];
+        state.ui.certCoursePage = 1;
+        state.ui.certFilterCourse = '';
+        state.ui.certFilterCourses = [];
+        state.ui.certStudentsPage = 1;
+        renderCertificatesSection();
+        return;
+    }
+    const selected = new Set(asArray(state.ui.certFilterGrades).map(String));
+    if (selected.has(gid)) selected.delete(gid);
+    else selected.add(gid);
+    state.ui.certFilterGrades = Array.from(selected);
+    state.ui.certFilterGrade = state.ui.certFilterGrades.length ? state.ui.certFilterGrades[0] : '';
+    state.ui.certCoursePage = 1;
+    state.ui.certFilterCourse = '';
+    state.ui.certFilterCourses = [];
+    state.ui.certStudentsPage = 1;
+    renderCertificatesSection();
+}
+
+function toggleCertFilterGrade(gradeId, checked) {
+    const gid = String(gradeId || '');
+    if (!gid) return;
+    const selected = new Set(asArray(state.ui.certFilterGrades).map(String));
+    const shouldCheck = typeof checked === 'boolean' ? checked : !selected.has(gid);
+    if (shouldCheck) selected.add(gid);
+    else selected.delete(gid);
+    state.ui.certFilterGrades = Array.from(selected);
+    state.ui.certFilterGrade = state.ui.certFilterGrades.length ? state.ui.certFilterGrades[0] : '';
+    state.ui.certCoursePage = 1;
+    state.ui.certFilterCourse = '';
+    state.ui.certFilterCourses = [];
+    state.ui.certStudentsPage = 1;
+    renderCertificatesSection();
+}
+
+function clearCertFilterGrades() {
+    state.ui.certFilterGrade = '';
+    state.ui.certFilterGrades = [];
+    state.ui.certCoursePage = 1;
+    state.ui.certFilterCourse = '';
+    state.ui.certFilterCourses = [];
     state.ui.certStudentsPage = 1;
     renderCertificatesSection();
 }
 
 function setCertFilterCourse(courseId) {
-    state.ui.certFilterCourse = String(courseId || '');
+    const cid = String(courseId || '');
+    if (!cid) {
+        state.ui.certFilterCourse = '';
+        state.ui.certFilterCourses = [];
+        state.ui.certStudentsPage = 1;
+        renderCertificatesSection();
+        return;
+    }
+    const selected = new Set(asArray(state.ui.certFilterCourses).map(String));
+    if (selected.has(cid)) selected.delete(cid);
+    else selected.add(cid);
+    state.ui.certFilterCourses = Array.from(selected);
+    state.ui.certFilterCourse = state.ui.certFilterCourses.length ? state.ui.certFilterCourses[0] : '';
     state.ui.certStudentsPage = 1;
+    renderCertificatesSection();
+}
+
+function toggleCertFilterCourse(courseId, checked) {
+    const cid = String(courseId || '');
+    if (!cid) return;
+    const selected = new Set(asArray(state.ui.certFilterCourses).map(String));
+    const shouldCheck = typeof checked === 'boolean' ? checked : !selected.has(cid);
+    if (shouldCheck) selected.add(cid);
+    else selected.delete(cid);
+    state.ui.certFilterCourses = Array.from(selected);
+    state.ui.certFilterCourse = state.ui.certFilterCourses.length ? state.ui.certFilterCourses[0] : '';
+    state.ui.certStudentsPage = 1;
+    renderCertificatesSection();
+}
+
+function clearCertFilterCourses() {
+    state.ui.certFilterCourse = '';
+    state.ui.certFilterCourses = [];
+    state.ui.certStudentsPage = 1;
+    renderCertificatesSection();
+}
+
+function setCertGradeQuery(query) {
+    state.ui.certGradeQuery = String(query || '');
+    state.ui.certGradePage = 1;
+    renderCertificatesSection();
+}
+
+function setCertCourseQuery(query) {
+    state.ui.certCourseQuery = String(query || '');
+    state.ui.certCoursePage = 1;
+    renderCertificatesSection();
+}
+
+function certGradePrevPage() {
+    state.ui.certGradePage = Math.max(1, parseInt(state.ui.certGradePage || '1', 10) - 1);
+    renderCertificatesSection();
+}
+
+function certGradeNextPage() {
+    state.ui.certGradePage = parseInt(state.ui.certGradePage || '1', 10) + 1;
+    renderCertificatesSection();
+}
+
+function certCoursePrevPage() {
+    state.ui.certCoursePage = Math.max(1, parseInt(state.ui.certCoursePage || '1', 10) - 1);
+    renderCertificatesSection();
+}
+
+function certCourseNextPage() {
+    state.ui.certCoursePage = parseInt(state.ui.certCoursePage || '1', 10) + 1;
     renderCertificatesSection();
 }
 
@@ -1585,8 +2108,12 @@ function certStudentsNextPage() {
 
 function renderCertificatesSection() {
     const levelEl = document.getElementById('certFilterLevel');
-    const gradeEl = document.getElementById('certFilterGrade');
-    const courseEl = document.getElementById('certFilterCourse');
+    const gradeQueryEl = document.getElementById('certGradeQuery');
+    const gradeCardsEl = document.getElementById('certFilterGradeCards');
+    const gradePagerEl = document.getElementById('certFilterGradePager');
+    const courseQueryEl = document.getElementById('certCourseQuery');
+    const courseCardsEl = document.getElementById('certFilterCourseCards');
+    const coursePagerEl = document.getElementById('certFilterCoursePager');
     const queryEl = document.getElementById('certStudentQuery');
     const pickerEl = document.getElementById('certStudentPicker');
     const pickerPagerEl = document.getElementById('certStudentPickerPager');
@@ -1597,27 +2124,110 @@ function renderCertificatesSection() {
     fillSelect('certFilterLevel', asArray(state.academicLevels), l => `<option value="${l.id}">${escapeHtml(l.name || 'Nivel')}</option>`, 'Todos los niveles');
     if (levelEl) levelEl.value = String(state.ui.certFilterLevel || '');
 
-    const gradeOptions = state.ui.certFilterLevel ? getGradesByLevel(state.ui.certFilterLevel) : asArray(state.academicGrades);
-    fillSelect('certFilterGrade', gradeOptions, g => `<option value="${g.id}">${escapeHtml(g.name || 'Grado')}</option>`, 'Todos los grados');
-    if (gradeEl) gradeEl.value = String(state.ui.certFilterGrade || '');
+    const gradeBaseOptions = state.ui.certFilterLevel
+        ? getGradesByLevel(state.ui.certFilterLevel)
+        : asArray(state.academicGrades);
+    const certGradeQuery = String(state.ui.certGradeQuery || '').trim().toLowerCase();
+    const gradeOptions = asArray(gradeBaseOptions)
+        .slice()
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es', { sensitivity: 'base' }))
+        .filter(g => !certGradeQuery || String(g.name || '').toLowerCase().includes(certGradeQuery));
+    const validGradeIds = new Set(asArray(gradeBaseOptions).map(g => String(g.id)));
+    const selectedGradeIds = new Set(
+        asArray(state.ui.certFilterGrades)
+            .map(String)
+            .filter(gid => validGradeIds.has(gid))
+    );
+    state.ui.certFilterGrades = Array.from(selectedGradeIds);
+    state.ui.certFilterGrade = state.ui.certFilterGrades.length ? state.ui.certFilterGrades[0] : '';
+    const gradePaged = paginateItems(gradeOptions, state.ui.certGradePage, state.ui.certFilterCardsPageSize || 8);
+    state.ui.certGradePage = gradePaged.page;
+    if (gradeQueryEl) gradeQueryEl.value = String(state.ui.certGradeQuery || '');
+    if (gradeCardsEl) {
+        const gradeCards = gradePaged.items.map(g => {
+            const gid = String(g.id || '');
+            const selected = selectedGradeIds.has(gid);
+            return `<label class="cert-filter-card ${selected ? 'selected' : ''}">
+                <span class="cert-filter-card-row">
+                    <input type="checkbox" class="cert-filter-card-check" ${selected ? 'checked' : ''} onchange="toggleCertFilterGrade('${escapeHtml(gid)}', this.checked)">
+                    <span class="cert-filter-card-title">${escapeHtml(g.name || 'Grado')}</span>
+                </span>
+            </label>`;
+        }).join('');
+        const selectedCount = selectedGradeIds.size;
+        gradeCardsEl.innerHTML = `<button type="button" class="cert-filter-card ${selectedCount === 0 ? 'selected' : ''}" onclick="clearCertFilterGrades()">
+                <span class="cert-filter-card-title">Todos los grados ${selectedCount ? `(limpiar ${selectedCount})` : ''}</span>
+            </button>${gradeCards || '<div class="muted" style="padding:8px">No hay grados para este filtro.</div>'}`;
+    }
+    if (gradePagerEl) {
+        gradePagerEl.innerHTML = `<div class="pager cert-picker-pager">
+            <button class="btn btn-sm btn-outline" ${gradePaged.page <= 1 ? 'disabled' : ''} onclick="certGradePrevPage()">Anterior</button>
+            <span>${gradePaged.page}/${gradePaged.totalPages}</span>
+            <button class="btn btn-sm btn-outline" ${gradePaged.page >= gradePaged.totalPages ? 'disabled' : ''} onclick="certGradeNextPage()">Siguiente</button>
+        </div>`;
+    }
 
-    const courseOptions = asArray(state.courses).filter(c => {
+    const courseBaseOptions = asArray(state.courses).filter(c => {
         const cid = String(c.id || '');
         const levelOk = !state.ui.certFilterLevel || String((state.courseLevels || {})[cid] || '') === String(state.ui.certFilterLevel);
-        const gradeOk = !state.ui.certFilterGrade || String((state.courseGrades || {})[cid] || '') === String(state.ui.certFilterGrade);
+        const gradeOk = !selectedGradeIds.size || selectedGradeIds.has(String((state.courseGrades || {})[cid] || ''));
         return levelOk && gradeOk;
     });
-    fillSelect('certFilterCourse', courseOptions, c => `<option value="${c.id}">${escapeHtml(c.name || 'Curso')}</option>`, 'Todos los cursos');
-    if (courseEl) courseEl.value = String(state.ui.certFilterCourse || '');
+    const certCourseQuery = String(state.ui.certCourseQuery || '').trim().toLowerCase();
+    const courseOptions = asArray(courseBaseOptions)
+        .slice()
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es', { sensitivity: 'base' }))
+        .filter(c => {
+            const teacher = c.teacher ? userNameFrom(c.teacher) : '';
+            const text = `${String(c.name || '')} ${String(c.courseCode || '')} ${teacher}`.toLowerCase();
+            return !certCourseQuery || text.includes(certCourseQuery);
+        });
+    const validCourseIds = new Set(asArray(courseBaseOptions).map(c => String(c.id)));
+    const selectedCourseIds = new Set(
+        asArray(state.ui.certFilterCourses)
+            .map(String)
+            .filter(cid => validCourseIds.has(cid))
+    );
+    state.ui.certFilterCourses = Array.from(selectedCourseIds);
+    state.ui.certFilterCourse = state.ui.certFilterCourses.length ? state.ui.certFilterCourses[0] : '';
+    const coursePaged = paginateItems(courseOptions, state.ui.certCoursePage, state.ui.certCourseCardsPageSize || 6);
+    state.ui.certCoursePage = coursePaged.page;
+    if (courseQueryEl) courseQueryEl.value = String(state.ui.certCourseQuery || '');
+    if (courseCardsEl) {
+        const courseCards = coursePaged.items.map(c => {
+            const cid = String(c.id || '');
+            const selected = selectedCourseIds.has(cid);
+            const meta = c.courseCode ? `Código: ${c.courseCode}` : 'Sin código';
+            return `<label class="cert-filter-card ${selected ? 'selected' : ''}">
+                <span class="cert-filter-card-row">
+                    <input type="checkbox" class="cert-filter-card-check" ${selected ? 'checked' : ''} onchange="toggleCertFilterCourse('${escapeHtml(cid)}', this.checked)">
+                    <span class="cert-filter-card-title">${escapeHtml(c.name || 'Curso')}</span>
+                </span>
+                <span class="cert-filter-card-meta">${escapeHtml(meta)}</span>
+            </label>`;
+        }).join('');
+        const selectedCount = selectedCourseIds.size;
+        courseCardsEl.innerHTML = `<button type="button" class="cert-filter-card ${selectedCount === 0 ? 'selected' : ''}" onclick="clearCertFilterCourses()">
+                <span class="cert-filter-card-title">Todos los cursos ${selectedCount ? `(limpiar ${selectedCount})` : ''}</span>
+            </button>${courseCards || '<div class="muted" style="padding:8px">No hay cursos para este filtro.</div>'}`;
+    }
+    if (coursePagerEl) {
+        coursePagerEl.innerHTML = `<div class="pager cert-picker-pager">
+            <button class="btn btn-sm btn-outline" ${coursePaged.page <= 1 ? 'disabled' : ''} onclick="certCoursePrevPage()">Anterior</button>
+            <span>${coursePaged.page}/${coursePaged.totalPages}</span>
+            <button class="btn btn-sm btn-outline" ${coursePaged.page >= coursePaged.totalPages ? 'disabled' : ''} onclick="certCourseNextPage()">Siguiente</button>
+        </div>`;
+    }
 
     if (queryEl) queryEl.value = String(state.ui.certStudentQuery || '');
 
     const records = getCertificateStudentRecords();
     const query = String(state.ui.certStudentQuery || '').trim().toLowerCase();
+    const selectedCourseFilter = new Set(asArray(state.ui.certFilterCourses).map(String));
     const filtered = records.filter(rec => {
         const levelOk = !state.ui.certFilterLevel || String(rec.levelId) === String(state.ui.certFilterLevel);
-        const gradeOk = !state.ui.certFilterGrade || String(rec.gradeId) === String(state.ui.certFilterGrade);
-        const courseOk = !state.ui.certFilterCourse || asArray(rec.courseIds).includes(String(state.ui.certFilterCourse));
+        const gradeOk = !selectedGradeIds.size || selectedGradeIds.has(String(rec.gradeId || ''));
+        const courseOk = !selectedCourseFilter.size || asArray(rec.courseIds).some(cid => selectedCourseFilter.has(String(cid)));
         const textOk = !query || rec.searchText.includes(query);
         return levelOk && gradeOk && courseOk && textOk;
     });
@@ -5548,16 +6158,44 @@ function bindEvents() {
 
     const permRole = document.getElementById('permRole');
     if (permRole) permRole.addEventListener('change', () => {
+        state.ui.permRoleChecklistPage = 1;
         const perms = callIfFn('getRolePerms') || [];
         callIfFn('renderPermissionChecklist', 'permissionsChecklist', perms, 'roleperm');
     });
     const permUser = document.getElementById('permUser');
     if (permUser) permUser.addEventListener('change', () => {
+        state.ui.permUserChecklistPage = 1;
         const perms = callIfFn('getUserPerms') || [];
         callIfFn('renderPermissionChecklist', 'userPermissionsChecklist', perms, 'userperm');
     });
     bindClickIfFn('btnSavePerms', 'saveRolePerms');
     bindClickIfFn('btnSaveUserPerms', 'saveUserPerms');
+
+    bindClickIfFn('btnCreateAdminUser', 'createAdminUser');
+    const adminUsersSearch = document.getElementById('adminUsersSearch');
+    if (adminUsersSearch) adminUsersSearch.addEventListener('input', () => {
+        state.ui.adminUsersSearch = adminUsersSearch.value.trim();
+        state.ui.adminUsersPage = 1;
+        callIfFn('renderRolesSection');
+    });
+    const adminUsersRoleFilter = document.getElementById('adminUsersRoleFilter');
+    if (adminUsersRoleFilter) adminUsersRoleFilter.addEventListener('change', () => {
+        state.ui.adminUsersRoleFilter = String(adminUsersRoleFilter.value || 'all');
+        state.ui.adminUsersPage = 1;
+        callIfFn('renderRolesSection');
+    });
+    bindClick('adminUsersPrevPage', () => {
+        state.ui.adminUsersPage = Math.max(1, (state.ui.adminUsersPage || 1) - 1);
+        callIfFn('renderRolesSection');
+    });
+    bindClick('adminUsersNextPage', () => {
+        state.ui.adminUsersPage = (state.ui.adminUsersPage || 1) + 1;
+        callIfFn('renderRolesSection');
+    });
+    bindClickIfFn('btnSelectAdminUsersPage', 'selectCurrentPageAdminUsers');
+    bindClickIfFn('btnSelectAdminUsersFiltered', 'selectFilteredAdminUsers');
+    bindClickIfFn('btnClearAdminUsersSelection', 'clearAdminUsersSelection');
+    bindClickIfFn('btnAssignRoleToSelectedUsers', 'assignRoleToSelectedAdminUsers');
 
     bindClickIfFn('btnCreateCert', 'createCertificate');
 

@@ -16,6 +16,8 @@ public class UserMapper {
                 .id(user.getId())
                 .name(user.getName())
                 .email(user.getEmail())
+                .documentId(user.getDocumentId())
+                .phone(user.getPhone())
                 .role(user.getRole() != null ? roleMapper.toResponse(user.getRole()) : null)
                 .status(user.getStatus())
                 .createdAt(user.getCreatedAt())
@@ -25,6 +27,8 @@ public class UserMapper {
         return User.builder()
                 .name(request.getName())
                 .email(request.getEmail())
+                .documentId(request.getDocumentId())
+                .phone(request.getPhone())
                 .password(request.getPassword())
                 .status(request.getStatus())
                 .build();

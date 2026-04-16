@@ -9,8 +9,12 @@ public class UserRequest {
     private String name;
     @NotBlank @Email
     private String email;
-    @NotBlank @Size(min = 8)
+    @Size(min = 8)
     private String password;
+    @Size(max = 40)
+    private String documentId;
+    @Size(max = 30)
+    private String phone;
     private Integer roleId;
     private Boolean status;
 }
