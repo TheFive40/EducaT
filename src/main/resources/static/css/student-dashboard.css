@@ -11,6 +11,15 @@
 }
 html{font-size:16px;height:100%}
 body{font-family:'Jost',sans-serif;background:var(--cream);color:var(--text-dark);min-height:100vh;display:flex;overflow-x:hidden}
+.app-booting .sidebar,.app-booting .main,.app-booting .sidebar-overlay{visibility:hidden}
+
+.boot-loader{position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center;padding:20px;background:linear-gradient(135deg,#f5f0e8 0%,#f0e8d9 100%);opacity:1;transition:opacity .22s ease}
+.boot-loader.is-leaving{opacity:0}
+.boot-loader-card{min-width:280px;max-width:92vw;background:rgba(255,255,255,.92);border:1px solid rgba(11,31,58,.08);border-radius:14px;box-shadow:var(--shadow-md);padding:26px 22px;display:flex;flex-direction:column;align-items:center;gap:12px}
+.boot-loader-brand{font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:700;color:var(--navy)}
+.boot-loader-brand span{color:var(--gold)}
+.boot-loader-spinner{width:28px;height:28px;border:3px solid rgba(11,31,58,.12);border-top-color:var(--gold);border-radius:50%;animation:spin .75s linear infinite}
+.boot-loader-text{font-size:13px;color:var(--text-muted);text-align:center}
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:rgba(200,150,46,0.4);border-radius:3px}

@@ -8,6 +8,192 @@ const actSubmissionFiles = {};
 const studentOpenCardsByUnit = {};
 let studentConfirmAction = null;
 
+const STUDENT_NAV_STATE_KEY = 'educat_student_nav_state_session';
+let isRestoringStudentNavState = false;
+let currentSection = 'overview';
+let currentPersonalType = '';
+let studentScrollPersistTimer = null;
+
+function getCurrentMainSection() {
+    const activeBtn = document.querySelector('.nav-item.active');
+    if (activeBtn && activeBtn.dataset && activeBtn.dataset.section) return String(activeBtn.dataset.section);
+    const activePanel = document.querySelector('.section-panel.active');
+    if (activePanel && activePanel.id && activePanel.id.indexOf('panel-') === 0) return activePanel.id.replace('panel-', '');
+    return currentSection || 'overview';
+}
+
+function buildCourseUnitScrollKey(courseId, unitIdx) {
+    return String(courseId || '0') + ':' + String(parseInt(unitIdx || 0, 10) || 0);
+}
+
+function readStudentNavState() {
+    try {
+        const raw = JSON.parse(sessionStorage.getItem(STUDENT_NAV_STATE_KEY) || '{}');
+        if (!raw || typeof raw !== 'object') return null;
+        if (raw.userId && currentUser && String(raw.userId) !== String(currentUser.id || '')) return null;
+        return raw;
+    } catch (e) {
+        return null;
+    }
+}
+
+function writeStudentNavState(partial) {
+    if (isRestoringStudentNavState) return;
+    const prev = readStudentNavState() || {};
+    const next = {
+        ...prev,
+        ...(partial || {}),
+        userId: String((currentUser && currentUser.id) || ''),
+        updatedAt: new Date().toISOString()
+    };
+    sessionStorage.setItem(STUDENT_NAV_STATE_KEY, JSON.stringify(next));
+}
+
+function restoreScrollForElement(elementId, scrollTop, attemptsLeft) {
+    const target = Math.max(0, parseInt(scrollTop || 0, 10) || 0);
+    if (!target) return;
+    const tries = typeof attemptsLeft === 'number' ? attemptsLeft : 12;
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    el.scrollTop = target;
+    if (tries <= 0) return;
+    if (Math.abs(el.scrollTop - target) <= 2) return;
+    requestAnimationFrame(() => restoreScrollForElement(elementId, target, tries - 1));
+}
+
+function persistStudentMainScroll(scrollTop, section) {
+    const nav = readStudentNavState() || {};
+    const bySection = { ...(nav.mainScrollBySection || {}) };
+    bySection[String(section || 'overview')] = Math.max(0, parseInt(scrollTop || 0, 10) || 0);
+    writeStudentNavState({ mainScrollBySection: bySection });
+}
+
+function persistStudentCourseScroll(scrollTop) {
+    if (!currentCourse) return;
+    const nav = readStudentNavState() || {};
+    const byKey = { ...(nav.courseScrollByKey || {}) };
+    byKey[buildCourseUnitScrollKey(currentCourse.id, currentUnitIdx)] = Math.max(0, parseInt(scrollTop || 0, 10) || 0);
+    writeStudentNavState({ courseScrollByKey: byKey });
+}
+
+function persistStudentPersonalScroll(scrollTop, type) {
+    const safeType = String(type || currentPersonalType || '').trim();
+    if (!safeType) return;
+    const nav = readStudentNavState() || {};
+    const byType = { ...(nav.personalScrollByType || {}) };
+    byType[safeType] = Math.max(0, parseInt(scrollTop || 0, 10) || 0);
+    writeStudentNavState({ personalScrollByType: byType });
+}
+
+function saveCurrentStudentScroll() {
+    const courseView = document.getElementById('courseView');
+    const personalView = document.getElementById('personalSubView');
+    const mainContent = document.getElementById('mainContent');
+    const courseContent = document.getElementById('unitContentArea');
+    const personalContent = document.getElementById('personalSubContent');
+
+    if (courseView && courseView.classList.contains('show') && courseContent) {
+        persistStudentCourseScroll(courseContent.scrollTop || 0);
+        return;
+    }
+    if (personalView && personalView.classList.contains('show') && personalContent) {
+        persistStudentPersonalScroll(personalContent.scrollTop || 0, currentPersonalType);
+        return;
+    }
+    const section = getCurrentMainSection();
+    if (mainContent) persistStudentMainScroll(mainContent.scrollTop || 0, section);
+}
+
+function scheduleStudentScrollPersist(mode) {
+    if (studentScrollPersistTimer) clearTimeout(studentScrollPersistTimer);
+    studentScrollPersistTimer = setTimeout(() => {
+        if (mode === 'main') {
+            const mainContent = document.getElementById('mainContent');
+            const section = getCurrentMainSection();
+            if (mainContent) {
+                persistStudentMainScroll(mainContent.scrollTop || 0, section);
+                if (!isRestoringStudentNavState) writeStudentNavState({ section, view: 'main' });
+            }
+            return;
+        }
+        if (mode === 'course') {
+            const content = document.getElementById('unitContentArea');
+            if (content) {
+                persistStudentCourseScroll(content.scrollTop || 0);
+                if (!isRestoringStudentNavState && currentCourse) {
+                    writeStudentNavState({
+                        section: 'cursos',
+                        view: 'course',
+                        courseId: String(currentCourse.id || ''),
+                        unitIdx: parseInt(currentUnitIdx || 0, 10) || 0,
+                        personalType: ''
+                    });
+                }
+            }
+            return;
+        }
+        if (mode === 'personal') {
+            const content = document.getElementById('personalSubContent');
+            if (content) {
+                persistStudentPersonalScroll(content.scrollTop || 0, currentPersonalType);
+                if (!isRestoringStudentNavState && currentPersonalType) {
+                    writeStudentNavState({
+                        section: 'area-personal',
+                        view: 'personal',
+                        personalType: currentPersonalType,
+                        courseId: '',
+                        unitIdx: 0
+                    });
+                }
+            }
+        }
+    }, 120);
+}
+
+function setupStudentScrollPersistence() {
+    const mainContent = document.getElementById('mainContent');
+    const unitContentArea = document.getElementById('unitContentArea');
+    const personalSubContent = document.getElementById('personalSubContent');
+    if (mainContent) mainContent.addEventListener('scroll', () => scheduleStudentScrollPersist('main'));
+    if (unitContentArea) unitContentArea.addEventListener('scroll', () => scheduleStudentScrollPersist('course'));
+    if (personalSubContent) personalSubContent.addEventListener('scroll', () => scheduleStudentScrollPersist('personal'));
+    window.addEventListener('beforeunload', saveCurrentStudentScroll);
+}
+
+function restoreStudentNavigationState() {
+    const nav = readStudentNavState();
+    if (!nav) return;
+    const section = String(nav.section || 'overview');
+    const view = String(nav.view || 'main');
+    const unitIdx = Math.max(0, parseInt(nav.unitIdx || 0, 10) || 0);
+    const courseId = parseInt(nav.courseId || 0, 10) || 0;
+    const personalType = String(nav.personalType || '').trim();
+
+    isRestoringStudentNavState = true;
+    try {
+        currentSection = section;
+        if (view === 'course' && courseId) {
+            openCourseView(courseId, { skipPersist: true, unitIdx });
+            const key = buildCourseUnitScrollKey(courseId, unitIdx);
+            const savedTop = parseInt(((nav.courseScrollByKey || {})[key]) || 0, 10) || 0;
+            restoreScrollForElement('unitContentArea', savedTop);
+            return;
+        }
+        if (view === 'personal' && personalType) {
+            if (section !== 'area-personal') navigateTo('area-personal', { skipPersist: true });
+            openPersonalView(personalType, { skipPersist: true });
+            const savedTop = parseInt(((nav.personalScrollByType || {})[personalType]) || 0, 10) || 0;
+            restoreScrollForElement('personalSubContent', savedTop);
+            return;
+        }
+        navigateTo(section, { skipPersist: true });
+        const savedTop = parseInt(((nav.mainScrollBySection || {})[section]) || 0, 10) || 0;
+        restoreScrollForElement('mainContent', savedTop);
+    } finally {
+        isRestoringStudentNavState = false;
+    }
+}
+
 const MOCK_GRADE_PERIODS = {
     1: { periods: [{ name:'Corte 1', grade:8.5, weight:33.3 },{ name:'Corte 2', grade:7.8, weight:33.3 },{ name:'Corte 3', grade:9.1, weight:33.4 }] },
     2: { periods: [{ name:'Corte 1', grade:7.2, weight:33.3 },{ name:'Corte 2', grade:8.0, weight:33.3 },{ name:'Corte 3', grade:6.8, weight:33.4 }] },
@@ -639,7 +825,10 @@ function toggleCard(id, forceOpen) {
     setStudentCardOpen(id, nextOpen);
 }
 
-function navigateTo(section) {
+function navigateTo(section, options) {
+    saveCurrentStudentScroll();
+    currentSection = section;
+    currentPersonalType = '';
     document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
     document.querySelectorAll('.section-panel').forEach(p => p.classList.remove('active'));
     const btn = document.querySelector('[data-section="' + section + '"]');
@@ -672,6 +861,18 @@ function navigateTo(section) {
     else if (section === 'ausencias') loadAusencias();
     else if (section === 'area-personal') loadAreaPersonal();
     else if (section === 'actualizacion') loadActualizacion();
+    if (!options || !options.skipPersist) {
+        writeStudentNavState({
+            section,
+            view: 'main',
+            courseId: '',
+            unitIdx: 0,
+            personalType: ''
+        });
+        const nav = readStudentNavState() || {};
+        const savedTop = parseInt(((nav.mainScrollBySection || {})[section]) || 0, 10) || 0;
+        restoreScrollForElement('mainContent', savedTop);
+    }
 }
 
 function renderOverviewContent() {
@@ -867,7 +1068,9 @@ function loadAreaPersonal() {
         </div>`).join('');
 }
 
-function openPersonalView(type) {
+function openPersonalView(type, options) {
+    saveCurrentStudentScroll();
+    currentPersonalType = String(type || '').trim();
     document.getElementById('mainContent').style.display = 'none';
     document.getElementById('courseView').classList.remove('show');
     document.getElementById('personalSubView').classList.add('show');
@@ -897,13 +1100,33 @@ function openPersonalView(type) {
     else if (type === 'horario')    { content.innerHTML = apHorarioHtml();                   apInitHorario(); }
     else if (type === 'resultados') { content.innerHTML = apResultadosHtml(courses); }
     else if (type === 'bienestar')  { content.innerHTML = apBienestarHtml(); apInitBienestar(); }
+    if (!options || !options.skipPersist) {
+        writeStudentNavState({
+            section: 'area-personal',
+            view: 'personal',
+            personalType: currentPersonalType,
+            courseId: '',
+            unitIdx: 0
+        });
+    }
+    const nav = readStudentNavState() || {};
+    const savedTop = parseInt(((nav.personalScrollByType || {})[currentPersonalType]) || 0, 10) || 0;
+    restoreScrollForElement('personalSubContent', savedTop);
 }
 
-function closePersonalView() {
+function closePersonalView(options) {
+    saveCurrentStudentScroll();
     document.getElementById('personalSubView').classList.remove('show');
     document.getElementById('mainContent').style.display = '';
     document.getElementById('pageTitle').style.display    = '';
     document.getElementById('pageSubtitle').style.display = '';
+    if (!options || !options.skipPersist) {
+        writeStudentNavState({
+            section: currentSection || 'area-personal',
+            view: 'main',
+            personalType: ''
+        });
+    }
 }
 
 // ── 1. Calificaciones ────────────────────────────────────────────
@@ -1893,11 +2116,12 @@ async function saveProfile() {
     showToast('Perfil actualizado','success');
 }
 
-function openCourseView(courseId) {
+function openCourseView(courseId, options) {
+    saveCurrentStudentScroll();
     const allCourses = enrollments.map(e=>e.course).filter(Boolean);
     currentCourse = allCourses.find(c=>c.id===courseId) || MOCK.courses.find(c=>c.id===courseId);
     if (!currentCourse) return;
-    currentUnitIdx = 0;
+    currentUnitIdx = Math.max(0, parseInt((options && options.unitIdx) || 0, 10) || 0);
     document.getElementById('mainContent').style.display = 'none';
     document.getElementById('personalSubView').classList.remove('show');
     document.getElementById('courseView').classList.add('show');
@@ -1906,14 +2130,32 @@ function openCourseView(courseId) {
     document.getElementById('topbarBreadcrumb').style.display = 'flex';
     document.getElementById('breadcrumbCourseName').textContent = currentCourse.name || 'Curso';
     renderUnitTabs();
-    renderUnit(0);
+    renderUnit(currentUnitIdx, { skipPersist: !!(options && options.skipPersist) });
+    if (!options || !options.skipPersist) {
+        writeStudentNavState({
+            section: 'cursos',
+            view: 'course',
+            courseId: String(currentCourse.id || ''),
+            unitIdx: parseInt(currentUnitIdx || 0, 10) || 0,
+            personalType: ''
+        });
+    }
 }
-function closeCourseView() {
+function closeCourseView(options) {
+    saveCurrentStudentScroll();
     document.getElementById('courseView').classList.remove('show');
     document.getElementById('mainContent').style.display = '';
     document.getElementById('topbarBreadcrumb').style.display = 'none';
     document.getElementById('pageTitle').style.display    = '';
     document.getElementById('pageSubtitle').style.display = '';
+    if (!options || !options.skipPersist) {
+        writeStudentNavState({
+            section: currentSection || 'overview',
+            view: 'main',
+            courseId: '',
+            personalType: ''
+        });
+    }
 }
 document.getElementById('breadcrumbBack').addEventListener('click', closeCourseView);
 
@@ -2043,7 +2285,8 @@ async function submitActivity(actId) {
     showToast('Actividad entregada correctamente','success'); renderUnit(currentUnitIdx);
 }
 
-function renderUnit(idx) {
+function renderUnit(idx, options) {
+    saveCurrentStudentScroll();
     currentUnitIdx = idx;
     const units = getUnits(currentCourse.id);
     document.querySelectorAll('.unit-tab').forEach((el,i) => el.classList.toggle('active', i===idx));
@@ -2072,6 +2315,21 @@ function renderUnit(idx) {
     const forumsHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Foros</span><span class="badge badge-teal">${forums.length}</span></div><div class="card-body">${forums.length ? forums.map((forum,fi)=>{ const recent=(forum.messages||[]).slice(-3).reverse(); return `<div class="forum-card" style="margin-bottom:12px"><div class="forum-card-header"><div class="forum-card-icon"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div><div class="forum-card-meta"><div class="forum-card-title">${forum.title}</div><div class="forum-card-desc">${forum.description||'Sin descripcion.'}</div></div></div><div class="forum-card-stats"><span class="forum-stat">${(forum.messages||[]).length} publicacion(es)</span></div><div class="forum-threads-body">${recent.length?recent.map(m=>`<div class="forum-thread-item"><div class="forum-thread-title">${m.authorName}</div><div class="forum-thread-meta"><span>${new Date(m.createdAt).toLocaleString('es-CO')}</span></div><div style="font-size:12.8px;color:var(--text-body);margin-top:6px;line-height:1.6">${m.text}</div></div>`).join(''):'<div style="font-size:12.5px;color:var(--text-muted)">Sin mensajes aun.</div>'}</div><div style="padding:0 20px 16px"><button class="btn btn-sm btn-teal" onclick="openStudentForumDetail(${idx},${fi})">Abrir foro completo</button></div></div>`; }).join(''):'<div style="font-size:13px;color:var(--text-muted)">No hay foros disponibles en esta unidad.</div>'}</div></div>`;
     const glossaryHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Glosarios</span><span class="badge badge-teal">${glossaries.length}</span></div><div class="card-body">${glossaries.map((g,gi)=>{ const terms=g.terms||[]; const initials=[...new Set(terms.map(t=>(t.term||'').charAt(0).toUpperCase()).filter(Boolean))].sort(); return `<div class="forum-card" style="margin-bottom:12px"><div class="forum-card-header"><div class="forum-card-meta"><div class="forum-card-title">${g.title||'Glosario'}</div><div class="forum-card-desc">${terms.length} término(s)</div></div></div><div style="padding:0 20px 8px;display:flex;gap:6px;flex-wrap:wrap">${initials.length?initials.map(i=>`<span class="badge badge-navy">${i}</span>`).join(''):'<span style="font-size:12px;color:var(--text-muted)">Sin iniciales.</span>'}</div><div class="forum-threads-body">${terms.slice(-4).reverse().map(t=>`<div class="forum-thread-item"><div class="forum-thread-title">${t.term}</div><div style="font-size:12.8px;color:var(--text-body);line-height:1.6;margin-top:6px">${t.definition}</div></div>`).join('') || '<div style="font-size:12.5px;color:var(--text-muted)">Sin términos aún.</div>'}</div><div style="padding:0 20px 16px;display:flex;gap:8px"><button class="btn btn-sm btn-outline" onclick="addStudentGlossaryTerm(${idx},${gi})">Sugerir termino</button><button class="btn btn-sm btn-teal" onclick="openStudentGlossaryDetail(${idx},${gi},'ALL',1)">Ver completo</button></div></div>`; }).join('')}</div></div>`;
     contentArea.innerHTML = `<div class="unit-welcome"><div class="unit-welcome-content"><div class="unit-welcome-label">Bienvenida a la Unidad</div><div class="unit-welcome-title">${unit.name}</div><div class="unit-welcome-text">${unit.welcome||''}</div></div></div><div class="unit-description-card" style="margin-bottom:20px"><div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);margin-bottom:10px">Descripción del Tema</div><p style="font-size:14px;line-height:1.75;color:var(--text-body)">${unit.description||'Sin descripción disponible.'}</p></div>${annHtml}${actsHtml}${examsHtml}${resourcesHtml}${forumsHtml}${glossaryHtml}`;
+    if (currentCourse) {
+        if (!options || !options.skipPersist) {
+            writeStudentNavState({
+                section: 'cursos',
+                view: 'course',
+                courseId: String(currentCourse.id || ''),
+                unitIdx: parseInt(currentUnitIdx || 0, 10) || 0,
+                personalType: ''
+            });
+        }
+        const nav = readStudentNavState() || {};
+        const key = buildCourseUnitScrollKey(currentCourse.id, currentUnitIdx);
+        const savedTop = parseInt(((nav.courseScrollByKey || {})[key]) || 0, 10) || 0;
+        restoreScrollForElement('unitContentArea', savedTop);
+    }
 }
 
 function postStudentForumMessage(unitIdx, forumIdx) {
@@ -2321,25 +2579,43 @@ document.getElementById('btnReportarAusencia').addEventListener('click', async (
     showToast('Ausencia reportada correctamente','success'); loadAusencias();
 });
 
+function hideInitialBootLoader() {
+    const body = document.body;
+    const loader = document.getElementById('bootLoader');
+    if (!body || !loader) return;
+    if (!body.classList.contains('app-booting')) return;
+    loader.classList.add('is-leaving');
+    setTimeout(() => {
+        body.classList.remove('app-booting');
+        if (loader && loader.parentNode) loader.parentNode.removeChild(loader);
+    }, 230);
+}
+
 async function init() {
-    authHeader = getAuth() || btoa('demo@educat.edu.co:demo1234');
-    setDate();
-    currentUser    = MOCK.user;
-    currentStudent = {...MOCK.student, user:currentUser};
-    document.getElementById('sidebarUserName').textContent    = currentUser.name;
-    document.getElementById('sidebarStudentCode').textContent = currentStudent.studentCode;
-    await loadOverview();
-    Promise.all([tryFetch('/api/users'), tryFetch('/api/students')]).then(([usersData,studentsData]) => {
-        const email = getEmail()||MOCK.user.email;
-        if(usersData&&usersData.length){const u=usersData.find(u=>u.email===email);if(u){currentUser=u;document.getElementById('sidebarUserName').textContent=currentUser.name;}}
-        if(studentsData&&studentsData.length){const s=studentsData.find(s=>s.user&&s.user.id===currentUser.id);if(s){currentStudent=s;document.getElementById('sidebarStudentCode').textContent=currentStudent.studentCode;}}
-    });
+    try {
+        authHeader = getAuth() || btoa('demo@educat.edu.co:demo1234');
+        setDate();
+        currentUser    = MOCK.user;
+        currentStudent = {...MOCK.student, user:currentUser};
+        document.getElementById('sidebarUserName').textContent    = currentUser.name;
+        document.getElementById('sidebarStudentCode').textContent = currentStudent.studentCode;
+        await loadOverview();
+        restoreStudentNavigationState();
+        Promise.all([tryFetch('/api/users'), tryFetch('/api/students')]).then(([usersData,studentsData]) => {
+            const email = getEmail()||MOCK.user.email;
+            if(usersData&&usersData.length){const u=usersData.find(u=>u.email===email);if(u){currentUser=u;document.getElementById('sidebarUserName').textContent=currentUser.name;}}
+            if(studentsData&&studentsData.length){const s=studentsData.find(s=>s.user&&s.user.id===currentUser.id);if(s){currentStudent=s;document.getElementById('sidebarStudentCode').textContent=currentStudent.studentCode;}}
+            restoreStudentNavigationState();
+        });
+    } finally {
+        hideInitialBootLoader();
+    }
 }
 
 document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => navigateTo(btn.dataset.section)));
 document.getElementById('menuToggle').addEventListener('click', () => { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sidebarOverlay').classList.toggle('show'); });
 document.getElementById('sidebarCloseBtn').addEventListener('click', () => { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarOverlay').classList.remove('show'); });
-document.getElementById('logoutBtn').addEventListener('click', () => { localStorage.removeItem('educat_auth'); localStorage.removeItem('educat_email'); sessionStorage.removeItem('educat_auth'); sessionStorage.removeItem('educat_email'); window.location.href='login.html'; });
+document.getElementById('logoutBtn').addEventListener('click', () => { localStorage.removeItem('educat_auth'); localStorage.removeItem('educat_email'); sessionStorage.removeItem('educat_auth'); sessionStorage.removeItem('educat_email'); sessionStorage.removeItem(STUDENT_NAV_STATE_KEY); window.location.href='login.html'; });
 document.getElementById('saveProfileBtn').addEventListener('click', saveProfile);
 const btnJoinCourseCodeStudent = document.getElementById('btnJoinCourseCodeStudent');
 if (btnJoinCourseCodeStudent) btnJoinCourseCodeStudent.addEventListener('click', openStudentJoinCourseModal);
@@ -2371,4 +2647,5 @@ window.addEventListener('storage', (ev) => {
     }
 });
 
+setupStudentScrollPersistence();
 init();

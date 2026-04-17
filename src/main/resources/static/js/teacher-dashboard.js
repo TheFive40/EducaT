@@ -17,6 +17,154 @@ const tableUiState = {
     attendanceSummary: { page: 1, pageSize: 8, query: '' },
 };
 
+const TEACHER_NAV_STATE_KEY = 'educat_teacher_nav_state_session';
+let isRestoringNavState = false;
+
+function getTeacherNavParam(params, names) {
+    for (let i = 0; i < names.length; i += 1) {
+        const value = String(params.get(names[i]) || '').trim();
+        if (value) return value;
+    }
+    return '';
+}
+
+function parseTeacherNavFromParams(params) {
+    const section = getTeacherNavParam(params, ['tSection', 'section']);
+    const view = getTeacherNavParam(params, ['tView', 'view']);
+    const courseId = getTeacherNavParam(params, ['tCourse', 'courseId']);
+    const unitIdx = getTeacherNavParam(params, ['tUnit', 'unitIdx']);
+    const activityId = getTeacherNavParam(params, ['tActivity', 'activityId']);
+    const submissionsFilter = getTeacherNavParam(params, ['tFilter', 'submissionsFilter']);
+    if (!section && !view && !courseId && !unitIdx && !activityId && !submissionsFilter) return null;
+    return { section, view, courseId, unitIdx, activityId, submissionsFilter };
+}
+
+function readTeacherNavStateFromUrl() {
+    try {
+        const byQuery = parseTeacherNavFromParams(new URLSearchParams(window.location.search || ''));
+        if (byQuery) return byQuery;
+        const rawHash = String(window.location.hash || '').replace(/^#/, '').trim();
+        if (!rawHash || rawHash.indexOf('=') < 0) return null;
+        const byHash = parseTeacherNavFromParams(new URLSearchParams(rawHash.replace(/^\?/, '')));
+        return byHash || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function syncTeacherNavUrl(state) {
+    try {
+        const url = new URL(window.location.href);
+        const setOrDelete = (key, value) => {
+            const normalized = String(value || '').trim();
+            if (normalized) url.searchParams.set(key, normalized);
+            else url.searchParams.delete(key);
+        };
+        setOrDelete('tSection', state && state.section);
+        setOrDelete('tView', state && state.view);
+        setOrDelete('tCourse', state && state.courseId);
+        setOrDelete('tUnit', state && state.unitIdx);
+        setOrDelete('tActivity', state && state.activityId);
+        setOrDelete('tFilter', state && state.submissionsFilter);
+        window.history.replaceState({}, '', url.toString());
+    } catch (e) {
+        // Ignorar errores de sincronización de URL para no romper la navegación.
+    }
+}
+
+function readTeacherNavState() {
+    const fromUrl = readTeacherNavStateFromUrl();
+    if (fromUrl) return fromUrl;
+    try {
+        const raw = JSON.parse(sessionStorage.getItem(TEACHER_NAV_STATE_KEY) || '{}');
+        if (!raw || typeof raw !== 'object') return null;
+        if (raw.userId && currentUser && String(raw.userId) !== String(currentUser.id || '')) return null;
+        return raw;
+    } catch (e) {
+        return null;
+    }
+}
+
+function writeTeacherNavState(partial) {
+    if (isRestoringNavState) return;
+    const prev = readTeacherNavState() || {};
+    const next = {
+        ...prev,
+        ...(partial || {}),
+        userId: String((currentUser && currentUser.id) || ''),
+        updatedAt: new Date().toISOString()
+    };
+    syncTeacherNavUrl(next);
+    sessionStorage.setItem(TEACHER_NAV_STATE_KEY, JSON.stringify(next));
+}
+
+function resolveTeacherCourseById(courseId) {
+    const id = String(courseId || '').trim();
+    if (!id) return null;
+    const pool = ([])
+        .concat(teacherCourses || [])
+        .concat(availableTeacherCourses || [])
+        .concat((MOCK && MOCK.courses) || []);
+    return pool.find(c => String((c && c.id) || '') === id) || null;
+}
+
+function persistCurrentCourseNavigation() {
+    if (!currentCourse) return;
+    writeTeacherNavState({
+        section: 'cursos',
+        view: 'course',
+        courseId: String(currentCourse.id || ''),
+        unitIdx: parseInt(currentUnitIdx || '0', 10) || 0,
+        activityId: null,
+        submissionsFilter: ''
+    });
+}
+
+function restoreTeacherNavigationState() {
+    const nav = readTeacherNavState();
+    if (!nav) return;
+    isRestoringNavState = true;
+    try {
+        const section = String(nav.section || '');
+        const view = String(nav.view || '');
+        const course = resolveTeacherCourseById(nav.courseId);
+        const unitIdx = Math.max(0, parseInt(nav.unitIdx || '0', 10) || 0);
+
+        if (view === 'submissions') {
+            if (course) openCourseView(course, { skipPersist: true, unitIdx });
+            const activityId = parseInt(nav.activityId || '0', 10) || 0;
+            if (activityId && getActivityById(activityId)) {
+                openActivitySubmissions(activityId, course ? course.id : null, nav.submissionsFilter || 'all', { skipPersist: true });
+                return;
+            }
+            if (course) return;
+        }
+
+        if (view === 'course' && course) {
+            openCourseView(course, { skipPersist: true, unitIdx });
+            return;
+        }
+
+        if (section) {
+            navigateTo(section, { skipPersist: true });
+        }
+    } finally {
+        isRestoringNavState = false;
+    }
+}
+
+function hideInitialBootLoader() {
+    const body = document.body;
+    const loader = document.getElementById('bootLoader');
+    if (!body || !loader) return;
+    if (!body.classList.contains('app-booting')) return;
+    loader.classList.add('is-leaving');
+    setTimeout(() => {
+        body.classList.remove('app-booting');
+        if (loader && loader.parentNode) loader.parentNode.removeChild(loader);
+    }, 230);
+}
+
 const MOCK = {
     user: { id: 10, name: 'Dr. Carlos Martínez Lozano', email: 'cmartinez@educat.edu.co', role: { id: 2, name: 'DOCENTE' }, status: true },
     teacher: { id: 1, specialization: 'Matemáticas y Ciencias Exactas' },
@@ -1219,6 +1367,116 @@ function saveStudentGrade(studentId, actId, grade, feedback) {
     localStorage.setItem('educat_sub_' + studentId + '_' + actId, JSON.stringify({ ...existing, graded: true, grade: clampGrade(grade), feedback, gradedAt: new Date().toISOString() }));
 }
 
+function normalizeFileSource(src) {
+    const value = String(src || '').trim();
+    if (!value) return '';
+    if (value === '#') return '';
+    if (/^(data:|blob:|https?:\/\/|\/)/i.test(value)) return value;
+    return value;
+}
+
+function resolveSubmissionFileSource(file) {
+    if (!file) return '';
+    if (typeof file === 'string') return normalizeFileSource(file);
+    const candidates = [
+        file.dataUrl,
+        file.url,
+        file.fileUrl,
+        file.downloadUrl,
+        file.previewUrl,
+        file.src,
+        file.path,
+        file.location,
+        file.href,
+        file.link,
+        file.storageUrl,
+        file.publicUrl,
+        file.signedUrl,
+        file.uri,
+        file.value,
+        file.file && file.file.url,
+        file.file && file.file.dataUrl,
+        file.links && file.links.download,
+        file.links && file.links.preview
+    ];
+    for (let i = 0; i < candidates.length; i += 1) {
+        const resolved = normalizeFileSource(candidates[i]);
+        if (resolved) return resolved;
+    }
+    return '';
+}
+
+function normalizeSubmissionFiles(files) {
+    return Array.isArray(files)
+        ? files.filter(f => !!resolveSubmissionFileSource(f))
+        : [];
+}
+
+function getGradeSubmissionEntries(gradeRow) {
+    const studentId = parseInt((gradeRow && gradeRow.student && gradeRow.student.id) || '0', 10);
+    const courseId = parseInt((gradeRow && gradeRow.course && gradeRow.course.id) || '0', 10);
+    if (!studentId || !courseId) return [];
+
+    const entries = [];
+    const seenActs = new Set();
+    const explicitActId = parseInt((gradeRow && (gradeRow.sourceActivityId || gradeRow.activityId || gradeRow.sourceId)) || '0', 10);
+
+    const pushEntry = (act) => {
+        if (!act || !act.id || seenActs.has(String(act.id))) return;
+        const sub = getStudentSubmission(studentId, act.id);
+        const files = normalizeSubmissionFiles(sub && sub.files);
+        if (!sub || !sub.submitted || !files.length) return;
+        entries.push({
+            actId: act.id,
+            activityTitle: act.title || 'Actividad',
+            submittedAt: sub.submittedAt || '',
+            gradedAt: sub.gradedAt || '',
+            files,
+            studentId
+        });
+        seenActs.add(String(act.id));
+    };
+
+    if (explicitActId) pushEntry(getActivityById(explicitActId));
+    getCourseActivitiesMerged(courseId).forEach(act => pushEntry(act));
+
+    entries.sort((a, b) => {
+        const da = new Date(a.gradedAt || a.submittedAt || 0).getTime();
+        const db = new Date(b.gradedAt || b.submittedAt || 0).getTime();
+        return db - da;
+    });
+    return entries;
+}
+
+function getGradeSubmissionStats(gradeRow) {
+    const entries = getGradeSubmissionEntries(gradeRow);
+    const totalFiles = entries.reduce((acc, entry) => acc + entry.files.length, 0);
+    return { entries, totalFiles };
+}
+
+function openGradeSubmissionFiles(gradeId) {
+    const grade = (MOCK.grades || []).find(g => String(g.id) === String(gradeId));
+    if (!grade) return;
+    const stats = getGradeSubmissionStats(grade);
+    if (!stats.totalFiles) {
+        openModal('Archivos del estudiante', '<div class="empty-state" style="padding:18px"><div class="empty-state-title">Sin archivos adjuntos</div><div class="empty-state-text">No hay archivos enviados por este estudiante para las actividades del curso.</div></div>');
+        return;
+    }
+
+    const blocks = stats.entries.map(entry => {
+        const dateText = entry.submittedAt
+            ? new Date(entry.submittedAt).toLocaleString('es-CO', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+            : 'Fecha no disponible';
+        const rows = entry.files.map((file, idx) => {
+            const sizeText = file.size ? `${(file.size / 1024).toFixed(0)} KB` : 'Tamano no disponible';
+            return `<div class="attachment-item" style="margin-bottom:6px"><div class="attachment-icon doc"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><span class="attachment-name">${htmlEscape(file.name || 'Archivo')}</span><span class="attachment-meta">${htmlEscape(sizeText)}</span><button class="attachment-download" onclick="previewSubmissionFile(${entry.studentId},${entry.actId},${idx})">Ver</button><button class="attachment-download" onclick="downloadSubmissionFile(${entry.studentId},${entry.actId},${idx})">Descargar</button></div>`;
+        }).join('');
+        return `<div style="padding:10px 0;border-bottom:1px solid rgba(11,31,58,0.08)"><div style="font-size:13px;font-weight:600;color:var(--text-dark)">${htmlEscape(entry.activityTitle)}</div><div style="font-size:11px;color:var(--text-muted);margin:4px 0 8px">${htmlEscape(dateText)}</div><div class="attachment-list">${rows}</div></div>`;
+    }).join('');
+
+    openModal('Archivos enviados', `<div style="max-height:62vh;overflow:auto">${blocks}</div>`);
+}
+
 function getPendingSubmissionsCount() {
     let count = 0;
     getAllActivitiesMerged().forEach(a => MOCK.students.forEach(s => {
@@ -1244,7 +1502,8 @@ function showView(view) {
     document.getElementById('courseTopbarActions').style.display = view === 'course' ? 'flex' : 'none';
 }
 
-function navigateTo(section) {
+function navigateTo(section, options) {
+    const opts = options || {};
     showView('main');
     document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
     document.querySelectorAll('.section-panel').forEach(p => p.classList.remove('active'));
@@ -1281,6 +1540,17 @@ function navigateTo(section) {
     else if (section === 'estudiantes') loadEstudiantes();
     else if (section === 'instructivos') loadInstructivos();
     else if (section === 'perfil') loadPerfil();
+
+    if (!opts.skipPersist) {
+        writeTeacherNavState({
+            section,
+            view: 'main',
+            courseId: null,
+            unitIdx: 0,
+            activityId: null,
+            submissionsFilter: ''
+        });
+    }
 }
 
 async function loadOverview() {
@@ -1606,7 +1876,8 @@ function quickGrade(actId, studentId) {
     renderEntregasList();
 }
 
-function openActivitySubmissions(actId, courseIdFallback, defaultFilter) {
+function openActivitySubmissions(actId, courseIdFallback, defaultFilter, options) {
+    const opts = options || {};
     let act = actId ? MOCK.activities.find(a => a.id === actId) : null;
     if (!act && courseIdFallback) {
         const acts = MOCK.activities.filter(a => a.course && a.course.id === courseIdFallback);
@@ -1631,6 +1902,17 @@ function openActivitySubmissions(actId, courseIdFallback, defaultFilter) {
     document.getElementById('submissionsActivityMeta').textContent = `${course.name || '—'}${act.dueDate ? ' · Entrega: ' + new Date(act.dueDate + 'T00:00:00').toLocaleDateString('es-CO') : ''}`;
     document.getElementById('submissionsFilter').value = defaultFilter || 'all';
     renderSubmissionsList();
+
+    if (!opts.skipPersist) {
+        writeTeacherNavState({
+            section: 'entregas',
+            view: 'submissions',
+            courseId: String((course && course.id) || (currentCourse && currentCourse.id) || ''),
+            unitIdx: parseInt(currentUnitIdx || '0', 10) || 0,
+            activityId: String(actId || ''),
+            submissionsFilter: String((document.getElementById('submissionsFilter') || {}).value || 'all')
+        });
+    }
 }
 
 function renderSubmissionsList() {
@@ -1707,8 +1989,10 @@ function renderSubmissionsList() {
         const filesHtml = sub && sub.files && sub.files.length ? `<div style="padding:0 20px 14px">
             <div style="font-size:10.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px">Archivos enviados</div>
             <div class="attachment-list">${sub.files.map((f, fileIdx) => {
-                const hasSrc = !!(f.dataUrl || f.url);
-                return `<div class="attachment-item"><div class="attachment-icon doc">${IFILE}</div><span class="attachment-name">${f.name}</span><span class="attachment-meta">${(f.size / 1024).toFixed(0)} KB</span><button class="attachment-download" ${hasSrc ? `onclick="previewSubmissionFile(${student.id},${actId},${fileIdx})"` : 'disabled'}>${hasSrc ? 'Previsualizar' : 'Sin vista'}</button><button class="attachment-download" ${hasSrc ? `onclick="downloadSubmissionFile(${student.id},${actId},${fileIdx})"` : 'disabled'}>${hasSrc ? 'Descargar' : 'Sin descarga'}</button></div>`;
+                const hasSrc = !!resolveSubmissionFileSource(f);
+                const fileName = (f && typeof f === 'object' && f.name) ? f.name : ('Archivo ' + (fileIdx + 1));
+                const fileSize = (f && typeof f === 'object' && Number.isFinite(f.size)) ? `${(f.size / 1024).toFixed(0)} KB` : 'Tamano no disponible';
+                return `<div class="attachment-item"><div class="attachment-icon doc">${IFILE}</div><span class="attachment-name">${fileName}</span><span class="attachment-meta">${fileSize}</span><button class="attachment-download" ${hasSrc ? `onclick="previewSubmissionFile(${student.id},${actId},${fileIdx})"` : 'disabled'}>${hasSrc ? 'Previsualizar' : 'Sin vista'}</button><button class="attachment-download" ${hasSrc ? `onclick="downloadSubmissionFile(${student.id},${actId},${fileIdx})"` : 'disabled'}>${hasSrc ? 'Descargar' : 'Sin descarga'}</button></div>`;
             }).join('')}</div>
         </div>` : '';
         const commentHtml = sub && sub.comment ? `<div style="padding:0 20px 14px">
@@ -1740,23 +2024,33 @@ function previewSubmissionFile(studentId, actId, fileIdx) {
     const sub = getStudentSubmission(studentId, actId);
     if (!sub || !sub.files || !sub.files[fileIdx]) return;
     const file = sub.files[fileIdx];
-    const src = file.dataUrl || file.url;
+    const src = resolveSubmissionFileSource(file);
     if (!src) { showToast('Este archivo no tiene vista previa disponible.', 'error'); return; }
-    const isImage = (file.type || '').startsWith('image/') || /^data:image\//.test(src);
-    const isPdf = (file.type || '').includes('pdf') || /^data:application\/pdf/.test(src) || (file.name || '').toLowerCase().endsWith('.pdf');
+    const fileName = String(file.name || 'entrega').toLowerCase();
+    const fileType = String(file.type || '').toLowerCase();
+    const isImage = fileType.startsWith('image/') || /^data:image\//.test(src);
+    const isPdf = fileType.includes('pdf') || /^data:application\/pdf/.test(src) || fileName.endsWith('.pdf');
+    const isSpreadsheet = fileType.includes('spreadsheet') || fileType.includes('excel') || fileType.includes('csv') || fileName.endsWith('.xlsx') || fileName.endsWith('.xls') || fileName.endsWith('.csv') || fileName.endsWith('.ods');
+    const isPresentation = fileType.includes('presentation') || fileType.includes('powerpoint') || fileName.endsWith('.ppt') || fileName.endsWith('.pptx') || fileName.endsWith('.odp');
+    const isOfficeLike = isSpreadsheet || isPresentation;
+    const officeViewer = /^https?:\/\//i.test(src)
+        ? 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(src)
+        : '';
     const viewer = isImage
         ? `<img src="${src}" alt="Soporte" style="max-width:100%;border-radius:8px;border:1px solid rgba(11,31,58,0.08)">`
         : isPdf
             ? `<iframe src="${src}" style="width:100%;height:62vh;border:1px solid rgba(11,31,58,0.1);border-radius:8px"></iframe>`
-            : `<div style="font-size:13px;color:var(--text-muted)">No hay vista integrada para este tipo de archivo. Usa descargar.</div>`;
-    openModal('Archivo: ' + (file.name || 'entrega'), `${viewer}<div style="margin-top:10px"><button class="btn btn-teal" onclick="downloadSubmissionFile(${studentId},${actId},${fileIdx})">Descargar</button></div>`);
+            : isOfficeLike
+                ? `<iframe src="${officeViewer || src}" style="width:100%;height:62vh;border:1px solid rgba(11,31,58,0.1);border-radius:8px"></iframe><div style="margin-top:8px;font-size:12px;color:var(--text-muted)">${officeViewer ? 'Vista previa de Office cargada en linea.' : 'El navegador puede limitar la vista previa de este formato. Tambien puedes abrirlo en ventana emergente o descargarlo.'}</div>`
+                : `<div style="font-size:13px;color:var(--text-muted)">No hay vista integrada para este tipo de archivo. Usa descargar.</div>`;
+    openModal('Archivo: ' + (file.name || 'entrega'), `${viewer}<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-teal" onclick="downloadSubmissionFile(${studentId},${actId},${fileIdx})">Descargar</button><button class="btn btn-outline" onclick="window.open('${src}','_blank')">Abrir en ventana</button></div>`);
 }
 
 function downloadSubmissionFile(studentId, actId, fileIdx) {
     const sub = getStudentSubmission(studentId, actId);
     if (!sub || !sub.files || !sub.files[fileIdx]) return;
     const file = sub.files[fileIdx];
-    const src = file.dataUrl || file.url;
+    const src = resolveSubmissionFileSource(file);
     if (!src) { showToast('Archivo sin URL de descarga.', 'error'); return; }
     const a = document.createElement('a');
     a.href = src;
@@ -1791,8 +2085,10 @@ function openGradeModal(actId, studentId) {
         </div>
         ${comment ? `<div class="form-group"><label class="form-label">Comentario del estudiante</label><div style="background:var(--cream);border-radius:8px;padding:12px 14px;border-left:3px solid var(--gold);font-size:13px;color:var(--text-body);line-height:1.65;white-space:pre-line">${comment}</div></div>` : ''}
         ${files.length ? `<div class="form-group"><label class="form-label">Archivos enviados</label><div class="attachment-list">${files.map((f, fileIdx) => {
-            const hasSrc = !!(f.dataUrl || f.url);
-            return `<div class="attachment-item"><div class="attachment-icon doc"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><span class="attachment-name">${f.name}</span><span class="attachment-meta">${f.size ? (f.size/1024).toFixed(0) + ' KB' : ''}</span><button class="attachment-download" ${hasSrc ? `onclick="previewSubmissionFile(${studentId},${actId},${fileIdx})"` : 'disabled'}>${hasSrc ? 'Previsualizar' : 'Sin vista'}</button><button class="attachment-download" ${hasSrc ? `onclick="downloadSubmissionFile(${studentId},${actId},${fileIdx})"` : 'disabled'}>${hasSrc ? 'Descargar' : 'Sin descarga'}</button></div>`;
+            const hasSrc = !!resolveSubmissionFileSource(f);
+            const fileName = (f && typeof f === 'object' && f.name) ? f.name : ('Archivo ' + (fileIdx + 1));
+            const fileSize = (f && typeof f === 'object' && Number.isFinite(f.size)) ? ((f.size / 1024).toFixed(0) + ' KB') : 'Tamano no disponible';
+            return `<div class="attachment-item"><div class="attachment-icon doc"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><span class="attachment-name">${fileName}</span><span class="attachment-meta">${fileSize}</span><button class="attachment-download" ${hasSrc ? `onclick="previewSubmissionFile(${studentId},${actId},${fileIdx})"` : 'disabled'}>${hasSrc ? 'Previsualizar' : 'Sin vista'}</button><button class="attachment-download" ${hasSrc ? `onclick="downloadSubmissionFile(${studentId},${actId},${fileIdx})"` : 'disabled'}>${hasSrc ? 'Descargar' : 'Sin descarga'}</button></div>`;
         }).join('')}</div></div>` : ''}
         <div class="form-group"><label class="form-label">Calificación (0 – 10)</label>
             <input type="number" class="form-input" id="mGradeVal" min="0" max="10" step="0.1" value="${existing && existing.grade !== undefined ? existing.grade : ''}">
@@ -1883,17 +2179,24 @@ function renderGrades(courseId) {
     state.page = safePage;
     const chunk = courseGrades.slice((safePage - 1) * state.pageSize, safePage * state.pageSize);
 
-    container.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px"><input class="form-input" id="gradeSearchInput" placeholder="Filtrar por estudiante, código o descripción" style="max-width:360px"><select class="form-input" id="gradePageSize" style="width:auto"><option value="8">8 por página</option><option value="12">12 por página</option><option value="20">20 por página</option></select></div><table><thead><tr><th>Código</th><th>Estudiante</th><th>Calificación</th><th>Barra</th><th>Descripción</th><th>Acciones</th></tr></thead><tbody>` +
+    container.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px"><input class="form-input" id="gradeSearchInput" placeholder="Filtrar por estudiante, código o descripción" style="max-width:360px"><select class="form-input" id="gradePageSize" style="width:auto"><option value="8">8 por página</option><option value="12">12 por página</option><option value="20">20 por página</option></select></div><table><thead><tr><th>Código</th><th>Estudiante</th><th>Calificación</th><th>Barra</th><th>Descripción</th><th>Archivos</th><th>Acciones</th></tr></thead><tbody>` +
         chunk.map(g => {
             const val = parseFloat(g.grade || 0);
             const cl = val >= 7 ? 'badge-success' : val >= 5 ? 'badge-gold' : 'badge-error';
             const bc = val >= 7 ? 'high' : val >= 5 ? 'mid' : 'low';
+            const fileStats = getGradeSubmissionStats(g);
             return `<tr>
                 <td style="font-size:12px;color:var(--text-muted)">${g.student && g.student.studentCode ? g.student.studentCode : '—'}</td>
                 <td><strong>${g.student && g.student.user ? g.student.user.name : '—'}</strong></td>
                 <td><span class="badge ${cl}">${val.toFixed(1)}</span></td>
                 <td style="min-width:90px"><div class="grade-bar"><div class="grade-fill ${bc}" style="width:${(val / 10) * 100}%"></div></div></td>
                 <td style="font-size:13px;color:var(--text-muted);max-width:160px">${g.description || '—'}</td>
+                <td>
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                        <span class="badge ${fileStats.totalFiles ? 'badge-navy' : 'badge-warning'}">${fileStats.totalFiles || 0}</span>
+                        <button class="btn btn-sm btn-outline" ${fileStats.totalFiles ? `onclick="openGradeSubmissionFiles(${g.id})"` : 'disabled'}>${fileStats.totalFiles ? 'Ver archivos' : 'Sin adjuntos'}</button>
+                    </div>
+                </td>
                 <td><div style="display:flex;gap:6px">
                     <button class="btn btn-sm btn-outline" onclick="editGrade(${g.id},${courseId})">Editar</button>
                     <button class="btn btn-sm btn-danger" onclick="deleteGrade(${g.id},${courseId})">Eliminar</button>
@@ -2311,7 +2614,7 @@ function loadInstructivos() {
                 <button class="btn btn-sm btn-outline" onclick="deleteTeacherGuide('${String(g.id)}')">Eliminar</button>
             </div>
         </div>`).join('')
-        : '<div class="empty-state"><div class="empty-state-title">Sin instructivos</div><div class="empty-state-text">Crea el primer instructivo para docentes y estudiantes.</div></div>';
+        : '<div class="empty-state"><div class="empty-state-title">Sin instructivos</div><div class="empty-state-text">Crea el primer instructivo para docentes.</div></div>';
 }
 
 function openTeacherGuideModal(guideId) {
@@ -2401,9 +2704,10 @@ async function saveProfile() {
     showToast('Perfil actualizado', 'success');
 }
 
-function openCourseView(course) {
+function openCourseView(course, options) {
+    const opts = options || {};
     currentCourse = typeof course === 'string' ? JSON.parse(course) : course;
-    currentUnitIdx = 0;
+    currentUnitIdx = Math.max(0, parseInt(opts.unitIdx || '0', 10) || 0);
     showView('course');
     document.getElementById('topbarBreadcrumb').style.display = 'flex';
     document.getElementById('breadcrumbBack').textContent = 'Mis Cursos';
@@ -2415,7 +2719,9 @@ function openCourseView(course) {
     document.getElementById('cvCourseName').textContent = currentCourse.name || 'Curso';
     document.getElementById('cvCourseMeta').textContent = (currentCourse.studentsCount || 0) + ' estudiantes · ' + getUnits(currentCourse.id).length + ' unidades';
     renderUnitTabs();
-    renderUnit(0);
+    renderUnit(currentUnitIdx, options);
+
+    if (!opts.skipPersist) persistCurrentCourseNavigation();
 }
 
 function closeCourseView() {
@@ -2435,7 +2741,8 @@ function renderUnitTabs() {
     bar.innerHTML = units.map((u, i) => `<button class="unit-tab ${i === 0 ? 'active' : ''}" onclick="renderUnit(${i})"><span class="unit-tab-num">${i + 1}</span>${u.name}</button>`).join('');
 }
 
-function renderUnit(idx) {
+function renderUnit(idx, options) {
+    const opts = options || {};
     currentUnitIdx = idx;
     const units = getUnits(currentCourse.id);
     document.querySelectorAll('.unit-tab').forEach((el, i) => el.classList.toggle('active', i === idx));
@@ -2641,6 +2948,10 @@ function renderUnit(idx) {
     contentArea.insertAdjacentHTML('beforeend', buildTeacherForumsHtml(idx, forums));
     contentArea.insertAdjacentHTML('beforeend', buildTeacherGlossaryHtml(idx, glossaries));
     contentArea.insertAdjacentHTML('beforeend', `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Cierre de unidad</span></div><div class="card-body"><div style="font-size:13px;color:var(--text-muted);line-height:1.6;margin-bottom:12px">Calcula la nota final de la unidad usando talleres, parcial y foros evaluables. Las tareas no enviadas se califican en 0.0.</div><button class="btn btn-teal" onclick="openFinalizeUnitModal(${idx})">Finalizar unidad</button></div></div>`);
+
+    if (!opts.skipPersist && currentCourse && document.getElementById('courseView').classList.contains('show')) {
+        persistCurrentCourseNavigation();
+    }
 }
 
 function buildTeacherForumsHtml(unitIdx, forums) {
@@ -4297,7 +4608,7 @@ function renderTeacherAbsenceReports() {
                 <div style="font-size:13px;line-height:1.65;color:var(--text-body);background:#fff;border-radius:8px;padding:10px 12px;border:1px solid rgba(11,31,58,0.08);max-height:160px;overflow:auto">${r.descripcion || 'Sin detalle adicional'}</div>
                 <div style="font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;margin:12px 0 6px">Soportes (${files.length || r.archivos || 0})</div>
                 <div>${files.length ? files.map((f, fi) => {
-                    const hasUrl = !!(f.dataUrl || f.url);
+                    const hasUrl = !!resolveSubmissionFileSource(f);
                     return `<div class="attachment-item" style="margin-bottom:6px"><div class="attachment-icon doc"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><span class="attachment-name">${f.name || 'Archivo'}</span><span class="attachment-meta">${f.size ? (f.size/1024).toFixed(0) + ' KB' : ''}</span><button class="attachment-download" ${hasUrl ? `onclick="previewAbsenceSupport('${String(r.id).replace(/'/g, "\\'")}',${fi})"` : 'disabled'}>${hasUrl ? 'Previsualizar' : 'Sin vista previa'}</button><button class="attachment-download" ${hasUrl ? `onclick="downloadAbsenceSupport('${String(r.id).replace(/'/g, "\\'")}',${fi})"` : 'disabled'}>${hasUrl ? 'Descargar' : 'Sin descarga'}</button></div>`;
                 }).join('') : '<div style="font-size:12px;color:var(--text-muted)">No se adjuntaron soportes.</div>'}</div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn btn-sm btn-success-outline" onclick="updateAbsenceReportStatus('${r.id}','approved')">Validar excusa</button><button class="btn btn-sm btn-danger" onclick="updateAbsenceReportStatus('${r.id}','rejected')">No validar</button></div>
@@ -4320,7 +4631,7 @@ function previewAbsenceSupport(reportId, fileIdx) {
     const report = getAbsenceReportById(reportId);
     if (!report || !report.files || !report.files[fileIdx]) return;
     const file = report.files[fileIdx];
-    const src = file.dataUrl || file.url;
+    const src = resolveSubmissionFileSource(file);
     if (!src) { showToast('Este archivo no tiene una URL de previsualizacion disponible.', 'error'); return; }
     const isImage = (file.type || '').startsWith('image/') || /^data:image\//.test(src);
     const isPdf = (file.type || '').includes('pdf') || /^data:application\/pdf/.test(src) || (file.name || '').toLowerCase().endsWith('.pdf');
@@ -4336,7 +4647,7 @@ function downloadAbsenceSupport(reportId, fileIdx) {
     const report = getAbsenceReportById(reportId);
     if (!report || !report.files || !report.files[fileIdx]) return;
     const file = report.files[fileIdx];
-    const src = file.dataUrl || file.url;
+    const src = resolveSubmissionFileSource(file);
     if (!src) { showToast('Archivo sin URL de descarga.', 'error'); return; }
     const a = document.createElement('a');
     a.href = src;
@@ -4372,16 +4683,21 @@ function updateAbsenceReportStatus(reportId, status) {
    INIT & EVENT LISTENERS
 ═══════════════════════════════════════════════════════════════════════════ */
 async function init() {
-    authHeader = getAuth() || btoa('docente@educat.edu.co:demo1234');
-    setDate();
-    const usersData = await tryFetch('/api/users');
-    const email = getEmail() || MOCK.user.email;
-    currentUser = (usersData && usersData.length) ? (usersData.find(u => u.email === email) || MOCK.user) : MOCK.user;
-    const teachersData = await tryFetch('/api/teachers');
-    currentTeacher = (teachersData && teachersData.length) ? (teachersData.find(t => t.user && t.user.id === currentUser.id) || MOCK.teacher) : MOCK.teacher;
-    document.getElementById('sidebarUserName').textContent = currentUser.name;
-    document.getElementById('sidebarSpecialization').textContent = currentTeacher.specialization || 'Docente';
-    await loadOverview();
+    try {
+        authHeader = getAuth() || btoa('docente@educat.edu.co:demo1234');
+        setDate();
+        const usersData = await tryFetch('/api/users');
+        const email = getEmail() || MOCK.user.email;
+        currentUser = (usersData && usersData.length) ? (usersData.find(u => u.email === email) || MOCK.user) : MOCK.user;
+        const teachersData = await tryFetch('/api/teachers');
+        currentTeacher = (teachersData && teachersData.length) ? (teachersData.find(t => t.user && t.user.id === currentUser.id) || MOCK.teacher) : MOCK.teacher;
+        document.getElementById('sidebarUserName').textContent = currentUser.name;
+        document.getElementById('sidebarSpecialization').textContent = currentTeacher.specialization || 'Docente';
+        await loadOverview();
+        restoreTeacherNavigationState();
+    } finally {
+        hideInitialBootLoader();
+    }
 }
 
 document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => navigateTo(btn.dataset.section)));
@@ -4398,6 +4714,8 @@ document.getElementById('sidebarCloseBtn').addEventListener('click', () => {
 
 document.getElementById('logoutBtn').addEventListener('click', () => {
     localStorage.removeItem('educat_auth'); localStorage.removeItem('educat_email');
+    sessionStorage.removeItem(TEACHER_NAV_STATE_KEY);
+    localStorage.removeItem('educat_teacher_nav_state');
     sessionStorage.removeItem('educat_auth'); sessionStorage.removeItem('educat_email');
     window.location.href = 'login.html';
 });
@@ -4435,6 +4753,7 @@ document.getElementById('submissionsBackBtn').addEventListener('click', () => {
         document.getElementById('pageTitle').style.display = 'none';
         document.getElementById('pageSubtitle').style.display = 'none';
         document.getElementById('courseTopbarActions').style.display = 'flex';
+        persistCurrentCourseNavigation();
     } else {
         navigateTo('entregas');
     }

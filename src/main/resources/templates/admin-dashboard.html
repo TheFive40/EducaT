@@ -9,7 +9,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Jost:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/css/admin-dashboard.css">
 </head>
-<body>
+<body class="app-booting">
+<div class="boot-loader" id="bootLoader" aria-live="polite" aria-busy="true">
+    <div class="boot-loader-card">
+        <div class="boot-loader-brand">Educa<span>T</span></div>
+        <div class="boot-loader-spinner" aria-hidden="true"></div>
+        <div class="boot-loader-text">Cargando panel administrativo...</div>
+    </div>
+</div>
 <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
 <aside class="sidebar" id="sidebar">
@@ -52,6 +59,10 @@
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
                 Certificados
             </button>
+            <button class="nav-item" data-section="matriculas">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Matriculas
+            </button>
             <button class="nav-item" data-section="instructivos">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
                 Instructivos
@@ -64,9 +75,13 @@
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 Importar Datos
             </button>
-            <button class="nav-item" data-section="calificacion">
-                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
-                Sistema de calificación
+            <button class="nav-item" data-section="configuracion">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01A1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                Configuracion
+            </button>
+            <button class="nav-item" data-section="auditoria">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/></svg>
+                Auditoria
             </button>
         </div>
     </nav>
@@ -110,7 +125,7 @@
                             <button class="btn btn-teal" onclick="navigateTo('cursos')">Crear curso</button>
                             <button class="btn btn-outline" onclick="navigateTo('roles')">Gestionar roles</button>
                             <button class="btn btn-outline" onclick="navigateTo('formularios')">Editar formularios</button>
-                            <button class="btn btn-outline" onclick="navigateTo('calificacion')">Configurar cálculo</button>
+                            <button class="btn btn-outline" onclick="navigateTo('configuracion')">Configurar cálculo</button>
                         </div>
                     </div>
                     <div class="card">
@@ -436,6 +451,74 @@
                 </div>
             </section>
 
+            <section class="section-panel" id="panel-matriculas">
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Revision de matriculas</span></div>
+                    <div class="card-body">
+                        <div class="alert alert-info" style="margin-bottom:12px">
+                            Gestiona solicitudes en estado pendiente por revision, aprueba o rechaza con motivo/correccion.
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Buscar</label>
+                                <input class="form-input" id="enrollmentReviewSearch" placeholder="Estudiante, documento, acudiente...">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Estado</label>
+                                <select class="form-input" id="enrollmentReviewStatusFilter">
+                                    <option value="pending-review">Pendiente por revision</option>
+                                    <option value="approved">Aprobadas</option>
+                                    <option value="rejected">Rechazadas</option>
+                                    <option value="all">Todas</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Nivel</label>
+                                <select class="form-input" id="enrollmentReviewLevelFilter"></select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Desde</label>
+                                <input class="form-input" id="enrollmentReviewFromDate" type="date">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Hasta</label>
+                                <input class="form-input" id="enrollmentReviewToDate" type="date">
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 8px">
+                            <button class="btn btn-sm btn-outline" id="btnEnrollmentSelectPage">Seleccionar pagina</button>
+                            <button class="btn btn-sm btn-outline" id="btnEnrollmentSelectFiltered">Seleccionar filtradas</button>
+                            <button class="btn btn-sm btn-outline" id="btnEnrollmentClearSelection">Limpiar seleccion</button>
+                            <button class="btn btn-sm btn-teal" id="btnEnrollmentApproveSelected">Aprobar seleccionadas</button>
+                            <button class="btn btn-sm btn-outline" id="btnEnrollmentRejectSelected">Rechazar seleccionadas</button>
+                        </div>
+                        <div class="muted" id="enrollmentReviewSummary" style="margin-bottom:8px"></div>
+                        <div id="enrollmentReviewTable" class="table-wrap"></div>
+                        <div class="pager" id="enrollmentReviewPager" style="margin-top:10px"></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Editor del formulario de matrículas</span></div>
+                    <div class="card-body">
+                        <div class="alert alert-info" style="margin-bottom:12px">
+                            Puedes editar campos, borrar, agregar preguntas y adjuntos. Máximo 4 campos de archivo; para más documentos solicita enlace URL al usuario.
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+                            <button class="btn btn-sm btn-outline" id="btnEnrollmentFormAddField">Agregar campo</button>
+                            <button class="btn btn-sm btn-outline" id="btnEnrollmentFormAddFile">Agregar adjunto</button>
+                            <button class="btn btn-sm btn-outline" id="btnEnrollmentFormResetDefault">Cargar formulario por defecto</button>
+                            <button class="btn btn-sm btn-teal" id="btnEnrollmentFormSave">Guardar cambios</button>
+                        </div>
+                        <div id="enrollmentFormBuilderList" class="card-list"></div>
+                        <div class="pager" id="enrollmentFormBuilderPager" style="margin-top:10px"></div>
+                        <div class="muted" id="enrollmentFormBuilderSummary" style="margin-top:8px"></div>
+                        <div id="enrollmentFormBuilderPreview" class="table-wrap" style="margin-top:12px"></div>
+                    </div>
+                </div>
+            </section>
+
             <section class="section-panel" id="panel-instructivos">
                 <div class="card">
                     <div class="card-header"><span class="card-title">Instructivos del área personal del estudiante</span></div>
@@ -635,7 +718,13 @@
                 </div>
             </section>
 
-            <section class="section-panel" id="panel-calificacion">
+            <section class="section-panel" id="panel-configuracion">
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Configuracion general</span></div>
+                    <div class="card-body">
+                        <div class="alert alert-info">Desde aquí podrás centralizar ajustes globales del sistema.</div>
+                    </div>
+                </div>
                 <div class="card">
                     <div class="card-header"><span class="card-title">Modelo institucional</span></div>
                     <div class="card-body">
@@ -683,6 +772,15 @@
                 <div class="card">
                     <div class="card-header"><span class="card-title">Guía para el administrador</span></div>
                     <div class="card-body" id="gradingGuide"></div>
+                </div>
+            </section>
+
+            <section class="section-panel" id="panel-auditoria">
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Auditoria</span></div>
+                    <div class="card-body">
+                        <div class="alert alert-info">Aquí podrás consultar trazabilidad, eventos y cambios del sistema.</div>
+                    </div>
                 </div>
             </section>
         </div>

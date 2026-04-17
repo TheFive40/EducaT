@@ -2,11 +2,32 @@ const API = 'http://localhost:8080';
 
 const params = new URLSearchParams(window.location.search);
 const role = params.get('role');
+const redirectParam = params.get('redirect');
+const ROLE_CLASS = {
+    teacher: 'role-teacher',
+    student: 'role-student',
+    staff: 'role-staff'
+};
+
+if (ROLE_CLASS[role]) {
+    document.body.classList.add(ROLE_CLASS[role]);
+}
+
 if (role) {
     const badge = document.getElementById('roleBadge');
     const text = document.getElementById('roleText');
     badge.style.display = 'inline-flex';
-    text.textContent = role === 'teacher' ? 'Portal Docente' : 'Portal Estudiantil';
+    text.textContent = role === 'teacher'
+        ? 'Portal Docente'
+        : (role === 'staff' ? 'Portal Funcionarios' : 'Portal Estudiantil');
+}
+
+function resolveRedirectTarget() {
+    const safe = String(redirectParam || '').trim();
+    if (!safe || !safe.startsWith('/')) {
+        return role === 'student' ? '/student-dashboard' : '/admin-dashboard';
+    }
+    return safe;
 }
 
 document.getElementById('togglePass').addEventListener('click', function () {
@@ -71,7 +92,7 @@ document.getElementById('loginBtn').addEventListener('click', async () => {
             storage.setItem('educat_auth', credentials);
             storage.setItem('educat_email', email);
             setAlert('alertSuccess', true);
-            setTimeout(() => { window.location.href = 'index.html'; }, 1800);
+            setTimeout(() => { window.location.href = resolveRedirectTarget(); }, 1200);
         } else if (res.status === 401) {
             setAlert('alertError', true, 'Credenciales incorrectas. Verifica tu correo y contraseña.');
         } else {

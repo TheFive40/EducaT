@@ -73,6 +73,36 @@ function checkReveal() {
     });
 }
 
+function getStoredAuth() {
+    return localStorage.getItem('educat_auth') || sessionStorage.getItem('educat_auth') || '';
+}
+
+function resolveAccessTarget(roleValue, dashboardValue) {
+    const role = String(roleValue || '').toLowerCase();
+    const dashboard = String(dashboardValue || '').trim();
+    const targetDashboard = dashboard || ({
+        teacher: '/admin-dashboard',
+        student: '/student-dashboard',
+        staff: '/admin-dashboard'
+    }[role] || '/');
+    return {
+        role,
+        dashboard: targetDashboard,
+        login: '/login?role=' + encodeURIComponent(role) + '&redirect=' + encodeURIComponent(targetDashboard)
+    };
+}
+
+function handleAccessCardClick(ev) {
+    const card = ev.currentTarget;
+    const target = resolveAccessTarget(card.dataset.role, card.dataset.dashboard);
+    if (getStoredAuth()) {
+        ev.preventDefault();
+        window.location.href = target.dashboard;
+        return;
+    }
+    card.setAttribute('href', target.login);
+}
+
 window.addEventListener('scroll', () => {
     document.getElementById('navbar').classList.toggle('scrolled', window.scrollY > 40);
     checkReveal();
@@ -96,4 +126,8 @@ window.addEventListener('load', () => {
         animateCount(document.getElementById('countCourses'), 87, '');
         animateCount(document.getElementById('countTeachers'), 64, '');
     }, 1000);
+});
+
+document.querySelectorAll('.access-card[data-role]').forEach(card => {
+    card.addEventListener('click', handleAccessCardClick);
 });

@@ -26,7 +26,9 @@ const STORAGE_KEYS = {
     studentLevels: 'educat_student_levels',
     studentGrades: 'educat_student_grades',
     localCourses: 'educat_local_courses',
-    localEnrollments: 'educat_local_enrollments'
+    localEnrollments: 'educat_local_enrollments',
+    enrollmentRequests: 'educat_enrollment_requests',
+    enrollmentFormConfig: 'educat_enrollment_form_config'
 };
 
 const PERMISSIONS = [
@@ -119,6 +121,28 @@ const QUESTION_TYPES = [
 ];
 
 const SURVEY_NO_ROLE = 'NO_ROLE';
+const ENROLLMENT_FORM_MAX_FILE_FIELDS = 4;
+const ADMIN_NAV_SESSION_KEY = 'educat_admin_nav_state_v2';
+const DEFAULT_ENROLLMENT_FORM_FIELDS = [
+    { id: 'studentName', section: 'Datos del estudiante', type: 'text', label: 'Nombre completo', placeholder: 'Nombre del estudiante', required: true },
+    { id: 'studentDoc', section: 'Datos del estudiante', type: 'text', label: 'Documento', placeholder: 'CC / TI / Pasaporte', required: true },
+    { id: 'studentBirthDate', section: 'Datos del estudiante', type: 'date', label: 'Fecha de nacimiento', placeholder: '', required: true },
+    { id: 'studentGender', section: 'Datos del estudiante', type: 'select', label: 'Genero', placeholder: '', required: true, options: ['Femenino', 'Masculino', 'Otro', 'Prefiero no decirlo'] },
+    { id: 'level', section: 'Datos academicos', type: 'select', label: 'Nivel academico', placeholder: '', required: true, options: ['Preescolar', 'Primaria', 'Secundaria', 'Media'] },
+    { id: 'grade', section: 'Datos academicos', type: 'text', label: 'Grado', placeholder: 'Ej: 6A, 9B, 11', required: true },
+    { id: 'studentLastName', section: 'Datos del estudiante', type: 'text', label: 'Apellidos del estudiante', placeholder: 'Apellidos del estudiante', required: true },
+    { id: 'guardianName', section: 'Acudiente y contacto', type: 'text', label: 'Nombre del acudiente', placeholder: 'Nombre del responsable', required: true },
+    { id: 'guardianRelation', section: 'Acudiente y contacto', type: 'text', label: 'Parentesco', placeholder: 'Ej: Madre, Padre, Tutor', required: true },
+    { id: 'contactPhone', section: 'Acudiente y contacto', type: 'tel', label: 'Telefono', placeholder: 'Celular o fijo', required: true },
+    { id: 'contactEmail', section: 'Acudiente y contacto', type: 'email', label: 'Correo de contacto', placeholder: 'correo@dominio.com', required: true },
+    { id: 'address', section: 'Acudiente y contacto', type: 'text', label: 'Direccion', placeholder: 'Direccion de residencia', required: true },
+    { id: 'notes', section: 'Acudiente y contacto', type: 'textarea', label: 'Observaciones (opcional)', placeholder: 'Informacion medica, apoyos requeridos, comentarios...', required: false },
+    { id: 'schoolCertificateFile', section: 'Documentos adjuntos', type: 'file', label: 'Certificado de escolaridad', placeholder: '', required: true },
+    { id: 'guardianDocumentFile', section: 'Documentos adjuntos', type: 'file', label: 'Copia del documento de identidad del acudiente', placeholder: '', required: true },
+    { id: 'studentIdentityCardFile', section: 'Documentos adjuntos', type: 'file', label: 'Tarjeta de identidad', placeholder: '', required: true },
+    { id: 'healthAffiliationFile', section: 'Documentos adjuntos', type: 'file', label: 'Certificado de afiliacion al sistema de salud (opcional)', placeholder: '', required: false },
+    { id: 'additionalFilesUrl', section: 'Documentos adjuntos', type: 'url', label: 'URL para documentos adicionales (opcional)', placeholder: 'https://...', required: false }
+];
 
 const state = {
     users: [],
@@ -202,7 +226,20 @@ const state = {
         certFilteredStudentIds: [],
         certCurrentPageStudentIds: [],
         certStudentsPage: 1,
-        certStudentsPageSize: 8
+        certStudentsPageSize: 8,
+        enrollmentReviewSearch: '',
+        enrollmentReviewStatusFilter: 'pending-review',
+        enrollmentReviewLevelFilter: 'all',
+        enrollmentReviewFromDate: '',
+        enrollmentReviewToDate: '',
+        enrollmentReviewPage: 1,
+        enrollmentReviewPageSize: 8,
+        enrollmentReviewSelectedIds: [],
+        enrollmentReviewFilteredIds: [],
+        enrollmentReviewCurrentPageIds: [],
+        enrollmentFormBuilderPage: 1,
+        enrollmentFormBuilderPageSize: 6,
+        enrollmentFormBuilderDraft: []
     }
 };
 
@@ -302,7 +339,8 @@ const modalState = {
     surveyVotePages: {},
     guideAttachments: [],
     guidePdfDataUrl: '',
-    guidePdfName: ''
+    guidePdfName: '',
+    enrollmentRejectIds: []
 };
 
 let surveyLiveTimer = null;
@@ -372,6 +410,24 @@ function saveStorage(key, value) {
     localStorage.setItem(key, JSON.stringify(value));
 }
 
+function readSessionJson(key, fallback) {
+    try {
+        const raw = sessionStorage.getItem(String(key || ''));
+        if (!raw) return fallback;
+        return JSON.parse(raw);
+    } catch (e) {
+        return fallback;
+    }
+}
+
+function writeSessionJson(key, value) {
+    try {
+        sessionStorage.setItem(String(key || ''), JSON.stringify(value));
+    } catch (e) {
+        // Ignorar errores de cuota/storage bloqueado.
+    }
+}
+
 function asArray(value) {
     return Array.isArray(value) ? value : [];
 }
@@ -410,7 +466,47 @@ function escapeJsSingle(text) {
         .replace(/\n/g, '\\n');
 }
 
-function navigateTo(section) {
+function normalizeAdminSection(section) {
+    let normalized = String(section || '').trim().toLowerCase();
+    if (normalized === 'calificacion') normalized = 'configuracion';
+    if (!normalized) return 'overview';
+    const panel = document.getElementById('panel-' + normalized);
+    return panel ? normalized : 'overview';
+}
+
+function syncAdminSectionUrl(section) {
+    const normalized = normalizeAdminSection(section);
+    const url = new URL(window.location.href);
+    if (normalized === 'overview') {
+        url.searchParams.delete('aSection');
+    } else {
+        url.searchParams.set('aSection', normalized);
+    }
+    url.searchParams.delete('section');
+    const next = url.toString();
+    if (next !== window.location.href) window.history.replaceState({}, '', next);
+}
+
+function writeAdminNavigationState(section, syncUrl) {
+    const normalized = normalizeAdminSection(section);
+    writeSessionJson(ADMIN_NAV_SESSION_KEY, {
+        section: normalized,
+        updatedAt: Date.now()
+    });
+    if (syncUrl !== false) syncAdminSectionUrl(normalized);
+}
+
+function readAdminNavigationState() {
+    const fromUrl = normalizeAdminSection(getSearchParam('aSection') || getSearchParam('section'));
+    if (fromUrl && fromUrl !== 'overview') return fromUrl;
+    const fromSession = readSessionJson(ADMIN_NAV_SESSION_KEY, null);
+    if (fromSession && fromSession.section) return normalizeAdminSection(fromSession.section);
+    return 'overview';
+}
+
+function navigateTo(section, options) {
+    const opts = options && typeof options === 'object' ? options : {};
+    section = normalizeAdminSection(section);
     document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.section === section));
     document.querySelectorAll('.section-panel').forEach(p => p.classList.remove('active'));
     const panel = document.getElementById('panel-' + section);
@@ -420,12 +516,15 @@ function navigateTo(section) {
         cursos: 'Cursos y asignaciones',
         roles: 'Roles y permisos',
         certificados: 'Certificados',
+        matriculas: 'Matriculas',
         instructivos: 'Instructivos',
         formularios: 'Formularios',
         importacion: 'Importar Datos',
-        calificacion: 'Sistema de calificacion'
+        configuracion: 'Configuracion',
+        auditoria: 'Auditoria'
     }[section] || 'Administrador';
     document.getElementById('pageTitle').textContent = title;
+    if (!opts.skipPersist) writeAdminNavigationState(section, true);
 }
 window.navigateTo = navigateTo;
 
@@ -682,6 +781,10 @@ function getGradesByLevel(levelId) {
 
 function normalizeText(value) {
     return String(value || '').trim().toLowerCase();
+}
+
+function normalize(value) {
+    return String(value || '').trim();
 }
 
 function ensureAcademicLevelByName(levelName) {
@@ -1877,6 +1980,560 @@ function renderRolesSection() {
     renderPermissionChecklist('permissionsChecklist', getRolePerms(), 'roleperm');
     renderPermissionChecklist('userPermissionsChecklist', getUserPerms(), 'userperm');
     renderAdminUsersSection();
+}
+
+function normalizeEnrollmentRequestStatus(rawStatus) {
+    const value = String(rawStatus || '').toLowerCase();
+    if (value.includes('aproba') || value === 'approved') return 'approved';
+    if (value.includes('rechaza') || value === 'rejected') return 'rejected';
+    return 'pending-review';
+}
+
+function enrollmentStatusLabel(status) {
+    const s = normalizeEnrollmentRequestStatus(status);
+    if (s === 'approved') return 'Aprobada';
+    if (s === 'rejected') return 'Rechazada';
+    return 'Pendiente por revision';
+}
+
+function readEnrollmentRequestsStorage() {
+    return asArray(readStorage(STORAGE_KEYS.enrollmentRequests, [])).map((item, idx) => {
+        const row = asObject(item);
+        return {
+            ...row,
+            id: String(row.id || ('enr-' + idx + '-' + Date.now())),
+            createdAt: String(row.createdAt || ''),
+            status: normalizeEnrollmentRequestStatus(row.status),
+            student: asObject(row.student),
+            academic: asObject(row.academic),
+            guardian: asObject(row.guardian),
+            review: asObject(row.review),
+            documents: asObject(row.documents)
+        };
+    });
+}
+
+function saveEnrollmentRequestsStorage(items) {
+    saveStorage(STORAGE_KEYS.enrollmentRequests, asArray(items));
+}
+
+function setEnrollmentReviewSearch(value) {
+    state.ui.enrollmentReviewSearch = String(value || '');
+    state.ui.enrollmentReviewPage = 1;
+    renderEnrollmentReviewSection();
+}
+
+function setEnrollmentReviewStatusFilter(value) {
+    state.ui.enrollmentReviewStatusFilter = String(value || 'pending-review');
+    state.ui.enrollmentReviewPage = 1;
+    renderEnrollmentReviewSection();
+}
+
+function setEnrollmentReviewLevelFilter(value) {
+    state.ui.enrollmentReviewLevelFilter = String(value || 'all');
+    state.ui.enrollmentReviewPage = 1;
+    renderEnrollmentReviewSection();
+}
+
+function setEnrollmentReviewFromDate(value) {
+    state.ui.enrollmentReviewFromDate = String(value || '');
+    state.ui.enrollmentReviewPage = 1;
+    renderEnrollmentReviewSection();
+}
+
+function setEnrollmentReviewToDate(value) {
+    state.ui.enrollmentReviewToDate = String(value || '');
+    state.ui.enrollmentReviewPage = 1;
+    renderEnrollmentReviewSection();
+}
+
+function enrollmentReviewPrevPage() {
+    state.ui.enrollmentReviewPage = Math.max(1, parseInt(state.ui.enrollmentReviewPage || '1', 10) - 1);
+    renderEnrollmentReviewSection();
+}
+
+function enrollmentReviewNextPage() {
+    state.ui.enrollmentReviewPage = parseInt(state.ui.enrollmentReviewPage || '1', 10) + 1;
+    renderEnrollmentReviewSection();
+}
+
+function toggleEnrollmentReviewSelection(enrollmentId, checked) {
+    const id = String(enrollmentId || '');
+    const selected = new Set(asArray(state.ui.enrollmentReviewSelectedIds).map(String));
+    if (checked) selected.add(id);
+    else selected.delete(id);
+    state.ui.enrollmentReviewSelectedIds = Array.from(selected);
+    renderEnrollmentReviewSection();
+}
+
+function selectCurrentPageEnrollmentReviews() {
+    const selected = new Set(asArray(state.ui.enrollmentReviewSelectedIds).map(String));
+    asArray(state.ui.enrollmentReviewCurrentPageIds).forEach(id => selected.add(String(id)));
+    state.ui.enrollmentReviewSelectedIds = Array.from(selected);
+    renderEnrollmentReviewSection();
+}
+
+function selectFilteredEnrollmentReviews() {
+    const selected = new Set(asArray(state.ui.enrollmentReviewSelectedIds).map(String));
+    asArray(state.ui.enrollmentReviewFilteredIds).forEach(id => selected.add(String(id)));
+    state.ui.enrollmentReviewSelectedIds = Array.from(selected);
+    renderEnrollmentReviewSection();
+}
+
+function clearEnrollmentReviewSelection() {
+    state.ui.enrollmentReviewSelectedIds = [];
+    renderEnrollmentReviewSection();
+}
+
+function updateEnrollmentRequestsByIds(ids, updater) {
+    const target = new Set(asArray(ids).map(String));
+    if (!target.size) return 0;
+    const list = readEnrollmentRequestsStorage();
+    let changed = 0;
+    const updated = list.map(item => {
+        const id = String(item.id || '');
+        if (!target.has(id)) return item;
+        changed += 1;
+        return updater(item);
+    });
+    saveEnrollmentRequestsStorage(updated);
+    state.ui.enrollmentReviewSelectedIds = asArray(state.ui.enrollmentReviewSelectedIds)
+        .map(String)
+        .filter(id => !target.has(id));
+    return changed;
+}
+
+function approveEnrollmentRequests(ids) {
+    const changed = updateEnrollmentRequestsByIds(ids, item => ({
+        ...item,
+        status: 'approved',
+        review: {
+            ...asObject(item.review),
+            decision: 'approved',
+            reason: '',
+            correction: '',
+            reviewedAt: new Date().toISOString()
+        }
+    }));
+    if (!changed) return showToast('No hay solicitudes seleccionadas', 'error');
+    renderEnrollmentReviewSection();
+    showToast('Solicitudes aprobadas: ' + changed, 'success');
+}
+
+function approveEnrollmentRequest(enrollmentId) {
+    approveEnrollmentRequests([enrollmentId]);
+}
+
+function approveSelectedEnrollmentRequests() {
+    approveEnrollmentRequests(state.ui.enrollmentReviewSelectedIds);
+}
+
+function rejectEnrollmentRequests(ids, reason, correction) {
+    const cleanReason = normalize(reason);
+    const cleanCorrection = normalize(correction);
+    if (!cleanReason && !cleanCorrection) {
+        return showToast('Debes indicar motivo y/o correccion', 'error');
+    }
+    const changed = updateEnrollmentRequestsByIds(ids, item => ({
+        ...item,
+        status: 'rejected',
+        review: {
+            ...asObject(item.review),
+            decision: 'rejected',
+            reason: cleanReason,
+            correction: cleanCorrection,
+            reviewedAt: new Date().toISOString()
+        }
+    }));
+    if (!changed) return showToast('No hay solicitudes seleccionadas', 'error');
+    renderEnrollmentReviewSection();
+    showToast('Solicitudes rechazadas: ' + changed, 'success');
+}
+
+function openEnrollmentRejectModal(ids) {
+    const targetIds = asArray(ids).map(String).filter(Boolean);
+    if (!targetIds.length) return showToast('Selecciona al menos una solicitud', 'error');
+    modalState.enrollmentRejectIds = targetIds;
+    openModal('Rechazar matricula(s)', `
+        <div class="form-group">
+            <label class="form-label">Motivo del rechazo</label>
+            <textarea class="form-input" id="enrollmentRejectReason" style="min-height:100px" placeholder="Describe por qué se rechaza la solicitud..."></textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Correccion solicitada</label>
+            <textarea class="form-input" id="enrollmentRejectCorrection" style="min-height:90px" placeholder="Indica qué debe corregir el acudiente/estudiante..."></textarea>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="btn btn-outline" type="button" onclick="closeModal()">Cancelar</button>
+            <button class="btn btn-teal" type="button" onclick="confirmEnrollmentRejectModal()">Confirmar rechazo</button>
+        </div>
+    `);
+}
+
+function rejectEnrollmentRequest(enrollmentId) {
+    openEnrollmentRejectModal([enrollmentId]);
+}
+
+function confirmEnrollmentRejectModal() {
+    const reason = normalize((document.getElementById('enrollmentRejectReason') || {}).value || '');
+    const correction = normalize((document.getElementById('enrollmentRejectCorrection') || {}).value || '');
+    const ids = asArray(modalState.enrollmentRejectIds).map(String).filter(Boolean);
+    if (!reason && !correction) return showToast('Debes indicar motivo y/o correccion', 'error');
+    rejectEnrollmentRequests(ids, reason, correction);
+    modalState.enrollmentRejectIds = [];
+    closeModal();
+}
+
+function rejectSelectedEnrollmentRequests() {
+    openEnrollmentRejectModal(state.ui.enrollmentReviewSelectedIds);
+}
+
+function getEnrollmentReviewDocumentsCount(item) {
+    const docs = asObject(item.documents);
+    return ['schoolCertificate', 'guardianIdentityCopy', 'studentIdentityCard', 'healthAffiliationCertificate']
+        .filter(k => !!docs[k])
+        .length;
+}
+
+function enrollmentFormatBytes(bytes) {
+    const value = Math.max(0, parseInt(bytes || '0', 10) || 0);
+    if (value < 1024) return value + ' B';
+    if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KB';
+    return (value / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function openEnrollmentAttachmentsModal(enrollmentId) {
+    const id = String(enrollmentId || '');
+    const item = readEnrollmentRequestsStorage().find(x => String((x || {}).id || '') === id);
+    if (!item) return showToast('Solicitud no encontrada', 'error');
+    const docs = asObject(item.documents);
+    const rows = [
+        { key: 'schoolCertificate', label: 'Certificado de escolaridad' },
+        { key: 'guardianIdentityCopy', label: 'Documento de identidad del acudiente' },
+        { key: 'studentIdentityCard', label: 'Tarjeta de identidad' },
+        { key: 'healthAffiliationCertificate', label: 'Certificado de afiliación a salud (opcional)' }
+    ].map(def => {
+        const file = asObject(docs[def.key]);
+        const hasFile = !!String(file.name || '').trim();
+        const hasDataUrl = hasFile && /^data:/i.test(String(file.dataUrl || ''));
+        const meta = hasFile
+            ? `${String(file.type || 'archivo')} · ${enrollmentFormatBytes(file.size)}`
+            : 'No adjunto';
+        const actions = hasDataUrl
+            ? `<a class="btn btn-sm btn-outline" href="${escapeHtml(String(file.dataUrl || ''))}" target="_blank" rel="noopener noreferrer">Abrir</a>
+               <a class="btn btn-sm btn-outline" href="${escapeHtml(String(file.dataUrl || ''))}" download="${escapeHtml(String(file.name || 'adjunto'))}">Descargar</a>`
+            : '<span class="muted">Sin vista previa</span>';
+        return `<tr>
+            <td>${escapeHtml(def.label)}</td>
+            <td>${hasFile ? escapeHtml(String(file.name || '')) : '<span class="muted">No adjunto</span>'}</td>
+            <td>${escapeHtml(meta)}</td>
+            <td style="white-space:nowrap">${actions}</td>
+        </tr>`;
+    }).join('');
+
+    openModal('Adjuntos de matricula', `
+        <div class="table-wrap">
+            <table class="simple-table">
+                <thead><tr><th>Documento</th><th>Archivo</th><th>Detalle</th><th>Acción</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    `);
+}
+
+function renderEnrollmentReviewSection() {
+    const tableEl = document.getElementById('enrollmentReviewTable');
+    if (!tableEl) return;
+    const pagerEl = document.getElementById('enrollmentReviewPager');
+    const summaryEl = document.getElementById('enrollmentReviewSummary');
+    const searchEl = document.getElementById('enrollmentReviewSearch');
+    const statusEl = document.getElementById('enrollmentReviewStatusFilter');
+    const levelEl = document.getElementById('enrollmentReviewLevelFilter');
+    const fromEl = document.getElementById('enrollmentReviewFromDate');
+    const toEl = document.getElementById('enrollmentReviewToDate');
+
+    const all = readEnrollmentRequestsStorage();
+    const levelOptions = Array.from(new Set(all.map(r => String(((r.academic || {}).level) || '').trim()).filter(Boolean)))
+        .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+    fillSelect('enrollmentReviewLevelFilter', levelOptions.map(v => ({ id: v, name: v })), l => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.name)}</option>`, 'Todos los niveles');
+
+    if (searchEl) searchEl.value = String(state.ui.enrollmentReviewSearch || '');
+    if (statusEl) statusEl.value = String(state.ui.enrollmentReviewStatusFilter || 'pending-review');
+    if (levelEl) {
+        const selectedLevel = String(state.ui.enrollmentReviewLevelFilter || 'all');
+        levelEl.value = selectedLevel === 'all' ? '' : selectedLevel;
+    }
+    if (fromEl) fromEl.value = String(state.ui.enrollmentReviewFromDate || '');
+    if (toEl) toEl.value = String(state.ui.enrollmentReviewToDate || '');
+
+    const query = String(state.ui.enrollmentReviewSearch || '').trim().toLowerCase();
+    const statusFilter = String(state.ui.enrollmentReviewStatusFilter || 'pending-review');
+    const levelFilter = String(state.ui.enrollmentReviewLevelFilter || 'all');
+    const fromDate = String(state.ui.enrollmentReviewFromDate || '');
+    const toDate = String(state.ui.enrollmentReviewToDate || '');
+
+    const filtered = all.filter(item => {
+        const status = normalizeEnrollmentRequestStatus(item.status);
+        const statusOk = statusFilter === 'all' ? true : status === statusFilter;
+        const level = String(((item.academic || {}).level) || '').trim();
+        const levelOk = levelFilter === 'all' ? true : level === levelFilter;
+        const created = String(item.createdAt || '').slice(0, 10);
+        const fromOk = !fromDate || (created && created >= fromDate);
+        const toOk = !toDate || (created && created <= toDate);
+        const studentName = String(((item.student || {}).name) || '');
+        const studentDoc = String(((item.student || {}).document) || '');
+        const guardianName = String(((item.guardian || {}).name) || '');
+        const text = `${studentName} ${studentDoc} ${guardianName} ${level}`.toLowerCase();
+        const queryOk = !query || text.includes(query);
+        return statusOk && levelOk && fromOk && toOk && queryOk;
+    });
+
+    const validIds = new Set(all.map(x => String(x.id || '')));
+    state.ui.enrollmentReviewSelectedIds = asArray(state.ui.enrollmentReviewSelectedIds).map(String).filter(id => validIds.has(id));
+    state.ui.enrollmentReviewFilteredIds = filtered.map(x => String(x.id || ''));
+
+    const paged = paginateItems(filtered, state.ui.enrollmentReviewPage, state.ui.enrollmentReviewPageSize || 8);
+    state.ui.enrollmentReviewPage = paged.page;
+    state.ui.enrollmentReviewCurrentPageIds = paged.items.map(x => String(x.id || ''));
+    const selected = new Set(asArray(state.ui.enrollmentReviewSelectedIds).map(String));
+
+    tableEl.innerHTML = paged.items.length
+        ? `<table class="simple-table"><thead><tr>
+            <th style="width:40px"></th>
+            <th>Fecha</th>
+            <th>Estudiante</th>
+            <th>Nivel/Grado</th>
+            <th>Acudiente</th>
+            <th>Estado</th>
+            <th>Revision</th>
+            <th>Adjuntos</th>
+            <th>Acciones</th>
+        </tr></thead><tbody>${paged.items.map(item => {
+            const id = String(item.id || '');
+            const created = item.createdAt ? new Date(item.createdAt).toLocaleDateString('es-CO') : '-';
+            const studentName = String(((item.student || {}).name) || 'Sin nombre');
+            const studentDoc = String(((item.student || {}).document) || '-');
+            const level = String(((item.academic || {}).level) || 'Sin nivel');
+            const grade = String(((item.academic || {}).grade) || 'Sin grado');
+            const guardian = String(((item.guardian || {}).name) || 'Sin acudiente');
+            const status = normalizeEnrollmentRequestStatus(item.status);
+            const statusLabel = enrollmentStatusLabel(status);
+            const review = asObject(item.review);
+            const reviewText = status === 'rejected'
+                ? [String(review.reason || '').trim(), String(review.correction || '').trim()].filter(Boolean).join(' | ')
+                : (status === 'approved' ? 'Aprobada' : 'Pendiente');
+            const docsCount = getEnrollmentReviewDocumentsCount(item);
+            return `<tr>
+                <td><input type="checkbox" ${selected.has(id) ? 'checked' : ''} onchange="toggleEnrollmentReviewSelection('${escapeJsSingle(id)}', this.checked)"></td>
+                <td>${escapeHtml(created)}</td>
+                <td><div>${escapeHtml(studentName)}</div><div class="muted">Doc: ${escapeHtml(studentDoc)} | Adjuntos: ${docsCount}</div></td>
+                <td>${escapeHtml(level)} · ${escapeHtml(grade)}</td>
+                <td>${escapeHtml(guardian)}</td>
+                <td>${escapeHtml(statusLabel)}</td>
+                <td>${escapeHtml(reviewText || '-')}</td>
+                <td><button class="btn btn-sm btn-outline" onclick="openEnrollmentAttachmentsModal('${escapeJsSingle(id)}')">Ver adjuntos (${docsCount})</button></td>
+                <td style="white-space:nowrap">
+                    <button class="btn btn-sm btn-outline" onclick="approveEnrollmentRequest('${escapeJsSingle(id)}')">Aprobar</button>
+                    <button class="btn btn-sm btn-outline" onclick="rejectEnrollmentRequest('${escapeJsSingle(id)}')">Rechazar</button>
+                </td>
+            </tr>`;
+        }).join('')}</tbody></table>`
+        : '<div class="muted" style="padding:10px">No hay solicitudes para este filtro.</div>';
+
+    if (pagerEl) {
+        pagerEl.innerHTML = `
+            <button class="btn btn-sm btn-outline" ${paged.page <= 1 ? 'disabled' : ''} onclick="enrollmentReviewPrevPage()">Anterior</button>
+            <span>${paged.page}/${paged.totalPages}</span>
+            <button class="btn btn-sm btn-outline" ${paged.page >= paged.totalPages ? 'disabled' : ''} onclick="enrollmentReviewNextPage()">Siguiente</button>
+        `;
+    }
+
+    if (summaryEl) {
+        summaryEl.textContent = `Seleccionadas: ${selected.size} | Filtradas: ${filtered.length} | Mostrando: ${paged.items.length}`;
+    }
+}
+
+function cloneEnrollmentField(field) {
+    const item = asObject(field);
+    if (String(item.id || '') === 'schedule') {
+        return {
+            id: 'studentLastName',
+            section: 'Datos del estudiante',
+            type: 'text',
+            label: 'Apellidos del estudiante',
+            placeholder: 'Apellidos del estudiante',
+            required: true,
+            options: []
+        };
+    }
+    return {
+        id: String(item.id || ('f-' + Date.now() + '-' + Math.floor(Math.random() * 1000))),
+        section: String(item.section || 'General'),
+        type: String(item.type || 'text'),
+        label: String(item.label || 'Campo').trim(),
+        placeholder: String(item.placeholder || ''),
+        required: item.required !== false,
+        options: asArray(item.options).map(String)
+    };
+}
+
+function getEnrollmentFormConfigDraft() {
+    const draft = asArray(state.ui.enrollmentFormBuilderDraft).map(cloneEnrollmentField);
+    if (draft.length) return draft;
+    const stored = asArray(readStorage(STORAGE_KEYS.enrollmentFormConfig, [])).map(cloneEnrollmentField);
+    const baseline = stored.length ? stored : DEFAULT_ENROLLMENT_FORM_FIELDS.map(cloneEnrollmentField);
+    state.ui.enrollmentFormBuilderDraft = baseline;
+    return baseline;
+}
+
+function countEnrollmentFileFields(fields) {
+    return asArray(fields).filter(f => String((f || {}).type || '') === 'file').length;
+}
+
+function normalizeEnrollmentFormDraft(fields) {
+    const normalized = asArray(fields).map(cloneEnrollmentField);
+    const fileCount = countEnrollmentFileFields(normalized);
+    if (fileCount <= ENROLLMENT_FORM_MAX_FILE_FIELDS) return normalized;
+    let allowed = ENROLLMENT_FORM_MAX_FILE_FIELDS;
+    return normalized.filter(f => {
+        if (String((f || {}).type || '') !== 'file') return true;
+        if (allowed <= 0) return false;
+        allowed -= 1;
+        return true;
+    });
+}
+
+function saveEnrollmentFormBuilderDraft() {
+    const normalized = normalizeEnrollmentFormDraft(getEnrollmentFormConfigDraft());
+    state.ui.enrollmentFormBuilderDraft = normalized;
+    saveStorage(STORAGE_KEYS.enrollmentFormConfig, normalized);
+}
+
+function addEnrollmentFormField(type) {
+    const nextType = String(type || 'text');
+    const draft = getEnrollmentFormConfigDraft();
+    if (nextType === 'file' && countEnrollmentFileFields(draft) >= ENROLLMENT_FORM_MAX_FILE_FIELDS) {
+        showToast('Máximo 4 campos de adjuntos. Para más archivos, usa campo URL.', 'error');
+        return;
+    }
+    draft.push(cloneEnrollmentField({
+        id: 'custom-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+        section: 'Campos adicionales',
+        type: nextType,
+        label: nextType === 'file' ? 'Nuevo adjunto' : 'Nueva pregunta',
+        placeholder: nextType === 'url' ? 'https://...' : '',
+        required: false,
+        options: []
+    }));
+    state.ui.enrollmentFormBuilderPage = Math.max(1, Math.ceil(draft.length / (state.ui.enrollmentFormBuilderPageSize || 6)));
+    renderEnrollmentFormBuilderSection();
+}
+
+function updateEnrollmentFormField(index, key, value, rerender) {
+    const draft = getEnrollmentFormConfigDraft();
+    const idx = parseInt(index || '-1', 10);
+    if (idx < 0 || idx >= draft.length) return;
+    const field = draft[idx];
+    if (!field) return;
+    if (key === 'required') {
+        field.required = !!value;
+    } else if (key === 'options') {
+        field.options = String(value || '').split(',').map(x => x.trim()).filter(Boolean);
+    } else if (key === 'type') {
+        const nextType = String(value || 'text');
+        const currentType = String(field.type || 'text');
+        if (nextType === 'file' && currentType !== 'file' && countEnrollmentFileFields(draft) >= ENROLLMENT_FORM_MAX_FILE_FIELDS) {
+            showToast('Máximo 4 campos de adjuntos. Usa URL para archivos adicionales.', 'error');
+            renderEnrollmentFormBuilderSection();
+            return;
+        }
+        field.type = nextType;
+        if (nextType !== 'select') field.options = [];
+    } else {
+        field[key] = String(value || '');
+    }
+    if (rerender !== false) renderEnrollmentFormBuilderSection();
+}
+
+function deleteEnrollmentFormField(index) {
+    const draft = getEnrollmentFormConfigDraft();
+    const idx = parseInt(index || '-1', 10);
+    if (idx < 0 || idx >= draft.length) return;
+    draft.splice(idx, 1);
+    state.ui.enrollmentFormBuilderPage = Math.max(1, state.ui.enrollmentFormBuilderPage || 1);
+    renderEnrollmentFormBuilderSection();
+}
+
+function enrollmentFormBuilderPrevPage() {
+    state.ui.enrollmentFormBuilderPage = Math.max(1, parseInt(state.ui.enrollmentFormBuilderPage || '1', 10) - 1);
+    renderEnrollmentFormBuilderSection();
+}
+
+function enrollmentFormBuilderNextPage() {
+    state.ui.enrollmentFormBuilderPage = parseInt(state.ui.enrollmentFormBuilderPage || '1', 10) + 1;
+    renderEnrollmentFormBuilderSection();
+}
+
+function resetEnrollmentFormBuilderDefault() {
+    state.ui.enrollmentFormBuilderDraft = DEFAULT_ENROLLMENT_FORM_FIELDS.map(cloneEnrollmentField);
+    state.ui.enrollmentFormBuilderPage = 1;
+    renderEnrollmentFormBuilderSection();
+    showToast('Formulario por defecto cargado en editor', 'info');
+}
+
+function persistEnrollmentFormBuilder() {
+    saveEnrollmentFormBuilderDraft();
+    showToast('Formulario de matrículas actualizado', 'success');
+}
+
+function renderEnrollmentFormBuilderSection() {
+    const listEl = document.getElementById('enrollmentFormBuilderList');
+    if (!listEl) return;
+    const pagerEl = document.getElementById('enrollmentFormBuilderPager');
+    const summaryEl = document.getElementById('enrollmentFormBuilderSummary');
+    const previewEl = document.getElementById('enrollmentFormBuilderPreview');
+    const draft = getEnrollmentFormConfigDraft();
+    const paged = paginateItems(draft, state.ui.enrollmentFormBuilderPage, state.ui.enrollmentFormBuilderPageSize || 6);
+    state.ui.enrollmentFormBuilderPage = paged.page;
+
+    const typeOptions = ['text', 'textarea', 'email', 'tel', 'date', 'select', 'file', 'url'];
+    listEl.innerHTML = paged.items.length
+        ? paged.items.map(item => {
+            const absoluteIndex = draft.findIndex(f => String(f.id) === String(item.id));
+            const isSelect = String(item.type) === 'select';
+            return `<div class="card-check" style="display:block;padding:10px;margin-bottom:8px">
+                <div class="form-row" style="margin-bottom:6px">
+                    <div class="form-group"><label class="form-label">Sección</label><input class="form-input" value="${escapeHtml(item.section)}" oninput="updateEnrollmentFormField('${absoluteIndex}','section',this.value,false)"></div>
+                    <div class="form-group"><label class="form-label">Tipo</label><select class="form-input" onchange="updateEnrollmentFormField('${absoluteIndex}','type',this.value)">${typeOptions.map(t => `<option value="${t}" ${String(item.type) === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+                </div>
+                <div class="form-row" style="margin-bottom:6px">
+                    <div class="form-group"><label class="form-label">Etiqueta</label><input class="form-input" value="${escapeHtml(item.label)}" oninput="updateEnrollmentFormField('${absoluteIndex}','label',this.value,false)"></div>
+                    <div class="form-group"><label class="form-label">Placeholder</label><input class="form-input" value="${escapeHtml(item.placeholder)}" oninput="updateEnrollmentFormField('${absoluteIndex}','placeholder',this.value,false)"></div>
+                </div>
+                ${isSelect ? `<div class="form-group" style="margin-bottom:6px"><label class="form-label">Opciones (coma)</label><input class="form-input" value="${escapeHtml(asArray(item.options).join(', '))}" oninput="updateEnrollmentFormField('${absoluteIndex}','options',this.value,false)"></div>` : ''}
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                    <label class="card-check" style="margin:0"><input type="checkbox" ${item.required ? 'checked' : ''} onchange="updateEnrollmentFormField('${absoluteIndex}','required',this.checked,false)"><span>Obligatorio</span></label>
+                    <button class="btn btn-sm btn-outline" type="button" onclick="deleteEnrollmentFormField('${absoluteIndex}')">Eliminar</button>
+                </div>
+            </div>`;
+        }).join('')
+        : '<div class="muted">Sin campos en el formulario.</div>';
+
+    if (pagerEl) {
+        pagerEl.innerHTML = `
+            <button class="btn btn-sm btn-outline" ${paged.page <= 1 ? 'disabled' : ''} onclick="enrollmentFormBuilderPrevPage()">Anterior</button>
+            <span>${paged.page}/${paged.totalPages}</span>
+            <button class="btn btn-sm btn-outline" ${paged.page >= paged.totalPages ? 'disabled' : ''} onclick="enrollmentFormBuilderNextPage()">Siguiente</button>
+        `;
+    }
+
+    if (summaryEl) {
+        summaryEl.textContent = `Campos: ${draft.length} | Adjuntos: ${countEnrollmentFileFields(draft)}/${ENROLLMENT_FORM_MAX_FILE_FIELDS}`;
+    }
+
+    if (previewEl) {
+        previewEl.innerHTML = `<div class="muted" style="padding:8px 0">Vista rápida: ${draft.slice(0, 8).map(f => `${f.label}${f.required ? ' *' : ''}`).join(' • ') || 'Sin campos'}</div>`;
+    }
 }
 
 function getLevelNameById(levelId) {
@@ -4132,6 +4789,13 @@ function bindStorageListeners() {
         if (ev.key === STORAGE_KEYS.formShares) {
             state.formShares = asObject(readStorage(STORAGE_KEYS.formShares, state.formShares));
         }
+        if (ev.key === STORAGE_KEYS.enrollmentRequests) {
+            renderEnrollmentReviewSection();
+        }
+            if (ev.key === STORAGE_KEYS.enrollmentFormConfig) {
+                state.ui.enrollmentFormBuilderDraft = asArray(readStorage(STORAGE_KEYS.enrollmentFormConfig, [])).map(cloneEnrollmentField);
+                renderEnrollmentFormBuilderSection();
+            }
     });
 }
 
@@ -6040,6 +6704,7 @@ function bindEvents() {
     bindClick('logoutBtn', () => {
         localStorage.removeItem('educat_auth');
         sessionStorage.removeItem('educat_auth');
+        sessionStorage.removeItem(ADMIN_NAV_SESSION_KEY);
         window.location.href = '/login';
     });
 
@@ -6192,6 +6857,26 @@ function bindEvents() {
         state.ui.adminUsersPage = (state.ui.adminUsersPage || 1) + 1;
         callIfFn('renderRolesSection');
     });
+
+    const enrollmentReviewSearch = document.getElementById('enrollmentReviewSearch');
+    if (enrollmentReviewSearch) enrollmentReviewSearch.addEventListener('input', ev => callIfFn('setEnrollmentReviewSearch', (ev.target || {}).value));
+    const enrollmentReviewStatusFilter = document.getElementById('enrollmentReviewStatusFilter');
+    if (enrollmentReviewStatusFilter) enrollmentReviewStatusFilter.addEventListener('change', ev => callIfFn('setEnrollmentReviewStatusFilter', (ev.target || {}).value));
+    const enrollmentReviewLevelFilter = document.getElementById('enrollmentReviewLevelFilter');
+    if (enrollmentReviewLevelFilter) enrollmentReviewLevelFilter.addEventListener('change', ev => callIfFn('setEnrollmentReviewLevelFilter', (ev.target || {}).value || 'all'));
+    const enrollmentReviewFromDate = document.getElementById('enrollmentReviewFromDate');
+    if (enrollmentReviewFromDate) enrollmentReviewFromDate.addEventListener('change', ev => callIfFn('setEnrollmentReviewFromDate', (ev.target || {}).value));
+    const enrollmentReviewToDate = document.getElementById('enrollmentReviewToDate');
+    if (enrollmentReviewToDate) enrollmentReviewToDate.addEventListener('change', ev => callIfFn('setEnrollmentReviewToDate', (ev.target || {}).value));
+    bindClickIfFn('btnEnrollmentSelectPage', 'selectCurrentPageEnrollmentReviews');
+    bindClickIfFn('btnEnrollmentSelectFiltered', 'selectFilteredEnrollmentReviews');
+    bindClickIfFn('btnEnrollmentClearSelection', 'clearEnrollmentReviewSelection');
+    bindClickIfFn('btnEnrollmentApproveSelected', 'approveSelectedEnrollmentRequests');
+    bindClickIfFn('btnEnrollmentRejectSelected', 'rejectSelectedEnrollmentRequests');
+    bindClick('btnEnrollmentFormAddField', () => callIfFn('addEnrollmentFormField', 'text'));
+    bindClick('btnEnrollmentFormAddFile', () => callIfFn('addEnrollmentFormField', 'file'));
+    bindClickIfFn('btnEnrollmentFormResetDefault', 'resetEnrollmentFormBuilderDefault');
+    bindClickIfFn('btnEnrollmentFormSave', 'persistEnrollmentFormBuilder');
     bindClickIfFn('btnSelectAdminUsersPage', 'selectCurrentPageAdminUsers');
     bindClickIfFn('btnSelectAdminUsersFiltered', 'selectFilteredAdminUsers');
     bindClickIfFn('btnClearAdminUsersSelection', 'clearAdminUsersSelection');
@@ -6242,52 +6927,71 @@ function renderAll() {
     renderCoursesSection();
     callIfFn('renderRolesSection');
     callIfFn('renderCertificatesSection');
+    callIfFn('renderEnrollmentReviewSection');
+    callIfFn('renderEnrollmentFormBuilderSection');
     callIfFn('renderGuidesSection');
     callIfFn('renderFormsSection');
     callIfFn('renderImportSection');
     callIfFn('renderGradePolicySection');
 }
 
+function hideInitialBootLoader() {
+    const body = document.body;
+    const loader = document.getElementById('bootLoader');
+    if (!body || !loader) return;
+    if (!body.classList.contains('app-booting')) return;
+    loader.classList.add('is-leaving');
+    setTimeout(() => {
+        body.classList.remove('app-booting');
+        if (loader && loader.parentNode) loader.parentNode.removeChild(loader);
+    }, 230);
+}
+
 async function init() {
-    const publicForm = getSearchParam('publicForm');
-    const publicSurvey = getSearchParam('publicSurvey');
-    bindEvents();
-    modalState.courseCreate.draft = {
-        ...modalState.courseCreate.draft,
-        ...asObject(readStorage(STORAGE_KEYS.courseCreateDraft, {}))
-    };
-    modalState.courseCreate.gradeIds = Array.isArray(modalState.courseCreate.draft.gradeIds)
-        ? modalState.courseCreate.draft.gradeIds.map(String)
-        : [];
-    document.getElementById('currentDate').textContent = new Date().toLocaleDateString('es-CO', {
-        weekday: 'long', day: '2-digit', month: 'long', year: 'numeric'
-    });
-    const userEmail = localStorage.getItem('educat_email') || sessionStorage.getItem('educat_email') || '';
-    const found = state.users.find(u => (u.email || '').toLowerCase() === userEmail.toLowerCase());
-    if (found) document.getElementById('sidebarUserName').textContent = found.name;
+    try {
+        const publicForm = getSearchParam('publicForm');
+        const publicSurvey = getSearchParam('publicSurvey');
+        bindEvents();
+        modalState.courseCreate.draft = {
+            ...modalState.courseCreate.draft,
+            ...asObject(readStorage(STORAGE_KEYS.courseCreateDraft, {}))
+        };
+        modalState.courseCreate.gradeIds = Array.isArray(modalState.courseCreate.draft.gradeIds)
+            ? modalState.courseCreate.draft.gradeIds.map(String)
+            : [];
+        document.getElementById('currentDate').textContent = new Date().toLocaleDateString('es-CO', {
+            weekday: 'long', day: '2-digit', month: 'long', year: 'numeric'
+        });
+        const userEmail = localStorage.getItem('educat_email') || sessionStorage.getItem('educat_email') || '';
+        const found = state.users.find(u => (u.email || '').toLowerCase() === userEmail.toLowerCase());
+        if (found) document.getElementById('sidebarUserName').textContent = found.name;
 
-    await loadData();
-    bindStorageListeners();
-    if (publicForm) {
-        renderPublicFormPage(publicForm);
-        return;
-    }
-    if (publicSurvey) {
-        renderPublicSurveyPage(publicSurvey);
-        startPublicSurveyLiveSync(publicSurvey);
-        return;
-    }
-    renderAll();
-    applyBuilderFullscreenModeIfNeeded();
-    if (!surveyLiveTimer) {
-        surveyLiveTimer = setInterval(() => {
-            state.surveys = asArray(readStorage(STORAGE_KEYS.surveys, state.surveys));
-            renderSurveyBoards();
-        }, 2500);
-    }
+        await loadData();
+        bindStorageListeners();
+        if (publicForm) {
+            renderPublicFormPage(publicForm);
+            return;
+        }
+        if (publicSurvey) {
+            renderPublicSurveyPage(publicSurvey);
+            startPublicSurveyLiveSync(publicSurvey);
+            return;
+        }
+        renderAll();
+        navigateTo(readAdminNavigationState(), { skipPersist: false });
+        applyBuilderFullscreenModeIfNeeded();
+        if (!surveyLiveTimer) {
+            surveyLiveTimer = setInterval(() => {
+                state.surveys = asArray(readStorage(STORAGE_KEYS.surveys, state.surveys));
+                renderSurveyBoards();
+            }, 2500);
+        }
 
-    const activeUser = state.users.find(u => (u.email || '').toLowerCase() === userEmail.toLowerCase());
-    if (activeUser) document.getElementById('sidebarUserName').textContent = activeUser.name;
+        const activeUser = state.users.find(u => (u.email || '').toLowerCase() === userEmail.toLowerCase());
+        if (activeUser) document.getElementById('sidebarUserName').textContent = activeUser.name;
+    } finally {
+        hideInitialBootLoader();
+    }
 }
 
 init();

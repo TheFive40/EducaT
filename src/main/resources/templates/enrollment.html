@@ -21,6 +21,11 @@
             padding-top: 42px;
         }
 
+        .auth-left-body {
+            justify-content: flex-start;
+            padding: 20px 0 56px;
+        }
+
         .form-grid-2 {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -50,6 +55,35 @@
             margin-top: 6px;
             font-size: 11px;
             color: var(--text-light);
+        }
+
+        #enrollmentFormPager {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .enr-pager-btn {
+            border: 1px solid rgba(12, 28, 46, 0.2);
+            background: var(--white);
+            color: var(--text-dark);
+            padding: 8px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all var(--transition);
+        }
+
+        .enr-pager-btn:hover:not(:disabled) {
+            border-color: rgba(184, 147, 58, 0.55);
+            color: var(--gold);
+            transform: translateY(-1px);
+        }
+
+        .enr-pager-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
         }
 
         @media (max-width: 700px) {
@@ -120,140 +154,11 @@
         </div>
 
         <form id="enrollmentForm" novalidate>
-            <div class="section-divider">Datos del estudiante</div>
-
-            <div class="form-grid-2">
-                <div class="form-group">
-                    <label class="form-label" for="studentName">Nombre completo</label>
-                    <input type="text" id="studentName" class="form-input no-icon" placeholder="Nombre del estudiante" autocomplete="name">
-                    <div class="field-error" id="studentNameErr">Ingresa el nombre del estudiante.</div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="studentDoc">Documento</label>
-                    <input type="text" id="studentDoc" class="form-input no-icon" placeholder="CC / TI / Pasaporte">
-                    <div class="field-error" id="studentDocErr">Ingresa el documento del estudiante.</div>
-                </div>
+            <div class="alert alert-info" style="margin-bottom:12px">
+                Si te solicitan más de 4 documentos adjuntos, carga hasta 4 archivos y comparte el resto por URL.
             </div>
-
-            <div class="form-grid-2">
-                <div class="form-group">
-                    <label class="form-label" for="studentBirthDate">Fecha de nacimiento</label>
-                    <input type="date" id="studentBirthDate" class="form-input no-icon">
-                    <div class="field-error" id="studentBirthDateErr">Selecciona la fecha de nacimiento.</div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="studentGender">Genero</label>
-                    <select id="studentGender" class="form-select">
-                        <option value="">Selecciona</option>
-                        <option value="femenino">Femenino</option>
-                        <option value="masculino">Masculino</option>
-                        <option value="otro">Otro</option>
-                        <option value="prefiere-no-decir">Prefiero no decirlo</option>
-                    </select>
-                    <div class="field-error" id="studentGenderErr">Selecciona el genero.</div>
-                </div>
-            </div>
-
-            <div class="section-divider">Datos academicos</div>
-
-            <div class="form-grid-2">
-                <div class="form-group">
-                    <label class="form-label" for="level">Nivel academico</label>
-                    <select id="level" class="form-select">
-                        <option value="">Selecciona nivel</option>
-                        <option value="preescolar">Preescolar</option>
-                        <option value="primaria">Primaria</option>
-                        <option value="secundaria">Secundaria</option>
-                        <option value="media">Media</option>
-                    </select>
-                    <div class="field-error" id="levelErr">Selecciona un nivel academico.</div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="grade">Grado</label>
-                    <input type="text" id="grade" class="form-input no-icon" placeholder="Ej: 6A, 9B, 11">
-                    <div class="field-error" id="gradeErr">Ingresa el grado al que aspira.</div>
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label class="form-label" for="schedule">Jornada preferida</label>
-                <select id="schedule" class="form-select">
-                    <option value="">Selecciona jornada</option>
-                    <option value="manana">Manana</option>
-                    <option value="tarde">Tarde</option>
-                    <option value="completa">Completa</option>
-                </select>
-                <div class="field-error" id="scheduleErr">Selecciona una jornada.</div>
-            </div>
-
-            <div class="section-divider">Acudiente y contacto</div>
-
-            <div class="form-grid-2">
-                <div class="form-group">
-                    <label class="form-label" for="guardianName">Nombre del acudiente</label>
-                    <input type="text" id="guardianName" class="form-input no-icon" placeholder="Nombre del responsable">
-                    <div class="field-error" id="guardianNameErr">Ingresa el nombre del acudiente.</div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="guardianRelation">Parentesco</label>
-                    <input type="text" id="guardianRelation" class="form-input no-icon" placeholder="Ej: Madre, Padre, Tutor">
-                    <div class="field-error" id="guardianRelationErr">Ingresa el parentesco.</div>
-                </div>
-            </div>
-
-            <div class="form-grid-2">
-                <div class="form-group">
-                    <label class="form-label" for="contactPhone">Telefono</label>
-                    <input type="tel" id="contactPhone" class="form-input no-icon" placeholder="Celular o fijo">
-                    <div class="field-error" id="contactPhoneErr">Ingresa un telefono valido.</div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="contactEmail">Correo de contacto</label>
-                    <input type="email" id="contactEmail" class="form-input no-icon" placeholder="correo@dominio.com" autocomplete="email">
-                    <div class="field-error" id="contactEmailErr">Ingresa un correo valido.</div>
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label class="form-label" for="address">Direccion</label>
-                <input type="text" id="address" class="form-input no-icon" placeholder="Direccion de residencia">
-                <div class="field-error" id="addressErr">Ingresa la direccion.</div>
-            </div>
-
-            <div class="form-group">
-                <label class="form-label" for="notes">Observaciones (opcional)</label>
-                <textarea id="notes" class="form-input no-icon" style="min-height:100px" placeholder="Informacion medica, apoyos requeridos, comentarios..."></textarea>
-                <div class="field-help">Este campo es opcional.</div>
-            </div>
-
-            <div class="section-divider">Documentos adjuntos</div>
-
-            <div class="form-group">
-                <label class="form-label" for="schoolCertificateFile">Certificado de escolaridad</label>
-                <input type="file" id="schoolCertificateFile" class="form-input no-icon" accept=".pdf,.jpg,.jpeg,.png,.webp">
-                <div class="field-help">Obligatorio. Formatos permitidos: PDF, JPG, PNG, WEBP.</div>
-                <div class="field-error" id="schoolCertificateFileErr">Adjunta el certificado de escolaridad.</div>
-            </div>
-
-            <div class="form-group">
-                <label class="form-label" for="guardianDocumentFile">Copia del documento de identidad del acudiente</label>
-                <input type="file" id="guardianDocumentFile" class="form-input no-icon" accept=".pdf,.jpg,.jpeg,.png,.webp">
-                <div class="field-help">Obligatorio. Formatos permitidos: PDF, JPG, PNG, WEBP.</div>
-                <div class="field-error" id="guardianDocumentFileErr">Adjunta el documento del acudiente.</div>
-            </div>
-
-            <div class="form-group">
-                <label class="form-label" for="studentIdentityCardFile">Tarjeta de identidad</label>
-                <input type="file" id="studentIdentityCardFile" class="form-input no-icon" accept=".pdf,.jpg,.jpeg,.png,.webp">
-                <div class="field-help">Obligatorio. Formatos permitidos: PDF, JPG, PNG, WEBP.</div>
-                <div class="field-error" id="studentIdentityCardFileErr">Adjunta la tarjeta de identidad.</div>
-            </div>
-
-            <div class="form-group">
-                <label class="form-label" for="healthAffiliationFile">Certificado de afiliación al sistema de salud (opcional)</label>
-                <input type="file" id="healthAffiliationFile" class="form-input no-icon" accept=".pdf,.jpg,.jpeg,.png,.webp">
-                <div class="field-help">Opcional. Si lo tienes, súbelo para agilizar validación.</div>
-            </div>
+            <div id="enrollmentFormDynamic"></div>
+            <div class="pager" id="enrollmentFormPager" style="margin-top:10px;margin-bottom:10px"></div>
 
             <label class="terms-row">
                 <input type="checkbox" id="acceptPolicy">
@@ -263,7 +168,7 @@
 
             <button class="btn-submit" id="enrollmentBtn" type="submit">
                 <span class="btn-text">Enviar solicitud de matricula</span>
-                <div class="btn-loader"></div>
+                <span class="btn-loader"></span>
             </button>
         </form>
     </div>

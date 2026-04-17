@@ -762,9 +762,9 @@ body {
 
 .access-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 24px;
-    max-width: 860px;
+    max-width: 1320px;
     margin: 0 auto;
 }
 
@@ -796,6 +796,10 @@ body {
 
 .access-card.student .access-card-bg {
     background: linear-gradient(155deg, #1A1A2E 0%, #2D2D5E 100%);
+}
+
+.access-card.staff .access-card-bg {
+    background: linear-gradient(155deg, #1e2a33 0%, #2f4756 100%);
 }
 
 .access-card-pattern {

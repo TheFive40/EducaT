@@ -770,3 +770,33 @@ body {
     .form-row { grid-template-columns: 1fr; }
     .role-selector { grid-template-columns: 1fr; }
 }
+
+body.role-teacher .auth-panel-left {
+    background: linear-gradient(160deg, #122540 0%, #0C1C2E 60%, #0A1A28 100%);
+}
+
+body.role-teacher .auth-panel-left-gradient {
+    background:
+            radial-gradient(ellipse 80% 60% at 0% 100%, rgba(29,52,97,0.8), transparent),
+            radial-gradient(ellipse 60% 40% at 100% 0%, rgba(184,147,58,0.08), transparent);
+}
+
+body.role-student .auth-panel-left {
+    background: linear-gradient(160deg, #221b44 0%, #1a1635 60%, #13102a 100%);
+}
+
+body.role-student .auth-panel-left-gradient {
+    background:
+            radial-gradient(ellipse 80% 60% at 0% 100%, rgba(66,53,130,0.75), transparent),
+            radial-gradient(ellipse 60% 40% at 100% 0%, rgba(184,147,58,0.07), transparent);
+}
+
+body.role-staff .auth-panel-left {
+    background: linear-gradient(160deg, #1f3442 0%, #152632 60%, #101e29 100%);
+}
+
+body.role-staff .auth-panel-left-gradient {
+    background:
+            radial-gradient(ellipse 80% 60% at 0% 100%, rgba(53,94,120,0.65), transparent),
+            radial-gradient(ellipse 60% 40% at 100% 0%, rgba(184,147,58,0.08), transparent);
+}
