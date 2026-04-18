@@ -60,4 +60,10 @@ public class ScheduleServiceImpl implements ScheduleService {
     public List<ScheduleResponse> findByCourseId(Integer courseId) {
         return scheduleRepository.findByCourseId(courseId).stream().map(scheduleMapper::toResponse).toList();
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ScheduleResponse> findByStudentId(Integer studentId) {
+        return scheduleRepository.findByStudentId(studentId).stream().map(scheduleMapper::toResponse).toList();
+    }
 }

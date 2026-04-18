@@ -17,12 +17,16 @@ public class CertificateMapper {
                 .student(certificate.getStudent() != null ? studentMapper.toResponse(certificate.getStudent()) : null)
                 .name(certificate.getName())
                 .filePath(certificate.getFilePath())
+                .issuedAt(certificate.getIssuedAt())
+                .status(certificate.getStatus())
                 .build();
     }
     public Certificate toEntity(CertificateRequest request) {
         return Certificate.builder()
                 .name(request.getName())
                 .filePath(request.getFilePath())
+                .issuedAt(request.getIssuedAt())
+                .status(request.getStatus())
                 .build();
     }
 }

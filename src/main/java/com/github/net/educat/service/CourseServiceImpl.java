@@ -97,8 +97,14 @@ public class CourseServiceImpl implements CourseService {
                     .build();
         }
 
-        Course course = courseRepository.findByCourseCodeIgnoreCase(code)
-                .orElseThrow(() -> new EntityNotFoundException("Course code not found: " + code));
+        Course course = courseRepository.findByCourseCodeIgnoreCase(code).orElse(null);
+        if (course == null) {
+            return CourseJoinByCodeResponse.builder()
+                    .success(false)
+                    .status("COURSE_NOT_FOUND")
+                    .message("No existe un curso con ese código")
+                    .build();
+        }
 
         String role = (request.getRole() == null ? "" : request.getRole()).toUpperCase(Locale.ROOT);
         if (role.contains("DOC") || role.contains("PROF") || role.contains("TEACH")) {
@@ -114,7 +120,7 @@ public class CourseServiceImpl implements CourseService {
                         .course(courseMapper.toResponse(course))
                         .build();
             }
-            if (course.getTeacher() != null && course.getTeacher().getId().equals(teacher.getId())) {
+            if (course.getTeacher().getId().equals(teacher.getId())) {
                 return CourseJoinByCodeResponse.builder()
                         .success(true)
                         .status("ALREADY_OWNER")

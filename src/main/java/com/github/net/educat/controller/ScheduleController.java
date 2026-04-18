@@ -28,6 +28,12 @@ public class ScheduleController {
     public ResponseEntity<List<ScheduleResponse>> findByCourse(@PathVariable Integer courseId) {
         return ResponseEntity.ok(scheduleService.findByCourseId(courseId));
     }
+
+    @GetMapping("/student/{studentId}")
+    public ResponseEntity<List<ScheduleResponse>> findByStudent(@PathVariable Integer studentId) {
+        return ResponseEntity.ok(scheduleService.findByStudentId(studentId));
+    }
+
     @PostMapping
     public ResponseEntity<ScheduleResponse> save(@Valid @RequestBody ScheduleRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(scheduleService.save(request));

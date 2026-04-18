@@ -12,7 +12,10 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -37,6 +40,10 @@ public class CertificateServiceImpl implements CertificateService {
                 .orElseThrow(() -> new EntityNotFoundException("Student not found: " + request.getStudentId()));
         Certificate certificate = certificateMapper.toEntity(request);
         certificate.setStudent(student);
+        if (certificate.getIssuedAt() == null) {
+            certificate.setIssuedAt(LocalDate.now());
+        }
+        certificate.setStatus(normalizeStatus(certificate.getStatus()));
         return certificateMapper.toResponse(certificateRepository.save(certificate));
     }
     @Override
@@ -47,5 +54,14 @@ public class CertificateServiceImpl implements CertificateService {
     @Override @Transactional(readOnly = true)
     public List<CertificateResponse> findByStudentId(Integer studentId) {
         return certificateRepository.findByStudentId(studentId).stream().map(certificateMapper::toResponse).toList();
+    }
+
+    private String normalizeStatus(String rawStatus) {
+        String value = (rawStatus == null ? "" : rawStatus).trim().toLowerCase(Locale.ROOT);
+        if (value.isBlank()) return "available";
+        if (value.equals("pending") || value.equals("approved") || value.equals("rejected") || value.equals("available")) {
+            return value;
+        }
+        return "available";
     }
 }
