@@ -322,8 +322,22 @@ function loadAdminFormsOrDefault() {
     }
 }
 
-let EVAL_QUESTIONS = loadAdminFormsOrDefault().eval;
-let AUTOEVAL_QUESTIONS = loadAdminFormsOrDefault().autoeval;
+function refreshAdminFormsFromStorage() {
+    const forms = loadAdminFormsOrDefault();
+    EVAL_QUESTIONS = Array.isArray(forms.eval) ? forms.eval : DEFAULT_EVAL_QUESTIONS;
+    AUTOEVAL_QUESTIONS = Array.isArray(forms.autoeval) ? forms.autoeval : DEFAULT_AUTOEVAL_QUESTIONS;
+}
+
+async function hydrateStudentFormsFromBackend() {
+    const appState = await tryFetch('/api/app-state/educat_admin_eval_forms');
+    const raw = appState && typeof appState.value === 'string' ? appState.value : '';
+    if (raw) rawStorageSetItem('educat_admin_eval_forms', raw);
+    refreshAdminFormsFromStorage();
+}
+
+let EVAL_QUESTIONS = DEFAULT_EVAL_QUESTIONS;
+let AUTOEVAL_QUESTIONS = DEFAULT_AUTOEVAL_QUESTIONS;
+refreshAdminFormsFromStorage();
 
 const MOCK_OUTCOMES = {
     1: [
@@ -1369,8 +1383,24 @@ function openPersonalView(type, options) {
         }).catch(() => {});
     }
     else if (type === 'certificados') { content.innerHTML = apCertificadosHtml(); apRefreshCertificates(); }
-    else if (type === 'eval')       { content.innerHTML = apEvalHtml(courses, 'eval');       apInitEval(courses, 'eval'); }
-    else if (type === 'autoeval')   { content.innerHTML = apEvalHtml(courses, 'autoeval');   apInitEval(courses, 'autoeval'); }
+    else if (type === 'eval')       {
+        content.innerHTML = apEvalHtml(courses, 'eval');
+        apInitEval(courses, 'eval');
+        hydrateStudentFormsFromBackend().then(() => {
+            if (currentPersonalType !== 'eval') return;
+            content.innerHTML = apEvalHtml(courses, 'eval');
+            apInitEval(courses, 'eval');
+        }).catch(() => {});
+    }
+    else if (type === 'autoeval')   {
+        content.innerHTML = apEvalHtml(courses, 'autoeval');
+        apInitEval(courses, 'autoeval');
+        hydrateStudentFormsFromBackend().then(() => {
+            if (currentPersonalType !== 'autoeval') return;
+            content.innerHTML = apEvalHtml(courses, 'autoeval');
+            apInitEval(courses, 'autoeval');
+        }).catch(() => {});
+    }
     else if (type === 'horario')    { content.innerHTML = apHorarioHtml();                   apInitHorario(); }
     else if (type === 'resultados') { content.innerHTML = apResultadosHtml(courses); }
     else if (type === 'bienestar')  { content.innerHTML = apBienestarHtml(); apInitBienestar(); }
@@ -1778,9 +1808,7 @@ function apCertificadosHtml() {
 async function apRefreshCertificates() {
     const sid = currentStudent ? currentStudent.id : 0;
     const certData = await tryFetch('/api/certificates/student/' + sid);
-    if (!certData || !certData.length) return;
-
-    certificates = certData;
+    certificates = Array.isArray(certData) ? certData : [];
     const content = document.getElementById('personalSubContent');
     if (!content) return;
     content.innerHTML = apCertificadosHtml();
@@ -3385,6 +3413,7 @@ async function init() {
         setDate();
         initStorageBackendSync();
         await hydrateStorageFromBackend();
+        refreshAdminFormsFromStorage();
         const me = await tryFetch('/api/auth/me');
         if (!me || !me.id) {
             window.location.href = '/login?role=student&redirect=/student-dashboard';

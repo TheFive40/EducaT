@@ -3071,39 +3071,72 @@ function renderCertificatesSection() {
 
     const rows = (state.certificates || []).map(c => {
         const student = (state.students || []).find(s => String(s.id) === String(c.studentId || (c.student || {}).id || ''));
-        const date = c.createdAt ? new Date(c.createdAt).toLocaleDateString('es-CO') : '-';
-        return `<tr><td>${escapeHtml(student ? userNameFrom(student) : 'Sin estudiante')}</td><td>${escapeHtml(c.name || 'Sin nombre')}</td><td>${escapeHtml(c.fileName || '-')}</td><td>${escapeHtml(date)}</td><td><button class="btn btn-sm btn-outline" onclick="deleteCertificate('${String(c.id)}')">Eliminar</button></td></tr>`;
+        const dateRaw = c.createdAt || c.issuedAt || '';
+        const date = dateRaw ? new Date(dateRaw).toLocaleDateString('es-CO') : '-';
+        const fileLabel = c.fileName || (c.filePath ? 'Adjunto' : '-');
+        return `<tr><td>${escapeHtml(student ? userNameFrom(student) : 'Sin estudiante')}</td><td>${escapeHtml(c.name || 'Sin nombre')}</td><td>${escapeHtml(fileLabel)}</td><td>${escapeHtml(date)}</td><td><button class="btn btn-sm btn-outline" onclick="deleteCertificate('${String(c.id)}')">Eliminar</button></td></tr>`;
     }).join('');
     host.innerHTML = rows
         ? `<table class="table"><thead><tr><th>Estudiante</th><th>Certificado</th><th>Archivo</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>${rows}</tbody></table>`
         : '<div class="muted">No hay certificados registrados.</div>';
 }
 
-function createCertificate() {
+async function createCertificate() {
     const selectedStudentIds = asArray(state.ui.certSelectedStudentIds).map(String).filter(Boolean);
     const name = String((document.getElementById('certName') || {}).value || '').trim();
     const fileInput = document.getElementById('certFileInput');
     const file = fileInput && fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
     if (!selectedStudentIds.length || !name) return showToast('Selecciona estudiantes y nombre del certificado', 'error');
-    selectedStudentIds.forEach((studentId, idx) => {
-        state.certificates.unshift({
-            id: Date.now() + idx,
-            studentId,
-            name,
-            fileName: file ? file.name : '',
-            createdAt: new Date().toISOString()
-        });
-    });
+    if (!file) return showToast('Adjunta un archivo para el certificado', 'error');
+
+    const filePath = await readFileAsDataUrl(file);
+    if (!filePath) return showToast('No se pudo leer el archivo del certificado', 'error');
+
+    let created = 0;
+    let failed = 0;
+    for (const studentId of selectedStudentIds) {
+        try {
+            const saved = await api('/api/certificates', {
+                method: 'POST',
+                headers: headers(),
+                body: JSON.stringify({
+                    studentId: parseInt(studentId, 10),
+                    name,
+                    filePath,
+                    issuedAt: new Date().toISOString().split('T')[0],
+                    status: 'available'
+                })
+            });
+            if (saved && typeof saved === 'object') saved.fileName = file.name || '';
+            if (saved) state.certificates.unshift(saved);
+            created += 1;
+        } catch (e) {
+            failed += 1;
+        }
+    }
+
     document.getElementById('certName').value = '';
     if (fileInput) fileInput.value = '';
     state.ui.certSelectedStudentIds = [];
     renderCertificatesSection();
     renderOverview();
-    showToast(`Certificados emitidos: ${selectedStudentIds.length}`, 'success');
+    if (failed > 0) {
+        showToast(`Certificados emitidos: ${created}. Fallidos: ${failed}.`, 'error');
+        return;
+    }
+    showToast(`Certificados emitidos: ${created}`, 'success');
 }
 
-function deleteCertificate(certId) {
-    state.certificates = (state.certificates || []).filter(c => String(c.id) !== String(certId));
+async function deleteCertificate(certId) {
+    const id = String(certId || '').trim();
+    if (!id) return;
+    try {
+        await api('/api/certificates/' + encodeURIComponent(id), { method: 'DELETE', headers: headers(false) });
+    } catch (e) {
+        showToast('No se pudo eliminar el certificado en backend', 'error');
+        return;
+    }
+    state.certificates = (state.certificates || []).filter(c => String(c.id) !== id);
     renderCertificatesSection();
     renderOverview();
     showToast('Certificado eliminado', 'success');
@@ -6593,6 +6626,7 @@ function renderStudentCourseAssistant() {
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
             <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+            <button class="btn btn-outline" onclick="removeStudentCourseAssignments()">Desasignar seleccionados</button>
             <button class="btn btn-teal" onclick="applyStudentCourseAssignments()">Asignar seleccionados</button>
         </div>
     `);
@@ -6734,6 +6768,54 @@ async function applyStudentCourseAssignments() {
     renderCoursesSection();
     renderOverview();
     showToast(`Asignaciones creadas: ${created}. Omitidas: ${skipped}.`, 'success');
+}
+
+async function removeStudentCourseAssignments() {
+    const studentIds = Object.keys(modalState.studentCourse.selectedStudents || {}).filter(k => modalState.studentCourse.selectedStudents[k]);
+    const courseIds = Object.keys(modalState.studentCourse.selectedCourses || {}).filter(k => modalState.studentCourse.selectedCourses[k]);
+    if (!studentIds.length || !courseIds.length) return showToast('Selecciona estudiantes y cursos', 'error');
+
+    const studentsSet = new Set(studentIds.map(String));
+    const coursesSet = new Set(courseIds.map(String));
+    const targets = (state.enrollments || []).filter(e => studentsSet.has(getEnrollmentStudentId(e)) && coursesSet.has(getEnrollmentCourseId(e)));
+    if (!targets.length) return showToast('No hay asignaciones para eliminar con esa selección', 'info');
+
+    let removed = 0;
+    let failed = 0;
+    const removedIds = new Set();
+
+    for (const enrollment of targets) {
+        const id = String((enrollment || {}).id || '').trim();
+        if (!id) continue;
+        try {
+            await api('/api/enrollments/' + encodeURIComponent(id), {
+                method: 'DELETE',
+                headers: headers(false)
+            });
+            removedIds.add(id);
+            removed += 1;
+        } catch (e) {
+            failed += 1;
+        }
+    }
+
+    state.enrollments = (state.enrollments || []).filter(e => {
+        const id = String((e || {}).id || '').trim();
+        if (id) return !removedIds.has(id);
+        return !(studentsSet.has(getEnrollmentStudentId(e)) && coursesSet.has(getEnrollmentCourseId(e)));
+    });
+
+    const removedLocal = targets.filter(e => !String((e || {}).id || '').trim()).length;
+    removed += removedLocal;
+
+    closeModal();
+    renderCoursesSection();
+    renderOverview();
+    if (failed > 0) {
+        showToast(`Asignaciones eliminadas: ${removed}. Fallidas: ${failed}.`, 'error');
+        return;
+    }
+    showToast(`Asignaciones eliminadas: ${removed}.`, 'success');
 }
 
 function openStudentCourseModal() {
