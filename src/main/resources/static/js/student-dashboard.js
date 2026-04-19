@@ -3373,7 +3373,18 @@ document.getElementById('btnReportarAusencia').addEventListener('click', async (
     if(!curso.value||!fecha||!motivo||!descripcion){showToast('Completa todos los campos obligatorios','error');return;}
     const sid=currentStudent?currentStudent.id:1;
     const supportFiles = await mapAbsenceSupportFiles(selectedFiles);
-    const attachments = supportFiles.map(f => f && f.name ? String(f.name) : '').filter(Boolean);
+    const attachments = supportFiles
+        .filter(f => f && typeof f.dataUrl === 'string' && f.dataUrl.trim())
+        .map(f => JSON.stringify({
+            name: String(f.name || 'soporte'),
+            type: String(f.type || ''),
+            size: Number(f.size || 0),
+            dataUrl: String(f.dataUrl || '')
+        }));
+    if (selectedFiles.length && !attachments.length) {
+        showToast('No se pudieron procesar los soportes seleccionados. Intenta con archivos mas pequenos.', 'error');
+        return;
+    }
     try {
         await postJson('/api/student/absence-reports', {
             studentId: sid,

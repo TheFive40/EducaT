@@ -21,7 +21,7 @@ import java.util.Locale;
 import java.util.Set;
 
 @RestController
-@RequestMapping("/api/student/wellbeing-requests")
+@RequestMapping({"/api/student/wellbeing-requests", "/api/teacher/wellbeing-requests"})
 @RequiredArgsConstructor
 public class WellbeingRequestController {
     private static final String APPROVE_PERMISSION = "bienestar.aprobar-publicacion";

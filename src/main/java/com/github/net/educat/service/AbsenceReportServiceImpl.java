@@ -6,6 +6,7 @@ import com.github.net.educat.application.AbsenceReportService;
 import com.github.net.educat.domain.AbsenceReport;
 import com.github.net.educat.domain.Course;
 import com.github.net.educat.domain.Student;
+import com.github.net.educat.domain.User;
 import com.github.net.educat.dto.request.AbsenceReportRequest;
 import com.github.net.educat.dto.request.AbsenceReportStatusRequest;
 import com.github.net.educat.dto.response.AbsenceReportResponse;
@@ -14,11 +15,15 @@ import com.github.net.educat.mapper.StudentMapper;
 import com.github.net.educat.repository.AbsenceReportRepository;
 import com.github.net.educat.repository.CourseRepository;
 import com.github.net.educat.repository.StudentRepository;
+import com.github.net.educat.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,6 +45,7 @@ public class AbsenceReportServiceImpl implements AbsenceReportService {
     private final StudentMapper studentMapper;
     private final CourseMapper courseMapper;
     private final ObjectMapper objectMapper;
+    private final UserRepository userRepository;
 
     @Override
     public AbsenceReportResponse create(AbsenceReportRequest request) {
@@ -104,10 +110,51 @@ public class AbsenceReportServiceImpl implements AbsenceReportService {
 
     @Override
     public void delete(Integer id) {
-        if (!absenceReportRepository.existsById(id)) {
-            throw new EntityNotFoundException("Absence report not found: " + id);
+        AbsenceReport report = absenceReportRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Absence report not found: " + id));
+
+        User currentUser = resolveCurrentUser();
+        if (!canDeleteReport(currentUser, report)) {
+            throw new AccessDeniedException("You are not allowed to delete this absence report");
         }
-        absenceReportRepository.deleteById(id);
+
+        absenceReportRepository.delete(report);
+    }
+
+    private User resolveCurrentUser() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || authentication.getName() == null || authentication.getName().isBlank()) {
+            throw new AccessDeniedException("Authentication required");
+        }
+        String email = authentication.getName().trim().toLowerCase(Locale.ROOT);
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new AccessDeniedException("User not found for current authentication"));
+    }
+
+    private boolean canDeleteReport(User currentUser, AbsenceReport report) {
+        if (currentUser == null || report == null) return false;
+        if (isAdmin(currentUser)) return true;
+
+        Integer currentUserId = currentUser.getId();
+        Integer reportStudentUserId = report.getStudent() != null && report.getStudent().getUser() != null
+                ? report.getStudent().getUser().getId()
+                : null;
+        Integer reportTeacherUserId = report.getCourse() != null
+                && report.getCourse().getTeacher() != null
+                && report.getCourse().getTeacher().getUser() != null
+                ? report.getCourse().getTeacher().getUser().getId()
+                : null;
+
+        return currentUserId != null
+                && (currentUserId.equals(reportStudentUserId) || currentUserId.equals(reportTeacherUserId));
+    }
+
+    private boolean isAdmin(User currentUser) {
+        if (currentUser == null || currentUser.getRole() == null || currentUser.getRole().getName() == null) {
+            return false;
+        }
+        String roleName = String.valueOf(currentUser.getRole().getName()).trim().toUpperCase(Locale.ROOT);
+        return roleName.contains("ADMIN");
     }
 
     private String normalizeStatus(String status) {

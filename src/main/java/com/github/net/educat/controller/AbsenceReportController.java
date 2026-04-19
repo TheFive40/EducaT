@@ -13,7 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/student/absence-reports")
+@RequestMapping({"/api/student/absence-reports", "/api/teacher/absence-reports"})
 @RequiredArgsConstructor
 public class AbsenceReportController {
     private final AbsenceReportService absenceReportService;

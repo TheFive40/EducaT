@@ -103,7 +103,8 @@ const DEFAULT_POLICY = {
     allowTeacherCustom: true,
     forcedModel: '',
     examMinPercent: 0,
-    examMaxPercent: 100
+    examMaxPercent: 100,
+    scheduleSelectionMode: 'free'
 };
 
 const QUESTION_TYPES = [
@@ -4507,7 +4508,6 @@ function updateBuilderQuestionOptionText(index, optionIndex, value) {
 }
 
 function addBuilderQuestionOption(index) {
-    if (!isBuilderWindow()) return openFormBuilderWindow();
     ensureFormDraft();
     const q = state.ui.formDraft.questions[index];
     if (!q || !questionNeedsOptions(q.type)) return;
@@ -4517,7 +4517,6 @@ function addBuilderQuestionOption(index) {
 }
 
 function removeBuilderQuestionOption(index, optionIndex) {
-    if (!isBuilderWindow()) return openFormBuilderWindow();
     ensureFormDraft();
     const q = state.ui.formDraft.questions[index];
     if (!q || !questionNeedsOptions(q.type)) return;
@@ -4527,7 +4526,6 @@ function removeBuilderQuestionOption(index, optionIndex) {
 }
 
 function addBuilderQuestion() {
-    if (!isBuilderWindow()) return openFormBuilderWindow();
     ensureFormDraft();
     state.ui.formDraft.questions.push({
         id: 'q-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
@@ -4546,12 +4544,10 @@ function addBuilderQuestion() {
 }
 
 function removeBuilderQuestion(index) {
-    if (!isBuilderWindow()) return openFormBuilderWindow();
     ensureFormDraft();
     state.ui.formDraft.questions = (state.ui.formDraft.questions || []).filter((_, idx) => idx !== index);
     renderFormBuilderQuestions();
 }
-
 function formBuilderPrevPage() {
     state.ui.formBuilderPage = Math.max(1, (state.ui.formBuilderPage || 1) - 1);
     renderFormBuilderQuestions();
@@ -4563,7 +4559,6 @@ function formBuilderNextPage() {
 }
 
 function saveFormBuilder() {
-    if (!isBuilderWindow()) return openFormBuilderWindow();
     ensureFormDraft();
     const type = getBuilderType();
     const titleInput = document.getElementById('formTitleInput');
@@ -5741,17 +5736,17 @@ function renderFormsSection() {
     const bottomAddWrap = document.querySelector('.form-builder-bottom-actions');
     const typeHint = document.getElementById('formTypeHint');
     const hint = document.getElementById('formBuilderReadOnlyHint');
-    if (btnAdd) btnAdd.style.display = canEditHere ? '' : 'none';
-    if (btnSave) btnSave.style.display = canEditHere ? '' : 'none';
-    if (btnPreview) btnPreview.style.display = canEditHere ? '' : 'none';
-    if (bottomAddWrap) bottomAddWrap.style.display = canEditHere ? '' : 'none';
+    if (btnAdd) btnAdd.style.display = '';
+    if (btnSave) btnSave.style.display = '';
+    if (btnPreview) btnPreview.style.display = '';
+    if (bottomAddWrap) bottomAddWrap.style.display = '';
     if (btnShare) btnShare.style.display = isCustomFormKey(type) ? '' : 'none';
     if (typeHint) {
         typeHint.textContent = isBaseFormKey(type)
             ? 'Este formulario se publica automáticamente en Area personal de estudiantes autenticados.'
             : 'Formulario personalizable: puedes compartir link y controlar acceso por roles, todos los registrados o cualquiera.';
     }
-    if (hint) hint.textContent = canEditHere ? 'Editas preguntas y guardas desde esta ventana del constructor.' : 'La edición de preguntas se hace solo en la ventana del constructor.';
+    if (hint) hint.textContent = 'Editas preguntas y guardas desde este panel.';
     renderCustomAudiencePanel();
     renderFormBuilderQuestions();
     renderFormResponsesBoard();
@@ -6173,11 +6168,13 @@ function renderGradePolicySection() {
     const forced = document.getElementById('forcedModel');
     const min = document.getElementById('examMinPercent');
     const max = document.getElementById('examMaxPercent');
+    const scheduleMode = document.getElementById('scheduleSelectionMode');
     if (model) model.value = p.selectedMethod || 'simple';
     if (allow) allow.value = p.allowTeacherCustom ? 'true' : 'false';
     if (forced) forced.value = p.forcedModel || '';
     if (min) min.value = String(p.examMinPercent ?? 0);
     if (max) max.value = String(p.examMaxPercent ?? 100);
+    if (scheduleMode) scheduleMode.value = String(p.scheduleSelectionMode || 'free');
     const guide = document.getElementById('gradingGuide');
     if (guide) guide.innerHTML = '<div class="muted">Configura la política y guarda cambios.</div>';
 }
@@ -6188,7 +6185,8 @@ function saveGradePolicy() {
     const forcedModel = String((document.getElementById('forcedModel') || {}).value || '');
     const examMinPercent = Math.max(0, Math.min(100, parseInt((document.getElementById('examMinPercent') || {}).value || '0', 10) || 0));
     const examMaxPercent = Math.max(0, Math.min(100, parseInt((document.getElementById('examMaxPercent') || {}).value || '100', 10) || 100));
-    state.gradePolicy = { selectedMethod, allowTeacherCustom, forcedModel, examMinPercent, examMaxPercent };
+    const scheduleSelectionMode = String((document.getElementById('scheduleSelectionMode') || {}).value || 'free') === 'admin' ? 'admin' : 'free';
+    state.gradePolicy = { selectedMethod, allowTeacherCustom, forcedModel, examMinPercent, examMaxPercent, scheduleSelectionMode };
     saveStorage(STORAGE_KEYS.gradePolicy, state.gradePolicy);
     renderOverview();
     showToast('Política de calificación guardada', 'success');

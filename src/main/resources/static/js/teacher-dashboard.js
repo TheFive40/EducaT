@@ -14,6 +14,7 @@ let teacherGrades = [];
 let teacherActivities = [];
 let teacherExams = [];
 let teacherSchedules = [];
+let teacherAbsenceReportsCache = [];
 let currentEffectiveAccess = null;
 let currentEffectivePermissions = [];
 
@@ -1689,7 +1690,86 @@ function navigateTo(section, options) {
         });
     }
 }
+async function loadEvalSubmissionsForTeacher() {
+    const slot = document.getElementById('teacherEvaluationOverviewSlot');
+    if (!slot) return;
+    slot.innerHTML = '<div class="card"><div class="card-header"><span class="card-title">Evaluaciones recibidas de estudiantes</span></div><div class="card-body"><div class="loading"><div class="spinner"></div>Cargando evaluaciones...</div></div></div>';
 
+    const teachersData = await tryFetch('/api/teachers');
+    const teacher = (teachersData || []).find(t => t.user && String(t.user.id) === String(currentUser && currentUser.id));
+    if (!teacher) {
+        slot.innerHTML = '';
+        return;
+    }
+
+    const courses = await tryFetch('/api/courses/teacher/' + teacher.id);
+    if (!Array.isArray(courses) || !courses.length) {
+        slot.innerHTML = '';
+        return;
+    }
+
+    const questionLabels = loadTeacherEvalQuestionLabels();
+    const rows = [];
+    for (const course of courses) {
+        const page = await tryFetch(
+            '/api/teacher/evaluation-submissions?courseId=' + course.id +
+            '&evaluationType=EVAL&submitted=true&page=0&size=200'
+        );
+        const items = Array.isArray(page) ? page : ((page && Array.isArray(page.content)) ? page.content : []);
+        items.forEach(sub => {
+            const answers = sub.answers && typeof sub.answers === 'object' ? sub.answers : {};
+            const studentName = sub.student && sub.student.user ? sub.student.user.name : 'Estudiante';
+            rows.push({ courseName: course.name, studentName, answers, submittedAt: sub.submittedAt, evaluationType: String(sub.evaluationType || 'EVAL') });
+        });
+    }
+
+    if (!rows.length) {
+        slot.innerHTML = '<div class="card"><div class="card-header"><span class="card-title">Evaluaciones recibidas de estudiantes</span></div><div class="card-body"><div class="empty-state"><div class="empty-state-title">Sin evaluaciones recibidas</div><div class="empty-state-text">Cuando los estudiantes completen tu evaluación docente, aparecerán aquí.</div></div></div></div>';
+        return;
+    }
+
+    const rowsHtml = rows.map(r => {
+        const date = r.submittedAt ? new Date(r.submittedAt).toLocaleDateString('es-CO') : '—';
+        const labelsById = r.evaluationType === 'AUTOEVAL' ? questionLabels.autoeval : questionLabels.eval;
+        const answersHtml = Object.entries(r.answers).map(([qId, val]) =>
+            '<div style="font-size:12.5px;margin-bottom:4px;padding:4px 0;border-bottom:1px solid rgba(11,31,58,0.05)">' +
+            '<strong style="color:var(--text-muted)">' + htmlEscape(labelsById[qId] || qId) + ':</strong> ' +
+            htmlEscape(String(Array.isArray(val) ? val.join(', ') : (val || '—'))) +
+            '</div>'
+        ).join('');
+        return '<div style="border:1px solid rgba(11,31,58,0.1);border-radius:8px;padding:14px;margin-bottom:10px">' +
+            '<div style="font-weight:600;font-size:13.5px;color:var(--text-dark)">' + htmlEscape(r.studentName) + '</div>' +
+            '<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">' + htmlEscape(r.courseName) + ' · ' + date + '</div>' +
+            answersHtml +
+            '</div>';
+    }).join('');
+
+    slot.innerHTML = '<div class="card"><div class="card-header"><span class="card-title">Evaluaciones recibidas de estudiantes</span><span class="badge badge-navy">' + rows.length + '</span></div><div class="card-body">' + rowsHtml + '</div></div>';
+}
+
+function loadTeacherEvalQuestionLabels() {
+    const result = { eval: {}, autoeval: {} };
+    let raw = '';
+    try {
+        raw = storageService.getItem('educat_admin_eval_forms') || '';
+    } catch (e) {
+        raw = '';
+    }
+    if (!raw) return result;
+    try {
+        const parsed = JSON.parse(raw);
+        ['eval', 'autoeval'].forEach(type => {
+            const questions = Array.isArray(parsed[type]) ? parsed[type] : [];
+            questions.forEach(q => {
+                const id = String((q && q.id) || '').trim();
+                const text = String((q && q.text) || (q && q.label) || '').trim();
+                if (id && text) result[type][id] = text;
+            });
+        });
+    } catch (e) {
+    }
+    return result;
+}
 async function loadOverview() {
     if ((currentTeacher && currentTeacher.id === 0)) {
         teacherCourses = readDelegatedTeacherCourses();
@@ -1778,6 +1858,7 @@ ${diff !== null ? `<span style="font-size:11px;font-weight:700;color:${col};flex
     }).join('') || '<div style="color:var(--text-muted);font-size:13px">Sin evaluaciones programadas.</div>';
 
     initTeacherModerationOverview(teacherCourses || []);
+    loadEvalSubmissionsForTeacher();
 }
 
 async function loadCursos() {
@@ -2485,6 +2566,12 @@ function initTeacherModerationOverview(courses) {
     }
     const evalSearchInput = document.getElementById('evalSearchInput');
     if (evalSearchInput) evalSearchInput.oninput = () => { tableUiState.evalReports.query = evalSearchInput.value || ''; tableUiState.evalReports.page = 1; renderTeacherEvaluationReports(); };
+    const evalPageSize = document.getElementById('evalPageSize');
+    if (evalPageSize) evalPageSize.onchange = () => {
+        tableUiState.evalReports.pageSize = Math.max(1, parseInt(evalPageSize.value || '6', 10) || 6);
+        tableUiState.evalReports.page = 1;
+        renderTeacherEvaluationReports();
+    };
     renderTeacherEvaluationReports();
 }
 
@@ -4939,32 +5026,77 @@ async function createSchedule() {
     closeModal(); loadHorarios(); showToast('Horario agregado', 'success');
 }
 
-function getAllAbsenceReports() {
-    const central = JSON.parse(storageService.getItem('educat_absence_reports') || '[]');
-    if (central.length) return central;
+function normalizeAbsenceAttachment(raw, idx) {
+    if (!raw) return null;
+    if (typeof raw === 'object') {
+        const objUrl = resolveSubmissionFileSource(raw);
+        return {
+            name: raw.name || ('Soporte ' + (idx + 1)),
+            type: raw.type || '',
+            size: raw.size || 0,
+            dataUrl: objUrl || ''
+        };
+    }
+    const value = String(raw || '').trim();
+    if (!value) return null;
 
-    const reports = [];
-    MOCK.students.forEach(s => {
-        const items = JSON.parse(storageService.getItem('educat_ausencias_' + s.id) || '[]');
-        items.forEach(item => {
-            reports.push({
-                id: item.id || ('abs-' + s.id + '-' + (item.ts || Date.now())),
-                studentId: s.id,
-                studentName: s.user.name,
-                studentCode: s.studentCode,
-                courseId: item.courseId || null,
-                courseName: item.courseName || item.curso || 'Curso',
-                fecha: item.fecha,
-                motivo: item.motivo || '',
-                descripcion: item.descripcion || '',
-                files: item.files || [],
-                archivos: item.archivos || 0,
-                status: item.status || 'pending',
-                ts: item.ts || Date.now()
-            });
-        });
-    });
-    return reports;
+    // Soporta adjuntos serializados desde el dashboard del estudiante.
+    if (value.charAt(0) === '{') {
+        try {
+            const parsed = JSON.parse(value);
+            if (parsed && typeof parsed === 'object') {
+                const objUrl = resolveSubmissionFileSource(parsed);
+                const name = String(parsed.name || ('Soporte ' + (idx + 1))).trim();
+                const type = String(parsed.type || '').trim();
+                const size = Number(parsed.size || 0);
+                return {
+                    name: name || ('Soporte ' + (idx + 1)),
+                    type,
+                    size: Number.isFinite(size) ? size : 0,
+                    dataUrl: objUrl || ''
+                };
+            }
+        } catch (e) {
+            // Sigue con la normalización por URL simple.
+        }
+    }
+
+    const isUrl = /^(data:|blob:|https?:\/\/|\/)/i.test(value);
+    const isPdf = /^data:application\/pdf/i.test(value) || /\.pdf($|\?)/i.test(value);
+    return {
+        name: isPdf ? ('Soporte ' + (idx + 1) + '.pdf') : ('Soporte ' + (idx + 1)),
+        type: isPdf ? 'application/pdf' : '',
+        size: 0,
+        dataUrl: isUrl ? value : ''
+    };
+}
+
+function normalizeAbsenceReportFromApi(item) {
+    const student = item && item.student ? item.student : {};
+    const course = item && item.course ? item.course : {};
+    const attachments = Array.isArray(item && item.attachments) ? item.attachments : [];
+    const files = attachments.map((a, idx) => normalizeAbsenceAttachment(a, idx)).filter(Boolean);
+    return {
+        id: item && item.id,
+        studentId: student.id || 0,
+        studentName: (student.user && student.user.name) || student.name || 'Estudiante',
+        studentCode: student.studentCode || '',
+        courseId: course.id || 0,
+        courseName: course.name || 'Curso',
+        fecha: item && item.absenceDate ? String(item.absenceDate) : '—',
+        motivo: item && item.reason ? item.reason : '',
+        descripcion: item && item.description ? item.description : '',
+        files,
+        archivos: files.length,
+        status: String((item && item.status) || 'PENDING').toLowerCase(),
+        ts: item && item.createdAt ? new Date(item.createdAt).getTime() : Date.now()
+    };
+}
+
+async function getAllAbsenceReports() {
+    const page = await tryFetch('/api/teacher/absence-reports?page=0&size=300&sort=createdAt,desc');
+    const content = Array.isArray(page) ? page : (page && Array.isArray(page.content) ? page.content : []);
+    return content.map(normalizeAbsenceReportFromApi);
 }
 
 function ensureTeacherAbsenceCard() {
@@ -4998,7 +5130,7 @@ function ensureTeacherAbsenceCard() {
     `);
 }
 
-function renderTeacherAbsenceReports() {
+async function renderTeacherAbsenceReports() {
     ensureTeacherAbsenceCard();
     const state = tableUiState.absences;
     const container = document.getElementById('teacherAbsenceContainer');
@@ -5010,7 +5142,7 @@ function renderTeacherAbsenceReports() {
     state.status = status;
     state.query = query;
 
-    let reports = getAllAbsenceReports();
+    let reports = await getAllAbsenceReports();
     if (filter) reports = reports.filter(r => parseInt(r.courseId || '0') === filter);
     if (status !== 'all') reports = reports.filter(r => String(r.status || 'pending') === status);
     if (query) {
@@ -5023,6 +5155,7 @@ function renderTeacherAbsenceReports() {
         });
     }
     reports = reports.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    teacherAbsenceReportsCache = reports.slice();
 
     const totalPages = Math.max(1, Math.ceil(reports.length / state.pageSize));
     const safePage = Math.min(Math.max(1, state.page), totalPages);
@@ -5071,8 +5204,7 @@ function changeAbsenceReportsPage(delta) {
 }
 
 function getAbsenceReportById(reportId) {
-    const reports = getAllAbsenceReports();
-    return reports.find(r => String(r.id) === String(reportId)) || null;
+    return (teacherAbsenceReportsCache || []).find(r => String(r.id) === String(reportId)) || null;
 }
 
 function previewAbsenceSupport(reportId, fileIdx) {
@@ -5106,24 +5238,17 @@ function downloadAbsenceSupport(reportId, fileIdx) {
     a.remove();
 }
 
-function updateAbsenceReportStatus(reportId, status) {
-    const reports = getAllAbsenceReports();
-    const idx = reports.findIndex(r => String(r.id) === String(reportId));
-    if (idx < 0) return;
-    reports[idx].status = status;
-    reports[idx].reviewedAt = new Date().toISOString();
-    storageService.setItem('educat_absence_reports', JSON.stringify(reports));
-    if (reports[idx].studentId) {
-        const studentKey = 'educat_ausencias_' + reports[idx].studentId;
-        const studentReports = JSON.parse(storageService.getItem(studentKey) || '[]');
-        const studentIdx = studentReports.findIndex(r => String(r.id) === String(reportId));
-        if (studentIdx >= 0) {
-            studentReports[studentIdx].status = status;
-            studentReports[studentIdx].reviewedAt = reports[idx].reviewedAt;
-            storageService.setItem(studentKey, JSON.stringify(studentReports));
-        }
+async function updateAbsenceReportStatus(reportId, status) {
+    const normalized = String(status || '').toUpperCase() === 'APPROVED' ? 'APPROVED' : 'REJECTED';
+    const res = await apiFetch('/api/teacher/absence-reports/' + reportId + '/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: normalized, reviewComment: '', reviewerUserId: (currentUser && currentUser.id) || null })
+    });
+    if (!res || !res.ok) {
+        showToast('No se pudo actualizar el estado de la excusa', 'error');
+        return;
     }
-    showToast(status === 'approved' ? 'Excusa marcada como valida' : 'Excusa marcada como no valida', 'success');
+    showToast(normalized === 'APPROVED' ? 'Excusa marcada como valida' : 'Excusa marcada como no valida', 'success');
     renderTeacherAbsenceReports();
 }
 
@@ -5214,7 +5339,7 @@ async function renderTeacherWellbeingRequests() {
     const params = ['page=0', 'size=200'];
     if (moduleType !== 'all') params.push('moduleType=' + encodeURIComponent(moduleType));
     if (status !== 'all') params.push('status=' + encodeURIComponent(status));
-    const page = await tryFetch('/api/student/wellbeing-requests?' + params.join('&'));
+    const page = await tryFetch('/api/teacher/wellbeing-requests?' + params.join('&'));
     let items = Array.isArray(page) ? page : (page && Array.isArray(page.content) ? page.content : []);
     if (query) {
         items = items.filter(r => {
@@ -5276,7 +5401,7 @@ async function updateWellbeingRequestStatus(requestId, status) {
         showToast('No tienes permisos para cambiar este estado', 'error');
         return;
     }
-    const res = await apiFetch('/api/student/wellbeing-requests/' + requestId + '/status', {
+    const res = await apiFetch('/api/teacher/wellbeing-requests/' + requestId + '/status', {
         method: 'PATCH',
         body: JSON.stringify({ status: normalizedStatus, resolutionComment: '' })
     });
@@ -5310,8 +5435,14 @@ function ensureTeacherEvaluationReportsCard() {
                         <option value="all">Todos los cursos</option>
                     </select>
                     <input class="form-input" id="evalSearchInput" placeholder="Filtrar por estudiante o curso" style="min-width:240px">
+                    <select class="form-input" id="evalPageSize" style="width:auto;padding:7px 12px;font-size:13px">
+                        <option value="6">6 por página</option>
+                        <option value="10">10 por página</option>
+                        <option value="20">20 por página</option>
+                    </select>
                 </div>
             </div>
+            <div style="padding:0 18px 10px" id="evalReportsSummary"></div>
             <div class="card-body" id="teacherEvaluationReportsContainer">
                 <div class="empty-state" style="padding:24px 0">
                     <div class="empty-state-title">Sin reportes</div>
@@ -5320,6 +5451,19 @@ function ensureTeacherEvaluationReportsCard() {
             </div>
         </div>
     `;
+}
+
+function renderEvaluationAnswersFull(answers, evaluationType) {
+    const obj = answers && typeof answers === 'object' ? answers : {};
+    const keys = Object.keys(obj);
+    if (!keys.length) return '<div style="font-size:12px;color:var(--text-muted)">Sin respuestas registradas.</div>';
+    const labels = loadTeacherEvalQuestionLabels();
+    const byId = String(evaluationType || '').toUpperCase() === 'AUTOEVAL' ? labels.autoeval : labels.eval;
+    return keys.map((k, idx) => {
+        const raw = obj[k];
+        const value = Array.isArray(raw) ? raw.join(', ') : (typeof raw === 'object' ? JSON.stringify(raw, null, 2) : String(raw || '—'));
+        return `<div style="padding:10px 0;border-bottom:${idx === keys.length - 1 ? 'none' : '1px solid rgba(11,31,58,0.08)'}"><div style="font-size:12px;color:var(--text-muted);font-weight:700">${htmlEscape(byId[k] || k)}</div><div style="font-size:13px;color:var(--text-body);margin-top:4px;white-space:pre-wrap">${htmlEscape(value)}</div></div>`;
+    }).join('');
 }
 
 function getEvalTypeLabel(evalType) {
@@ -5392,10 +5536,10 @@ function openEvaluationSubmissionDetail(item) {
     const type = getEvalTypeLabel(item.evaluationType);
     const submittedAt = item.submittedAt ? new Date(item.submittedAt).toLocaleString('es-CO') : '—';
     const answers = item.answers && typeof item.answers === 'object' ? item.answers : {};
-    const pretty = Object.keys(answers).length ? JSON.stringify(answers, null, 2) : '{}';
+    const answersHtml = renderEvaluationAnswersFull(answers, item.evaluationType);
     openModal('Detalle de evaluación', `
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${studentName} · ${courseName} · ${type} · ${submittedAt}</div>
-        <pre style="background:#f7f8fb;border:1px solid rgba(11,31,58,0.08);border-radius:8px;padding:12px;max-height:58vh;overflow:auto;font-size:12px;line-height:1.5;white-space:pre-wrap">${pretty.replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>
+        <div style="background:#f7f8fb;border:1px solid rgba(11,31,58,0.08);border-radius:8px;padding:12px;max-height:58vh;overflow:auto">${answersHtml}</div>
     `, { size: 'xl' });
 }
 
@@ -5409,7 +5553,7 @@ function openEvaluationSubmissionDetailById(submissionId) {
 }
 
 async function deleteEvaluationSubmission(submissionId) {
-    const res = await apiFetch('/api/student/evaluation-submissions/' + submissionId, { method: 'DELETE' });
+    const res = await apiFetch('/api/teacher/evaluation-submissions/' + submissionId, { method: 'DELETE' });
     if (!res || !res.ok) {
         showToast('No se pudo eliminar el reporte', 'error');
         return;
@@ -5428,6 +5572,8 @@ async function renderTeacherEvaluationReports() {
     const submittedSel = document.getElementById('evalSubmittedFilter');
     const courseSel = document.getElementById('evalCourseFilter');
     const searchEl = document.getElementById('evalSearchInput');
+    const pageSizeEl = document.getElementById('evalPageSize');
+    const summaryEl = document.getElementById('evalReportsSummary');
     const type = typeSel ? (typeSel.value || 'all') : (state.type || 'all');
     const submittedVal = submittedSel ? (submittedSel.value || 'all') : (state.submitted || 'all');
     const courseId = courseSel ? (courseSel.value || 'all') : (state.courseId || 'all');
@@ -5436,12 +5582,15 @@ async function renderTeacherEvaluationReports() {
     state.submitted = submittedVal;
     state.courseId = courseId;
     state.query = query;
+    if (pageSizeEl) {
+        pageSizeEl.value = String(state.pageSize || 6);
+    }
 
     const params = ['page=0', 'size=300'];
     if (type !== 'all') params.push('evaluationType=' + encodeURIComponent(type));
     if (submittedVal !== 'all') params.push('submitted=' + encodeURIComponent(submittedVal));
     if (courseId !== 'all') params.push('courseId=' + encodeURIComponent(courseId));
-    const page = await tryFetch('/api/student/evaluation-submissions?' + params.join('&'));
+    const page = await tryFetch('/api/teacher/evaluation-submissions?' + params.join('&'));
     let items = Array.isArray(page) ? page : (page && Array.isArray(page.content) ? page.content : []);
     if (query) {
         items = items.filter(r => {
@@ -5455,6 +5604,14 @@ async function renderTeacherEvaluationReports() {
     teacherEvaluationById = {};
     items.forEach(it => { if (it && it.id !== undefined && it.id !== null) teacherEvaluationById[String(it.id)] = it; });
     const reviewState = readEvaluationModerationState();
+
+    const submittedCount = items.filter(x => !!x.submitted).length;
+    const draftCount = Math.max(0, items.length - submittedCount);
+    const evalCount = items.filter(x => String((x || {}).evaluationType || '').toUpperCase() === 'EVAL').length;
+    const autoevalCount = items.filter(x => String((x || {}).evaluationType || '').toUpperCase() === 'AUTOEVAL').length;
+    if (summaryEl) {
+        summaryEl.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap"><span class="badge badge-navy">Total: ${items.length}</span><span class="badge badge-success">Enviadas: ${submittedCount}</span><span class="badge badge-gold">Borradores: ${draftCount}</span><span class="badge badge-navy">Eval docente: ${evalCount}</span><span class="badge badge-navy">Autoeval: ${autoevalCount}</span></div>`;
+    }
 
     const totalPages = Math.max(1, Math.ceil(items.length / state.pageSize));
     const safePage = Math.min(Math.max(1, state.page), totalPages);

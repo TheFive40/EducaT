@@ -7,6 +7,7 @@ import com.github.net.educat.mapper.StudentMapper;
 import com.github.net.educat.repository.AbsenceReportRepository;
 import com.github.net.educat.repository.CourseRepository;
 import com.github.net.educat.repository.StudentRepository;
+import com.github.net.educat.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -37,6 +38,8 @@ class AbsenceReportServiceImplTest {
     private CourseMapper courseMapper;
     @Mock
     private ObjectMapper objectMapper;
+    @Mock
+    private UserRepository userRepository;
 
     @InjectMocks
     private AbsenceReportServiceImpl absenceReportService;
