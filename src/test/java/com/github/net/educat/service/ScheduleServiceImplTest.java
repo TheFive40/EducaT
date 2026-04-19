@@ -48,5 +48,23 @@ class ScheduleServiceImplTest {
         verify(scheduleRepository).findByStudentId(studentId);
         verify(scheduleMapper).toResponse(schedule);
     }
+
+    @Test
+    void findByTeacherId_returnsMappedSchedules() {
+        Integer teacherId = 3;
+        Schedule schedule = Schedule.builder().id(2).day("Martes").build();
+        ScheduleResponse response = ScheduleResponse.builder().id(2).day("Martes").build();
+
+        when(scheduleRepository.findByTeacherId(teacherId)).thenReturn(List.of(schedule));
+        when(scheduleMapper.toResponse(schedule)).thenReturn(response);
+
+        List<ScheduleResponse> result = scheduleService.findByTeacherId(teacherId);
+
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        assertEquals("Martes", result.get(0).getDay());
+        verify(scheduleRepository).findByTeacherId(teacherId);
+        verify(scheduleMapper).toResponse(schedule);
+    }
 }
 

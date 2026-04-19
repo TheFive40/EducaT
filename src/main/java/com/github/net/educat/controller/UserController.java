@@ -17,7 +17,13 @@ public class UserController {
     private final UserService userService;
 
     @GetMapping
-    public ResponseEntity<List<UserResponse>> findAll() {
+    public ResponseEntity<List<UserResponse>> findAll(
+            @RequestParam(name = "q", required = false) String query,
+            @RequestParam(name = "limit", required = false) Integer limit
+    ) {
+        if (query != null || limit != null) {
+            return ResponseEntity.ok(userService.search(query, limit));
+        }
         return ResponseEntity.ok(userService.findAll());
     }
     @GetMapping("/{id}")

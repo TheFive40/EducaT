@@ -136,6 +136,11 @@
             </section>
 
             <section class="section-panel" id="panel-cursos">
+                <div class="admin-section-banner">
+                    <span class="admin-section-badge">Bloque A</span>
+                    <strong>Gestión de cursos</strong>
+                    <span>Creación y visualización general de cursos</span>
+                </div>
                 <div class="card">
                     <div class="card-header">
                         <span class="card-title">Cursos creados</span>
@@ -146,6 +151,11 @@
                         </div>
                         <div id="adminCoursesCards"></div>
                     </div>
+                </div>
+                <div class="admin-section-banner">
+                    <span class="admin-section-badge">Bloque B</span>
+                    <strong>Asignaciones académicas</strong>
+                    <span>Matrículas, niveles, grados y docentes por nivel</span>
                 </div>
                 <div class="card">
                     <div class="card-header">
@@ -184,6 +194,26 @@
                             <div class="form-group">
                                 <label class="form-label">Capacidad máxima</label>
                                 <input class="form-input" id="courseCapacity" type="number" min="1" max="120" step="1" value="35">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Día del horario (opcional)</label>
+                                <select class="form-input" id="courseScheduleDay">
+                                    <option value="">Seleccionar opción (N/A)</option>
+                                    <option value="Lunes">Lunes</option>
+                                    <option value="Martes">Martes</option>
+                                    <option value="Miércoles">Miércoles</option>
+                                    <option value="Jueves">Jueves</option>
+                                    <option value="Viernes">Viernes</option>
+                                    <option value="Sábado">Sábado</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Hora inicio (opcional)</label>
+                                <input class="form-input" id="courseStartTime" type="time">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Hora fin (opcional)</label>
+                                <input class="form-input" id="courseEndTime" type="time">
                             </div>
                         </div>
                         <div class="form-group">
@@ -331,6 +361,12 @@
                             <div id="userPermissionsChecklist" class="perm-grid"></div>
                             <div class="pager" id="userPermissionsChecklistPager" style="margin-top:6px;margin-bottom:10px"></div>
                             <button class="btn btn-outline" id="btnSaveUserPerms">Guardar permisos de usuario</button>
+                            <hr style="border:none;border-top:1px solid rgba(11,31,58,0.1);margin:18px 0">
+                            <div class="form-group">
+                                <label class="form-label">Acceso a portales por usuario</label>
+                            </div>
+                            <div id="userPortalAccessChecklist" class="perm-grid"></div>
+                            <button class="btn btn-outline" id="btnSaveUserPortals" style="margin-top:10px">Guardar accesos a portales</button>
                         </div>
                     </div>
                     <div class="card">
@@ -382,7 +418,24 @@
                                     <label class="form-label">Buscar usuario</label>
                                     <input class="form-input" id="adminUsersSearch" placeholder="Nombre, correo o rol...">
                                 </div>
+                                <div class="form-group">
+                                    <label class="form-label">Filtrar por rol</label>
+                                    <select class="form-input" id="adminUsersRoleFilter"></select>
+                                </div>
                             </div>
+                            <div class="form-row" style="margin-top:8px">
+                                <div class="form-group">
+                                    <label class="form-label">Asignación masiva de rol</label>
+                                    <select class="form-input" id="adminUsersBulkRole"></select>
+                                </div>
+                                <div class="form-group" style="align-self:end;display:flex;gap:8px;flex-wrap:wrap">
+                                    <button class="btn btn-sm btn-outline" id="btnSelectAdminUsersPage">Seleccionar página</button>
+                                    <button class="btn btn-sm btn-outline" id="btnSelectAdminUsersFiltered">Seleccionar filtrados</button>
+                                    <button class="btn btn-sm btn-outline" id="btnClearAdminUsersSelection">Limpiar selección</button>
+                                    <button class="btn btn-sm btn-teal" id="btnAssignRoleToSelectedUsers">Asignar rol</button>
+                                </div>
+                            </div>
+                            <div class="muted" id="adminUsersSelectionSummary" style="margin-bottom:8px"></div>
                             <div id="adminUsersList" class="admin-users-list"></div>
                             <div class="pager">
                                 <button class="btn btn-sm btn-outline" id="adminUsersPrevPage">Anterior</button>
@@ -802,6 +855,7 @@
 <div class="toast-container" id="toastContainer"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="/js/storage-service.js"></script>
 <script src="/js/admin-dashboard.js"></script>
 </body>
 </html>

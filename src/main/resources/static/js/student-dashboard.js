@@ -1,5 +1,7 @@
+const API = '';
 let authHeader = '', currentUser = null, currentStudent = null;
 let enrollments = [], grades = [], attendance = [], certificates = [], schedules = [];
+let courseActivities = [], courseExams = [];
 let currentCourse = null, currentUnitIdx = 0;
 let selectedFiles = [];
 let studentForumReplyPanels = {};
@@ -7,12 +9,69 @@ let personalCertificatesMap = {};
 const actSubmissionFiles = {};
 const studentOpenCardsByUnit = {};
 let studentConfirmAction = null;
+let currentEffectivePermissions = [];
+
+function buildRuntimeStore() {
+    const data = Object.create(null);
+    const keys = [];
+    const add = k => { if (keys.indexOf(k) === -1) keys.push(k); };
+    const del = k => {
+        const idx = keys.indexOf(k);
+        if (idx >= 0) keys.splice(idx, 1);
+    };
+    return {
+        getItem(key) {
+            const k = String(key || '');
+            return Object.prototype.hasOwnProperty.call(data, k) ? data[k] : null;
+        },
+        setItem(key, value) {
+            const k = String(key || '');
+            data[k] = String(value);
+            add(k);
+        },
+        removeItem(key) {
+            const k = String(key || '');
+            delete data[k];
+            del(k);
+        },
+        key(index) {
+            const i = Number(index);
+            if (isNaN(i) || i < 0 || i >= keys.length) return null;
+            return keys[i];
+        },
+        clear() {
+            keys.slice().forEach(k => delete data[k]);
+            keys.length = 0;
+        },
+        get length() {
+            return keys.length;
+        }
+    };
+}
+
+const storageService = buildRuntimeStore();
+const sessionService = (() => {
+    try {
+        if (window && window.sessionStorage) return window.sessionStorage;
+    } catch (e) {
+    }
+    return buildRuntimeStore();
+})();
+const APP_STATE_PREFIX = 'educat_';
+let appStateHydrated = false;
+let appStateSyncInitialized = false;
+let appStateHydrating = false;
+const rawStorageGetItem = storageService.getItem.bind(storageService);
+const rawStorageSetItem = storageService.setItem.bind(storageService);
+const rawStorageRemoveItem = storageService.removeItem.bind(storageService);
 
 const STUDENT_NAV_STATE_KEY = 'educat_student_nav_state_session';
+const ADMIN_DELEGATED_STUDENT_ENROLLMENTS_PREFIX = 'educat_admin_delegate_student_enrollments_';
 let isRestoringStudentNavState = false;
 let currentSection = 'overview';
 let currentPersonalType = '';
 let studentScrollPersistTimer = null;
+let studentNavStateMemory = null;
 
 function getCurrentMainSection() {
     const activeBtn = document.querySelector('.nav-item.active');
@@ -22,19 +81,46 @@ function getCurrentMainSection() {
     return currentSection || 'overview';
 }
 
+function delegatedStudentEnrollmentsKey() {
+    const userId = String((currentUser && currentUser.id) || '').trim();
+    return ADMIN_DELEGATED_STUDENT_ENROLLMENTS_PREFIX + (userId || '0');
+}
+
+function readDelegatedStudentEnrollments() {
+    try {
+        const raw = storageService.getItem(delegatedStudentEnrollmentsKey()) || '[]';
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveDelegatedStudentEnrollments(items) {
+    storageService.setItem(delegatedStudentEnrollmentsKey(), JSON.stringify(Array.isArray(items) ? items : []));
+}
+
 function buildCourseUnitScrollKey(courseId, unitIdx) {
     return String(courseId || '0') + ':' + String(parseInt(unitIdx || 0, 10) || 0);
 }
 
 function readStudentNavState() {
-    try {
-        const raw = JSON.parse(sessionStorage.getItem(STUDENT_NAV_STATE_KEY) || '{}');
-        if (!raw || typeof raw !== 'object') return null;
-        if (raw.userId && currentUser && String(raw.userId) !== String(currentUser.id || '')) return null;
-        return raw;
-    } catch (e) {
+    if (!studentNavStateMemory || typeof studentNavStateMemory !== 'object') {
+        try {
+            const raw = sessionService.getItem(STUDENT_NAV_STATE_KEY) || '';
+            const parsed = raw ? JSON.parse(raw) : null;
+            studentNavStateMemory = (parsed && typeof parsed === 'object') ? parsed : null;
+        } catch (e) {
+            studentNavStateMemory = null;
+        }
+    }
+    if (!studentNavStateMemory || typeof studentNavStateMemory !== 'object') return null;
+    if (studentNavStateMemory.userId && currentUser && String(studentNavStateMemory.userId) !== String(currentUser.id || '')) {
+        studentNavStateMemory = null;
+        try { sessionService.removeItem(STUDENT_NAV_STATE_KEY); } catch (e) {}
         return null;
     }
+    return studentNavStateMemory;
 }
 
 function writeStudentNavState(partial) {
@@ -46,7 +132,11 @@ function writeStudentNavState(partial) {
         userId: String((currentUser && currentUser.id) || ''),
         updatedAt: new Date().toISOString()
     };
-    sessionStorage.setItem(STUDENT_NAV_STATE_KEY, JSON.stringify(next));
+    studentNavStateMemory = next;
+    try {
+        sessionService.setItem(STUDENT_NAV_STATE_KEY, JSON.stringify(next));
+    } catch (e) {
+    }
 }
 
 function restoreScrollForElement(elementId, scrollTop, attemptsLeft) {
@@ -222,7 +312,7 @@ const DEFAULT_AUTOEVAL_QUESTIONS = [
 ];
 function loadAdminFormsOrDefault() {
     try {
-        const raw = JSON.parse(localStorage.getItem('educat_admin_eval_forms') || '{}');
+        const raw = JSON.parse(storageService.getItem('educat_admin_eval_forms') || '{}');
         return {
             eval: Array.isArray(raw.eval) && raw.eval.length ? raw.eval : DEFAULT_EVAL_QUESTIONS,
             autoeval: Array.isArray(raw.autoeval) && raw.autoeval.length ? raw.autoeval : DEFAULT_AUTOEVAL_QUESTIONS
@@ -320,8 +410,24 @@ const DEFAULT_UNITS = {
     ],
 };
 
-function getAuth() { return localStorage.getItem('educat_auth') || sessionStorage.getItem('educat_auth'); }
-function getEmail() { return localStorage.getItem('educat_email') || sessionStorage.getItem('educat_email'); }
+function getAuth() { return ''; }
+function getEmail() { return ''; }
+
+try {
+    MOCK.user = { id: null, name: '', email: '', role: { id: null, name: '' }, status: true };
+    MOCK.student = { id: null, studentCode: '' };
+    MOCK.courses = [];
+    MOCK.enrollments = [];
+    MOCK.grades = [];
+    MOCK.attendance = [];
+    MOCK.certificates = [];
+    MOCK.schedules = [];
+    MOCK.activities = [];
+    MOCK.exams = [];
+    Object.keys(DEFAULT_UNITS || {}).forEach(k => { delete DEFAULT_UNITS[k]; });
+} catch (e) {
+    // noop
+}
 
 const LOCAL_KEYS = {
     courses: 'educat_local_courses',
@@ -329,16 +435,11 @@ const LOCAL_KEYS = {
 };
 
 function readLocalArray(key) {
-    try {
-        const parsed = JSON.parse(localStorage.getItem(key) || '[]');
-        return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-        return [];
-    }
+    return [];
 }
 
 function writeLocalArray(key, data) {
-    localStorage.setItem(key, JSON.stringify(Array.isArray(data) ? data : []));
+    // backend-only
 }
 
 function getLocalCourses() {
@@ -350,7 +451,7 @@ function getLocalEnrollments() {
 }
 
 function getActiveStudentId() {
-    return String((currentStudent && currentStudent.id) || (MOCK.student && MOCK.student.id) || '');
+    return String((currentStudent && currentStudent.id) || '');
 }
 
 function getLocalStudentEnrollments(studentId) {
@@ -401,9 +502,9 @@ function tryJoinCourseByCodeLocal(code) {
 async function apiFetch(url, options = {}) {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 3000);
-    const headers = { 'Authorization': 'Basic ' + authHeader, 'Content-Type': 'application/json', ...options.headers };
+    const headers = { 'Content-Type': 'application/json', ...options.headers };
     try {
-        const res = await fetch(API + url, { ...options, headers, signal: controller.signal });
+        const res = await fetch(API + url, { ...options, headers, credentials: 'include', signal: controller.signal });
         clearTimeout(tid);
         return res;
     } catch (e) { clearTimeout(tid); return null; }
@@ -423,6 +524,107 @@ async function postJson(url, payload) {
     try { data = txt ? JSON.parse(txt) : null; } catch (e) { data = null; }
     if (!res.ok) throw new Error((data && data.message) || txt || ('HTTP ' + res.status));
     return data;
+}
+
+function isAppStateStorageKey(key) {
+    const storageKey = String(key || '').trim();
+    return !!storageKey && storageKey.indexOf(APP_STATE_PREFIX) === 0;
+}
+
+function persistStorageValueInBackend(key, value) {
+    if (!isAppStateStorageKey(key)) return;
+    apiFetch('/api/app-state/' + encodeURIComponent(String(key)), {
+        method: 'PUT',
+        body: JSON.stringify({ value: String(value == null ? '' : value) })
+    }).catch(() => {
+        // Mantener valor local si falla la sincronización remota.
+    });
+}
+
+function deleteStorageValueInBackend(key) {
+    if (!isAppStateStorageKey(key)) return;
+    apiFetch('/api/app-state/' + encodeURIComponent(String(key)), {
+        method: 'DELETE',
+        headers: {}
+    }).catch(() => {
+        // Ignorar error remoto para no bloquear UX local.
+    });
+}
+
+function initStorageBackendSync() {
+    if (appStateSyncInitialized) return;
+    appStateSyncInitialized = true;
+
+    storageService.getItem = function (key) {
+        return rawStorageGetItem(key);
+    };
+    storageService.setItem = function (key, value) {
+        rawStorageSetItem(key, value);
+        if (!appStateHydrating) persistStorageValueInBackend(key, value);
+    };
+    storageService.removeItem = function (key) {
+        rawStorageRemoveItem(key);
+        if (!appStateHydrating) deleteStorageValueInBackend(key);
+    };
+}
+
+async function hydrateStorageFromBackend() {
+    if (appStateHydrated) return;
+    appStateHydrating = true;
+    try {
+        const entries = await tryFetch('/api/app-state?prefix=' + encodeURIComponent(APP_STATE_PREFIX));
+        Object.keys(entries || {}).forEach(k => {
+            const value = entries[k];
+            if (typeof value === 'string') rawStorageSetItem(k, value);
+        });
+    } finally {
+        appStateHydrating = false;
+        appStateHydrated = true;
+    }
+}
+
+function escapeHtml(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function escapeJsSingle(text) {
+    return String(text || '')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n');
+}
+
+function normalizeAbsenceReportFromApi(item) {
+    const course = item && item.course ? item.course : {};
+    const attachments = Array.isArray(item && item.attachments) ? item.attachments : [];
+    return {
+        id: item && item.id,
+        fecha: (item && item.absenceDate) || '',
+        motivo: (item && item.reason) || '',
+        descripcion: (item && item.description) || '',
+        status: (item && item.status ? String(item.status).toLowerCase() : 'pending'),
+        courseName: course.name || '—',
+        archivos: attachments.length,
+        files: attachments
+    };
+}
+
+async function fetchStudentAbsenceReports(studentId) {
+    const sid = parseInt(studentId || 0, 10) || 0;
+    if (!sid) return [];
+    const page = await tryFetch('/api/student/absence-reports/student/' + sid + '?page=0&size=100&sort=createdAt,desc');
+    const content = Array.isArray(page) ? page : (page && Array.isArray(page.content) ? page.content : []);
+    return content.map(normalizeAbsenceReportFromApi).filter(Boolean);
+}
+
+function persistAbsenceReportInLocalCache(studentId, record) {
+    // backend-only
 }
 
 function showToast(msg, type = '') {
@@ -721,19 +923,19 @@ function setDate() {
 }
 
 function getUnits(courseId) {
-    const s = localStorage.getItem('educat_units_' + courseId);
+    const s = storageService.getItem('educat_units_' + courseId);
     if (s) { try { return JSON.parse(s); } catch (e) {} }
     const def = DEFAULT_UNITS[courseId];
     return def ? JSON.parse(JSON.stringify(def)) : [];
 }
 function getStoredCourseActivities(courseId) {
-    try { return JSON.parse(localStorage.getItem('educat_course_activities_' + courseId) || '[]'); } catch (e) { return []; }
+    try { return JSON.parse(storageService.getItem('educat_course_activities_' + courseId) || '[]'); } catch (e) { return []; }
 }
 function getStoredCourseExams(courseId) {
-    try { return JSON.parse(localStorage.getItem('educat_course_exams_' + courseId) || '[]'); } catch (e) { return []; }
+    try { return JSON.parse(storageService.getItem('educat_course_exams_' + courseId) || '[]'); } catch (e) { return []; }
 }
 function getCourseActivitiesMerged(courseId) {
-    const base = MOCK.activities.filter(a => a.course && a.course.id === courseId);
+    const base = courseActivities.filter(a => a.course && a.course.id === courseId);
     const stored = getStoredCourseActivities(courseId);
     if (!stored.length) return base;
     const map = {};
@@ -742,7 +944,7 @@ function getCourseActivitiesMerged(courseId) {
     return Object.values(map);
 }
 function getCourseExamsMerged(courseId) {
-    const base = MOCK.exams.filter(x => x.course && x.course.id === courseId);
+    const base = courseExams.filter(x => x.course && x.course.id === courseId);
     const stored = getStoredCourseExams(courseId);
     if (!stored.length) return base;
     const map = {};
@@ -752,15 +954,44 @@ function getCourseExamsMerged(courseId) {
 }
 function getSubmission(actId) {
     const sid = currentStudent ? currentStudent.id : 1;
-    try { return JSON.parse(localStorage.getItem('educat_sub_' + sid + '_' + actId)); } catch (e) { return null; }
+    try { return JSON.parse(storageService.getItem('educat_sub_' + sid + '_' + actId)); } catch (e) { return null; }
 }
 function saveSubmission(actId, data) {
     const sid = currentStudent ? currentStudent.id : 1;
-    localStorage.setItem('educat_sub_' + sid + '_' + actId, JSON.stringify(data));
+    storageService.setItem('educat_sub_' + sid + '_' + actId, JSON.stringify(data));
 }
 function getActivityById(actId) {
-    const all = currentCourse ? getCourseActivitiesMerged(currentCourse.id) : MOCK.activities;
+    const all = currentCourse ? getCourseActivitiesMerged(currentCourse.id) : courseActivities;
     return all.find(a => String(a.id) === String(actId)) || null;
+}
+
+function buildCourseGradeBreakdown(course) {
+    const cid = parseInt((course || {}).id || '0', 10) || 0;
+    const rows = grades.filter(g => parseInt(((g || {}).course || {}).id || '0', 10) === cid);
+    if (!rows.length) return { periods: [], definitive: null };
+    const average = rows.reduce((sum, g) => sum + parseFloat((g || {}).grade || 0), 0) / rows.length;
+    const periodBase = parseFloat(average.toFixed(2));
+    return {
+        periods: [
+            { name: 'Corte 1', grade: periodBase, weight: 33.3 },
+            { name: 'Corte 2', grade: periodBase, weight: 33.3 },
+            { name: 'Corte 3', grade: periodBase, weight: 33.4 }
+        ],
+        definitive: parseFloat(periodBase.toFixed(2))
+    };
+}
+
+function buildCourseOutcomes(course) {
+    const cid = parseInt((course || {}).id || '0', 10) || 0;
+    const courseRows = grades.filter(g => parseInt(((g || {}).course || {}).id || '0', 10) === cid);
+    if (!courseRows.length) return [];
+    return courseRows.map((g, idx) => {
+        const val = parseFloat((g || {}).grade || 0);
+        return {
+            text: String((g || {}).description || ('Resultado de aprendizaje ' + (idx + 1))),
+            status: val >= 8 ? 'achieved' : (val >= 6 ? 'in-progress' : 'pending')
+        };
+    });
 }
 function getActivityDeadline(act) {
     if (!act) return null;
@@ -899,32 +1130,66 @@ function renderOverviewContent() {
 }
 
 async function loadOverview() {
-    enrollments  = MOCK.enrollments.map((e,i) => ({...e, course:MOCK.courses[i]}));
-    grades       = MOCK.grades;
-    attendance   = MOCK.attendance;
-    certificates = MOCK.certificates;
-    schedules    = MOCK.schedules;
-    const localEnrollments = getLocalStudentEnrollments(getActiveStudentId());
-    if (localEnrollments.length) enrollments = localEnrollments;
+    enrollments  = [];
+    grades       = [];
+    attendance   = [];
+    certificates = [];
+    schedules    = [];
+    courseActivities = [];
+    courseExams = [];
     renderOverviewContent();
     const sid = currentStudent ? currentStudent.id : 0;
-    Promise.all([
+    if (sid === 0) {
+        enrollments = readDelegatedStudentEnrollments();
+        const allowedCourseIds = new Set(enrollments.map(e => String(((e || {}).course || {}).id || '')));
+        const actData = await tryFetch('/api/activities');
+        const examData = await tryFetch('/api/exams');
+        courseActivities = Array.isArray(actData) ? actData.filter(a => allowedCourseIds.has(String((((a || {}).course || {}).id) || ''))) : [];
+        courseExams = Array.isArray(examData) ? examData.filter(x => allowedCourseIds.has(String((((x || {}).course || {}).id) || ''))) : [];
+        renderOverviewContent();
+        return;
+    }
+    const [enrData,grData,attData,certData,schData,actData,examData] = await Promise.all([
         tryFetch('/api/enrollments/student/'+sid), tryFetch('/api/grades/student/'+sid),
         tryFetch('/api/attendance/student/'+sid),  tryFetch('/api/certificates/student/'+sid),
         tryFetch('/api/schedules/student/'+sid),
-    ]).then(([enrData,grData,attData,certData,schData]) => {
-        let updated = false;
-        if (enrData&&enrData.length){enrollments=enrData;updated=true;}
-        if (grData&&grData.length){grades=grData;updated=true;}
-        if (attData&&attData.length){attendance=attData;updated=true;}
-        if (certData&&certData.length){certificates=certData;updated=true;}
-        if (schData&&schData.length){schedules=schData;updated=true;}
-        if (updated) renderOverviewContent();
-    });
+        tryFetch('/api/activities'), tryFetch('/api/exams')
+    ]);
+    enrollments = Array.isArray(enrData) ? enrData : [];
+    grades = Array.isArray(grData) ? grData : [];
+    attendance = Array.isArray(attData) ? attData : [];
+    certificates = Array.isArray(certData) ? certData : [];
+    schedules = Array.isArray(schData) ? schData : [];
+    const allowedCourseIds = new Set(enrollments.map(e => String(((e || {}).course || {}).id || '')));
+    courseActivities = Array.isArray(actData) ? actData.filter(a => allowedCourseIds.has(String((((a || {}).course || {}).id) || ''))) : [];
+    courseExams = Array.isArray(examData) ? examData.filter(x => allowedCourseIds.has(String((((x || {}).course || {}).id) || ''))) : [];
+    renderOverviewContent();
+    if (currentSection === 'cursos') await loadCursos({ skipRemoteFetch: true });
 }
 
-async function loadCursos() {
-    if (!enrollments.length) enrollments = MOCK.enrollments.map((e,i) => ({...e, course:MOCK.courses[i]}));
+async function reloadStudentEnrollments() {
+    const sid = currentStudent ? currentStudent.id : 0;
+    if (!sid) return false;
+    const enrData = await tryFetch('/api/enrollments/student/' + sid);
+    if (!Array.isArray(enrData)) return false;
+    enrollments = enrData;
+    return true;
+}
+
+async function forceReloadStudentCourses() {
+    const ok = await reloadStudentEnrollments();
+    await loadCursos({ skipRemoteFetch: true });
+    if (!ok) {
+        showToast('No se pudo recargar cursos. Intenta nuevamente.', 'error');
+        return;
+    }
+    showToast('Cursos actualizados', 'success');
+}
+
+async function loadCursos(options) {
+    const opts = options || {};
+    const sid = currentStudent ? currentStudent.id : 0;
+    if (!opts.skipRemoteFetch && sid !== 0) await reloadStudentEnrollments();
     document.getElementById('cursosContainer').innerHTML = '<div class="grid-3">' + enrollments.map(e => {
         const c = e.course||{}, teacher = c.teacher&&c.teacher.user?c.teacher.user.name:'—';
         const date = e.enrollmentDate ? new Date(e.enrollmentDate).toLocaleDateString('es-CO') : '—';
@@ -938,6 +1203,9 @@ async function loadCursos() {
           </div>
         </div>`;
     }).join('') + '</div>';
+    if (!enrollments.length) {
+        document.getElementById('cursosContainer').innerHTML = '<div class="empty-state"><div class="empty-state-title">Sin cursos matriculados</div><div class="empty-state-text">No encontramos cursos para este estudiante.</div><button class="btn btn-outline btn-sm" type="button" onclick="forceReloadStudentCourses()">Recargar cursos</button></div>';
+    }
 }
 
 function openStudentJoinCourseModal() {
@@ -958,21 +1226,27 @@ async function joinCourseByCodeAsStudent() {
     if (!code) return showToast('Ingresa un código de curso', 'error');
     try {
         const role = (currentUser && currentUser.role && currentUser.role.name) ? currentUser.role.name : 'ESTUDIANTE';
-        let resp = null;
-        try {
-            resp = await postJson('/api/courses/join-by-code', { courseCode: code, userId: currentUser.id, role });
-        } catch (e) {
-            resp = tryJoinCourseByCodeLocal(code);
-        }
+        const resp = await postJson('/api/courses/join-by-code', { courseCode: code, userId: currentUser.id, role });
         if (!resp || resp.success === false) return showToast((resp && resp.message) || 'No se pudo unir al curso', 'error');
         closeModal();
         const sid = currentStudent ? currentStudent.id : 0;
+        if (sid === 0 && resp.course) {
+            const already = (enrollments || []).some(e => String(((e.course || {}).id) || '') === String(resp.course.id || ''));
+            if (!already) {
+                enrollments.push({
+                    id: 'admin-join-' + Date.now(),
+                    enrollmentDate: new Date().toISOString(),
+                    course: resp.course
+                });
+                saveDelegatedStudentEnrollments(enrollments);
+            }
+            await loadCursos();
+            showToast(resp.message || 'Acceso administrativo concedido al curso', 'success');
+            return;
+        }
         const enrData = await tryFetch('/api/enrollments/student/' + sid);
         if (enrData && enrData.length) {
             enrollments = enrData;
-        } else {
-            const localEnrollments = getLocalStudentEnrollments(getActiveStudentId());
-            if (localEnrollments.length) enrollments = localEnrollments;
         }
         await loadOverview();
         await loadCursos();
@@ -983,10 +1257,10 @@ async function joinCourseByCodeAsStudent() {
 }
 
 window.joinCourseByCodeAsStudent = joinCourseByCodeAsStudent;
+window.forceReloadStudentCourses = forceReloadStudentCourses;
 
 async function loadClases() {
     const container = document.getElementById('clasesContainer');
-    if (!schedules.length) schedules = MOCK.schedules;
     if (!schedules.length) { container.innerHTML = '<div class="empty-state"><div class="empty-state-title">Sin clases programadas</div></div>'; return; }
     const DAY_ORDER = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
     const DAY_SHORT = {Lunes:'Lun',Martes:'Mar',Miércoles:'Mié',Jueves:'Jue',Viernes:'Vie',Sábado:'Sáb'};
@@ -1019,20 +1293,13 @@ async function loadClases() {
     container.innerHTML = `<div class="wcal-legend">${legendHtml}</div><div class="wcal-root"><div class="wcal-time-col" style="width:52px"><div class="wcal-corner" style="height:44px"></div><div class="wcal-time-track" style="height:${totalH}px">${timeLabelsHtml}</div></div><div class="wcal-grid">${colsHtml}</div></div>`;
 }
 
-function loadAusencias() {
+async function loadAusencias() {
     const select = document.getElementById('ausCurso');
-    const courses = enrollments.length ? enrollments.map(e=>e.course).filter(Boolean) : MOCK.courses;
+    const courses = enrollments.map(e=>e.course).filter(Boolean);
     select.innerHTML = '<option value="">Selecciona el curso</option>' + courses.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
     document.getElementById('ausFecha').value = new Date().toISOString().split('T')[0];
     const sid = currentStudent ? currentStudent.id : 1;
-    const historial = JSON.parse(localStorage.getItem('educat_ausencias_'+sid)||'[]');
-    const central = JSON.parse(localStorage.getItem('educat_absence_reports') || '[]');
-    const centralMap = central.reduce((acc, item) => { acc[String(item.id)] = item; return acc; }, {});
-    const normalized = historial.map(item => {
-        const fromCentral = centralMap[String(item.id)] || null;
-        return fromCentral ? { ...item, ...fromCentral } : item;
-    });
-    localStorage.setItem('educat_ausencias_'+sid, JSON.stringify(normalized));
+    const normalized = await fetchStudentAbsenceReports(sid);
     const hist = document.getElementById('ausenciasHistorial');
     if (!normalized.length) { hist.innerHTML='<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin reportes previos</div><div class="empty-state-text">Aún no has reportado ninguna ausencia.</div></div>'; return; }
     hist.innerHTML = '<table><thead><tr><th>Fecha</th><th>Curso</th><th>Motivo</th><th>Documentos</th><th>Estado</th></tr></thead><tbody>' +
@@ -1088,12 +1355,19 @@ function openPersonalView(type, options) {
         bienestar:'Bienestar Estudiantil'
     };
     document.getElementById('personalSubTitle').textContent = TITLES[type] || type;
-    const enr     = enrollments.length ? enrollments : MOCK.enrollments.map((e,i) => ({...e, course:MOCK.courses[i]}));
+    const enr     = enrollments;
     const courses  = enr.map(e => e.course).filter(Boolean);
     const content  = document.getElementById('personalSubContent');
     content.innerHTML = '';
     if      (type === 'grades')     { content.innerHTML = apGradesHtml(courses);            apInitGrades(); }
-    else if (type === 'instructivos') { content.innerHTML = apInstructivosHtml(); }
+    else if (type === 'instructivos') {
+        content.innerHTML = apInstructivosHtml();
+        hydrateStudentGuidesFromBackend().then(() => {
+            if (currentPersonalType === 'instructivos') {
+                content.innerHTML = apInstructivosHtml();
+            }
+        }).catch(() => {});
+    }
     else if (type === 'certificados') { content.innerHTML = apCertificadosHtml(); apRefreshCertificates(); }
     else if (type === 'eval')       { content.innerHTML = apEvalHtml(courses, 'eval');       apInitEval(courses, 'eval'); }
     else if (type === 'autoeval')   { content.innerHTML = apEvalHtml(courses, 'autoeval');   apInitEval(courses, 'autoeval'); }
@@ -1122,7 +1396,7 @@ function closePersonalView(options) {
     document.getElementById('pageSubtitle').style.display = '';
     if (!options || !options.skipPersist) {
         writeStudentNavState({
-            section: currentSection || 'area-personal',
+            section: currentSection || 'overview',
             view: 'main',
             personalType: ''
         });
@@ -1132,10 +1406,9 @@ function closePersonalView(options) {
 // ── 1. Calificaciones ────────────────────────────────────────────
 function apGradesHtml(courses) {
     const cg = courses.map(c => {
-        const d = MOCK_GRADE_PERIODS[c.id];
-        if (!d) return { course:c, def:null, periods:[] };
-        const def = d.periods.reduce((s,p) => s + p.grade*(p.weight/100), 0);
-        return { course:c, def:parseFloat(def.toFixed(2)), periods:d.periods };
+        const d = buildCourseGradeBreakdown(c);
+        if (!d || d.definitive === null) return { course:c, def:null, periods:[] };
+        return { course:c, def:parseFloat(d.definitive.toFixed(2)), periods:d.periods || [] };
     });
     const valid = cg.filter(x => x.def !== null);
     const prom  = valid.length ? (valid.reduce((s,x)=>s+x.def,0)/valid.length).toFixed(2) : '—';
@@ -1264,7 +1537,7 @@ const DEFAULT_AP_GUIDES = [
 
 function loadAdminGuidesOrDefault() {
     try {
-        const raw = JSON.parse(localStorage.getItem('educat_admin_instructivos') || '[]');
+        const raw = JSON.parse(storageService.getItem('educat_admin_instructivos') || '[]');
         return Array.isArray(raw) && raw.length ? raw : DEFAULT_AP_GUIDES;
     } catch (e) {
         return DEFAULT_AP_GUIDES;
@@ -1272,6 +1545,18 @@ function loadAdminGuidesOrDefault() {
 }
 
 let AP_GUIDES = loadAdminGuidesOrDefault();
+
+async function hydrateStudentGuidesFromBackend() {
+    const appState = await tryFetch('/api/app-state/educat_admin_instructivos');
+    const raw = appState && typeof appState.value === 'string' ? appState.value : '';
+    if (!raw) return;
+    try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) AP_GUIDES = parsed;
+    } catch (e) {
+        // Mantener fallback local si el valor remoto viene corrupto.
+    }
+}
 
 function apGetGuideById(guideId) {
     return AP_GUIDES.find(g => g.id === guideId) || null;
@@ -1542,8 +1827,35 @@ function apDownloadCertificate(certId) {
 
 // ── 2 & 3. Evaluación Docente / Autoevaluación ───────────────────
 function apEvalKey(prefix, courseId) { return 'educat_'+prefix+'_'+(currentStudent?currentStudent.id:1)+'_'+courseId; }
-function apGetEval(prefix, courseId) { try { return JSON.parse(localStorage.getItem(apEvalKey(prefix,courseId)))||{}; } catch(e){ return {}; } }
-function apSaveEval(prefix, courseId, data) { localStorage.setItem(apEvalKey(prefix,courseId), JSON.stringify(data)); }
+function apGetEval(prefix, courseId) { try { return JSON.parse(storageService.getItem(apEvalKey(prefix,courseId)))||{}; } catch(e){ return {}; } }
+function apSaveEval(prefix, courseId, data) { storageService.setItem(apEvalKey(prefix,courseId), JSON.stringify(data)); }
+function apEvalTypeFromPrefix(prefix) { return prefix === 'autoeval' ? 'AUTOEVAL' : 'EVAL'; }
+
+async function apSyncEvalFromBackend(courses, prefix) {
+    try {
+        const sid = currentStudent ? currentStudent.id : 0;
+        if (!sid) return;
+        const evalType = apEvalTypeFromPrefix(prefix);
+        const page = await tryFetch('/api/student/evaluation-submissions/student/' + sid + '?evaluationType=' + evalType + '&page=0&size=100');
+        const items = Array.isArray(page) ? page : (page && Array.isArray(page.content) ? page.content : []);
+        items.forEach(item => {
+            const courseId = item && item.course ? item.course.id : null;
+            if (!courseId) return;
+            const answers = (item && item.answers && typeof item.answers === 'object') ? item.answers : {};
+            apSaveEval(prefix, courseId, answers);
+            const sentKey = apEvalKey(prefix, courseId) + '_sent';
+            if (item && item.submitted) storageService.setItem(sentKey, '1');
+            else storageService.removeItem(sentKey);
+        });
+
+        if (currentPersonalType !== prefix) return;
+        const content = document.getElementById('personalSubContent');
+        if (!content) return;
+        content.innerHTML = apEvalHtml(courses, prefix);
+        apInitEval(courses, prefix, { skipRemote: true });
+    } catch (e) {
+    }
+}
 
 function isEvalAnswerFilled(q, value) {
     if (Array.isArray(value)) return value.length > 0;
@@ -1555,14 +1867,14 @@ function apEvalHtml(courses, prefix) {
     const questions = prefix==='autoeval' ? AUTOEVAL_QUESTIONS : EVAL_QUESTIONS;
     const info = prefix==='autoeval' ? 'Reflexiona honestamente sobre tu desempeño en cada asignatura.' : 'Evalúa a cada docente. Tu opinión es completamente confidencial.';
     const tabs = courses.map((c,i) => {
-        const sent = !!localStorage.getItem(apEvalKey(prefix,c.id)+'_sent');
+        const sent = !!storageService.getItem(apEvalKey(prefix,c.id)+'_sent');
         return `<button class="eval-tab ${i===0?'active':''}" onclick="apSwitchEval(${i},'${prefix}')" id="${prefix}-tab-${i}">${sent?'<svg width="12" height="12" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>':''} ${c.name.length>18?c.name.slice(0,17)+'…':c.name}</button>`;
     }).join('');
     const panels = courses.map((c,i) => {
         const teacher  = c.teacher&&c.teacher.user?c.teacher.user.name:'Docente';
         const spec     = c.teacher?c.teacher.specialization||'':'';
         const initials = teacher.split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase();
-        const sent     = !!localStorage.getItem(apEvalKey(prefix,c.id)+'_sent');
+        const sent     = !!storageService.getItem(apEvalKey(prefix,c.id)+'_sent');
         const bannerName = prefix==='autoeval' ? 'Autoevaluación' : teacher;
         const bannerSub  = prefix==='autoeval' ? c.name : (spec+' · '+c.name);
         return `<div class="eval-form-panel ${i===0?'active':''}" id="${prefix}-panel-${i}" data-course="${c.id}" data-prefix="${prefix}">
@@ -1578,7 +1890,7 @@ function apEvalHtml(courses, prefix) {
             </div>
         </div>`;
     }).join('');
-    return `<div style="max-width:860px;margin:0 auto"><div class="card"><div style="padding:10px 18px;background:rgba(200,150,46,0.05);border-bottom:1px solid rgba(200,150,46,0.12);font-size:13px;color:var(--text-muted);display:flex;align-items:center;gap:8px"><svg width="14" height="14" fill="none" stroke="var(--gold)" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>${info}</div><div class="eval-tabs-bar">${tabs}</div>${panels}</div></div>`;
+    return `<div style="max-width:860px;margin:0 auto"><div class="card"><div style="padding:10px 18px;background:rgba(200,150,46,0.05);border-bottom:1px solid rgba(200,150,46,0.12);font-size:13px;color:var(--text-muted);display:flex;align-items:center;gap:8px"><svg width="14" height="14" fill="none" stroke="var(--gold)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>${info}</div><div class="eval-tabs-bar">${tabs}</div>${panels}</div></div>`;
 }
 
 function apBuildQs(prefix, courseId, questions, disabled) {
@@ -1612,7 +1924,7 @@ function apBuildQs(prefix, courseId, questions, disabled) {
 }
 
 function apToggleEvalMulti(prefix, courseId, qId, option, el) {
-    if (localStorage.getItem(apEvalKey(prefix,courseId)+'_sent')) return;
+    if (storageService.getItem(apEvalKey(prefix,courseId)+'_sent')) return;
     const data = apGetEval(prefix, courseId);
     const arr = Array.isArray(data[qId]) ? [...data[qId]] : [];
     const idx = arr.indexOf(option);
@@ -1622,7 +1934,7 @@ function apToggleEvalMulti(prefix, courseId, qId, option, el) {
 }
 
 function apSetEval(prefix, courseId, qId, value, el, type) {
-    if (localStorage.getItem(apEvalKey(prefix,courseId)+'_sent')) return;
+    if (storageService.getItem(apEvalKey(prefix,courseId)+'_sent')) return;
     const data = apGetEval(prefix, courseId);
     data[qId] = value;
     apSaveEval(prefix, courseId, data);
@@ -1653,12 +1965,15 @@ function apUpdateBadge(prefix, courseId) {
     const badge = document.getElementById(prefix+'-badge-'+idx);
     if (badge) { badge.textContent=done+'/'+questions.length+' respondidas'; badge.className='eval-completion-badge '+(done===questions.length?'complete':'partial'); }
 }
-function apInitEval(courses, prefix) { courses.forEach(c => apUpdateBadge(prefix, c.id)); }
+function apInitEval(courses, prefix, options) {
+    courses.forEach(c => apUpdateBadge(prefix, c.id));
+    if (!options || !options.skipRemote) apSyncEvalFromBackend(courses, prefix);
+}
 function apSwitchEval(idx, prefix) {
     document.querySelectorAll('[id^="'+prefix+'-tab-"]').forEach((t,i)=>t.classList.toggle('active',i===idx));
     document.querySelectorAll('[id^="'+prefix+'-panel-"]').forEach((p,i)=>p.classList.toggle('active',i===idx));
 }
-function apSubmitEval(prefix, panelIdx, courseId) {
+async function apSubmitEval(prefix, panelIdx, courseId) {
     const questions = prefix==='autoeval'?AUTOEVAL_QUESTIONS:EVAL_QUESTIONS;
     const data    = apGetEval(prefix, courseId);
     const missing = questions.filter(q => q.required !== false && !isEvalAnswerFilled(q, data[q.id]));
@@ -1668,14 +1983,31 @@ function apSubmitEval(prefix, panelIdx, courseId) {
         if(el) el.scrollIntoView({behavior:'smooth',block:'center'});
         return;
     }
-    localStorage.setItem(apEvalKey(prefix,courseId)+'_sent','1');
+    const sid = currentStudent ? currentStudent.id : 0;
+    const payload = {
+        studentId: sid,
+        courseId: parseInt(courseId, 10),
+        evaluationType: apEvalTypeFromPrefix(prefix),
+        answers: data,
+        submitted: true
+    };
+    let savedInBackend = false;
+    try {
+        const saved = await postJson('/api/student/evaluation-submissions', payload);
+        if (saved && saved.answers && typeof saved.answers === 'object') apSaveEval(prefix, courseId, saved.answers);
+        savedInBackend = true;
+    } catch (e) {
+        apSaveEval(prefix, courseId, data);
+    }
+
+    storageService.setItem(apEvalKey(prefix,courseId)+'_sent','1');
     const btn=document.getElementById(prefix+'-btn-'+panelIdx), msg=document.getElementById(prefix+'-msg-'+panelIdx);
     if(btn) btn.style.display='none';
     if(msg) msg.style.display='flex';
     document.querySelectorAll('#'+prefix+'-panel-'+panelIdx+' button,#'+prefix+'-panel-'+panelIdx+' textarea').forEach(el=>el.disabled=true);
     const tab=document.getElementById(prefix+'-tab-'+panelIdx);
     if(tab&&!tab.querySelector('svg')) tab.insertAdjacentHTML('afterbegin','<svg width="12" height="12" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> ');
-    showToast('Evaluación enviada. ¡Gracias!','success');
+    showToast(savedInBackend ? 'Evaluación enviada. ¡Gracias!' : 'Evaluación guardada localmente (sin conexión backend)','success');
 }
 
 // ── 4. Escogencia de Horario ─────────────────────────────────────
@@ -1691,14 +2023,14 @@ function apHorarioHtml() {
 }
 function apInitHorario() {
     const sid = currentStudent?currentStudent.id:1;
-    const saved = JSON.parse(localStorage.getItem('educat_sch_sel_'+sid)||'{}');
+    const saved = JSON.parse(storageService.getItem('educat_sch_sel_'+sid)||'{}');
     Object.keys(saved).forEach(k => { if(saved[k]){ const el=document.getElementById(k); if(el) el.classList.add('selected'); } });
 }
 function apToggleSch(key) { const el=document.getElementById(key); if(el) el.classList.toggle('selected'); }
 function apSaveSch() {
     const sid=currentStudent?currentStudent.id:1, state={};
     document.querySelectorAll('.sch-cell').forEach(b=>{ state[b.id]=b.classList.contains('selected'); });
-    localStorage.setItem('educat_sch_sel_'+sid, JSON.stringify(state));
+    storageService.setItem('educat_sch_sel_'+sid, JSON.stringify(state));
     showToast('Disponibilidad guardada correctamente','success');
 }
 function apClearSch() { document.querySelectorAll('.sch-cell').forEach(b=>b.classList.remove('selected')); showToast('Selección limpiada'); }
@@ -1707,7 +2039,7 @@ function apClearSch() { document.querySelectorAll('.sch-cell').forEach(b=>b.clas
 function apResultadosHtml(courses) {
     const STATUS = { achieved:{label:'Logrado',badge:'badge-success',icon:'<polyline points="20 6 9 17 4 12"/>'}, 'in-progress':{label:'En proceso',badge:'badge-gold',icon:'<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>'}, pending:{label:'Pendiente',badge:'badge-navy',icon:'<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12.01" y2="16"/>'} };
     const cards = courses.map(c => {
-        const outcomes = MOCK_OUTCOMES[c.id]||[];
+        const outcomes = buildCourseOutcomes(c);
         if(!outcomes.length) return '';
         const achieved = outcomes.filter(o=>o.status==='achieved').length;
         const pct      = Math.round((achieved/outcomes.length)*100);
@@ -1766,15 +2098,241 @@ const WELLNESS_DATA = {
     ],
 };
 
+let WELLNESS_CONTENT = { postsBySection: {}, articlesBySection: {}, catalog: {} };
+
+function apEmptyWellnessGrouped() {
+    return {
+        psychology: [],
+        sports: [],
+        art: [],
+        orientation: [],
+        medical: [],
+        scholarships: []
+    };
+}
+
+function apDefaultWellnessCatalog() {
+    return {
+        psychologists: Array.isArray((WELLNESS_DATA || {}).psychologists) ? WELLNESS_DATA.psychologists : [],
+        sportCalls: Array.isArray((WELLNESS_DATA || {}).sportCalls) ? WELLNESS_DATA.sportCalls : [],
+        workshops: Array.isArray((WELLNESS_DATA || {}).workshops) ? WELLNESS_DATA.workshops : [],
+        scholarshipCalls: Array.isArray((WELLNESS_DATA || {}).scholarshipCalls) ? WELLNESS_DATA.scholarshipCalls : []
+    };
+}
+
+function apSetWellnessContent(content) {
+    WELLNESS_CONTENT = {
+        postsBySection: (content && content.postsBySection && typeof content.postsBySection === 'object') ? content.postsBySection : apEmptyWellnessGrouped(),
+        articlesBySection: (content && content.articlesBySection && typeof content.articlesBySection === 'object') ? content.articlesBySection : apEmptyWellnessGrouped(),
+        catalog: (content && content.catalog && typeof content.catalog === 'object') ? content.catalog : apDefaultWellnessCatalog()
+    };
+}
+
+function apBuildWellnessContentFromAdminPublications(publications) {
+    const postsBySection = apEmptyWellnessGrouped();
+    const articlesBySection = apEmptyWellnessGrouped();
+    (Array.isArray(publications) ? publications : []).forEach(item => {
+        const section = String((item && item.section) || '').trim().toLowerCase();
+        if (!Object.prototype.hasOwnProperty.call(postsBySection, section)) return;
+        const type = String((item && item.type) || 'post').trim().toLowerCase();
+        if (type === 'article') articlesBySection[section].push(item);
+        else postsBySection[section].push(item);
+    });
+    return {
+        postsBySection,
+        articlesBySection,
+        catalog: (WELLNESS_CONTENT && WELLNESS_CONTENT.catalog && typeof WELLNESS_CONTENT.catalog === 'object')
+            ? WELLNESS_CONTENT.catalog
+            : apDefaultWellnessCatalog()
+    };
+}
+
+function apCatalogList(key) {
+    const value = (WELLNESS_CONTENT && WELLNESS_CONTENT.catalog) ? WELLNESS_CONTENT.catalog[key] : null;
+    return Array.isArray(value) ? value : [];
+}
+
+async function apLoadWellnessContentFromBackend() {
+    if (apRoleIsAdmin()) {
+        try {
+            const adminPublications = await apWellbeingAdminRequest('GET', '/api/admin/wellbeing/publications');
+            apSetWellnessContent(apBuildWellnessContentFromAdminPublications(adminPublications));
+            return true;
+        } catch (e) {
+            // Continúa con endpoint estudiantil si el endpoint admin falla.
+        }
+    }
+
+    const content = await tryFetch('/api/student/wellbeing/content');
+    if (content) {
+        apSetWellnessContent(content);
+        return true;
+    }
+
+    if (apCanManageWellnessPosts()) {
+        try {
+            const adminPublications = await apWellbeingAdminRequest('GET', '/api/admin/wellbeing/publications');
+            apSetWellnessContent(apBuildWellnessContentFromAdminPublications(adminPublications));
+            return true;
+        } catch (e) {
+        }
+    }
+
+    // Mantiene datos en memoria para no borrar la UI si backend falla temporalmente.
+    if (!WELLNESS_CONTENT || typeof WELLNESS_CONTENT !== 'object') {
+        apSetWellnessContent({});
+    }
+    return false;
+}
+
 function apWellnessKey() { return 'educat_wellness_' + (currentStudent ? currentStudent.id : 1); }
 function apGetWellnessState() {
     const base = {
         psychAppointments: [], sportRegistrations: [], workshopRegistrations: [], medicalAppointments: [], scholarshipRequests: [],
         activeSection: '', feedState: {}, postReactions: {}, postComments: {}
     };
-    try { return { ...base, ...(JSON.parse(localStorage.getItem(apWellnessKey()) || '{}')) }; } catch (e) { return base; }
+    try { return { ...base, ...(JSON.parse(storageService.getItem(apWellnessKey()) || '{}')) }; } catch (e) { return base; }
 }
-function apSaveWellnessState(state) { localStorage.setItem(apWellnessKey(), JSON.stringify(state)); }
+function apSaveWellnessState(state) { storageService.setItem(apWellnessKey(), JSON.stringify(state)); }
+function apWellnessModuleType(section) {
+    const map = {
+        psychology: 'PSYCHOLOGY',
+        sports: 'SPORTS',
+        art: 'ART',
+        orientation: 'ORIENTATION',
+        medical: 'MEDICAL',
+        scholarships: 'SCHOLARSHIPS'
+    };
+    return map[String(section || '').trim()] || '';
+}
+const WELLBEING_REQUEST_TITLES = {
+    PSYCH_APPOINTMENT: 'PSYCH_APPOINTMENT',
+    MEDICAL_APPOINTMENT: 'MEDICAL_APPOINTMENT',
+    SPORT_CALL_REGISTRATION: 'SPORT_CALL_REGISTRATION',
+    WORKSHOP_REGISTRATION: 'WORKSHOP_REGISTRATION',
+    SCHOLARSHIP_APPLICATION: 'SCHOLARSHIP_APPLICATION',
+    POST_REACTION: 'POST_REACTION',
+    POST_COMMENT: 'POST_COMMENT'
+};
+function apWellbeingStatusUi(status) {
+    const normalized = String(status || 'PENDING').toUpperCase();
+    if (normalized === 'APPROVED') return { text: 'Aprobada', cls: 'badge-success' };
+    if (normalized === 'REJECTED') return { text: 'Rechazada', cls: 'badge-error' };
+    if (normalized === 'CANCELLED') return { text: 'Cancelada', cls: 'badge-navy' };
+    return { text: 'Pendiente', cls: 'badge-gold' };
+}
+async function apFetchWellbeingRequests(moduleType, status) {
+    const sid = currentStudent ? currentStudent.id : 0;
+    if (!sid) return [];
+    const params = [];
+    if (moduleType) params.push('moduleType=' + encodeURIComponent(moduleType));
+    if (status) params.push('status=' + encodeURIComponent(status));
+    params.push('page=0');
+    params.push('size=100');
+    const page = await tryFetch('/api/student/wellbeing-requests/student/' + sid + '?' + params.join('&'));
+    const items = Array.isArray(page) ? page : (page && Array.isArray(page.content) ? page.content : []);
+    return items;
+}
+async function apCreateWellbeingRequest(payload) {
+    return postJson('/api/student/wellbeing-requests', payload || {});
+}
+async function apSyncWellnessStateFromBackend(section) {
+    const moduleType = apWellnessModuleType(section);
+    if (!moduleType) return false;
+    const items = await apFetchWellbeingRequests(moduleType);
+    const state = apGetWellnessState();
+    if (section === 'psychology') {
+        state.psychAppointments = items.map(r => {
+            const payload = r && r.payload && typeof r.payload === 'object' ? r.payload : {};
+            const scheduledAt = r && r.scheduledAt ? new Date(r.scheduledAt) : null;
+            return {
+                id: r.id,
+                professionalId: payload.professionalId || '',
+                professionalName: payload.professionalName || 'Psicología',
+                date: scheduledAt ? scheduledAt.toISOString().slice(0, 10) : '',
+                slot: payload.slot || (scheduledAt ? scheduledAt.toTimeString().slice(0, 5) : ''),
+                reason: payload.reasonHtml || r.message || '',
+                status: String(r.status || 'PENDING').toLowerCase(),
+                statusRaw: String(r.status || 'PENDING').toUpperCase(),
+                resolutionComment: String(r.resolutionComment || ''),
+                createdAt: r.requestedAt || new Date().toISOString()
+            };
+        });
+    }
+    if (section === 'sports') {
+        state.sportRegistrations = Array.from(new Set(items.map(r => {
+            const payload = r && r.payload && typeof r.payload === 'object' ? r.payload : {};
+            return payload.callId || '';
+        }).filter(Boolean)));
+    }
+    if (section === 'orientation') {
+        state.workshopRegistrations = Array.from(new Set(items.map(r => {
+            const payload = r && r.payload && typeof r.payload === 'object' ? r.payload : {};
+            return payload.workshopId || '';
+        }).filter(Boolean)));
+    }
+    if (section === 'medical') {
+        state.medicalAppointments = items.map(r => {
+            const payload = r && r.payload && typeof r.payload === 'object' ? r.payload : {};
+            const scheduledAt = r && r.scheduledAt ? new Date(r.scheduledAt) : null;
+            return {
+                id: r.id,
+                date: scheduledAt ? scheduledAt.toISOString().slice(0, 10) : '',
+                time: payload.time || (scheduledAt ? scheduledAt.toTimeString().slice(0, 5) : ''),
+                reason: payload.reason || r.message || '',
+                status: String(r.status || 'PENDING').toLowerCase(),
+                statusRaw: String(r.status || 'PENDING').toUpperCase(),
+                resolutionComment: String(r.resolutionComment || '')
+            };
+        });
+    }
+    if (section === 'scholarships') {
+        state.scholarshipRequests = Array.from(new Set(items.map(r => {
+            const payload = r && r.payload && typeof r.payload === 'object' ? r.payload : {};
+            return payload.callId || '';
+        }).filter(Boolean)));
+    }
+
+    // Reacciones y comentarios del feed social por sección (persistidos en backend)
+    state.postReactions = state.postReactions || {};
+    state.postComments = state.postComments || {};
+
+    const reactionItems = items
+        .filter(r => String((r || {}).title || '').toUpperCase() === WELLBEING_REQUEST_TITLES.POST_REACTION)
+        .sort((a, b) => new Date(a.requestedAt || 0) - new Date(b.requestedAt || 0));
+    const reactionMap = {};
+    reactionItems.forEach(r => {
+        const payload = r && r.payload && typeof r.payload === 'object' ? r.payload : {};
+        const postId = String(payload.postId || '').trim();
+        if (!postId) return;
+        reactionMap[postId] = String(payload.reaction || '').trim();
+    });
+    state.postReactions[section] = reactionMap;
+
+    const commentItems = items
+        .filter(r => String((r || {}).title || '').toUpperCase() === WELLBEING_REQUEST_TITLES.POST_COMMENT)
+        .sort((a, b) => new Date(a.requestedAt || 0) - new Date(b.requestedAt || 0));
+    const commentsMap = {};
+    commentItems.forEach(r => {
+        const payload = r && r.payload && typeof r.payload === 'object' ? r.payload : {};
+        const postId = String(payload.postId || '').trim();
+        const text = String((r || {}).message || '').trim();
+        if (!postId || !text) return;
+        if (!commentsMap[postId]) commentsMap[postId] = [];
+        const student = (r || {}).student || {};
+        const author = ((student.user || {}).name || student.name || 'Estudiante');
+        commentsMap[postId].push({
+            id: 'c-wb-' + (r.id || Date.now()),
+            author,
+            text,
+            createdAt: r.requestedAt || new Date().toISOString()
+        });
+    });
+    state.postComments[section] = commentsMap;
+
+    apSaveWellnessState(state);
+    return true;
+}
 function apStripHtmlToText(html) { const div = document.createElement('div'); div.innerHTML = html || ''; return (div.textContent || div.innerText || '').trim(); }
 function apVideoEmbedHtml(url) {
     if (!url) return '';
@@ -1783,18 +2341,14 @@ function apVideoEmbedHtml(url) {
     return `<div style="margin-top:10px"><a class="btn btn-sm btn-outline" href="${url}" target="_blank" rel="noopener">Ver video</a></div>`;
 }
 function apGetWellnessPosts(section) {
-    if (section === 'psychology') return WELLNESS_DATA.psychologyPosts || [];
-    if (section === 'sports') return WELLNESS_DATA.sportsPosts || [];
-    if (section === 'art') return WELLNESS_DATA.artPosts || [];
-    if (section === 'orientation') return WELLNESS_DATA.orientationPosts || [];
-    if (section === 'medical') return WELLNESS_DATA.medicalPosts || [];
-    return [];
+    const all = (WELLNESS_CONTENT && WELLNESS_CONTENT.postsBySection) ? WELLNESS_CONTENT.postsBySection : {};
+    const list = all[String(section || '')];
+    return Array.isArray(list) ? list : [];
 }
 function apGetWellnessArticles(section) {
-    if (section === 'sports') return WELLNESS_DATA.sportsArticles || [];
-    if (section === 'art') return WELLNESS_DATA.artArticles || [];
-    if (section === 'orientation') return WELLNESS_DATA.orientationArticles || [];
-    return [];
+    const all = (WELLNESS_CONTENT && WELLNESS_CONTENT.articlesBySection) ? WELLNESS_CONTENT.articlesBySection : {};
+    const list = all[String(section || '')];
+    return Array.isArray(list) ? list : [];
 }
 function apGetFeedConfig(section) {
     const state = apGetWellnessState();
@@ -1809,17 +2363,7 @@ function apSetFeedConfig(section, partial) {
 }
 
 function getAdminPermissionsForCurrentStudent() {
-    try {
-        const rolePerms = JSON.parse(localStorage.getItem('educat_admin_role_permissions') || '{}');
-        const userPerms = JSON.parse(localStorage.getItem('educat_admin_user_permissions') || '{}');
-        const roleId = currentUser && currentUser.role ? currentUser.role.id : null;
-        const userId = currentUser ? currentUser.id : null;
-        const base = roleId ? (rolePerms[String(roleId)] || []) : [];
-        const direct = userId ? (userPerms[String(userId)] || []) : [];
-        return Array.from(new Set([...(base || []), ...(direct || [])]));
-    } catch (e) {
-        return [];
-    }
+    return Array.isArray(currentEffectivePermissions) ? currentEffectivePermissions : [];
 }
 
 function canAccessWellnessSection(section) {
@@ -1837,6 +2381,113 @@ function canAccessWellnessSection(section) {
     const anyWellnessConfig = perms.some(p => String(p || '').startsWith('bienestar.'));
     if (!anyWellnessConfig) return true;
     return perms.includes(key);
+}
+
+function apRoleIsAdmin() {
+    const roleName = String((((currentUser || {}).role || {}).name) || '').toUpperCase();
+    return roleName === 'ADMIN' || roleName === 'ADMINISTRADOR';
+}
+
+function apCanManageWellnessPosts() {
+    const perms = getAdminPermissionsForCurrentStudent();
+    if (apRoleIsAdmin()) return true;
+    return perms.includes('bienestar.publicar') || perms.includes('bienestar.editar-publicacion') || perms.includes('bienestar.eliminar-publicacion');
+}
+
+function apCanCreateWellnessPost() {
+    const perms = getAdminPermissionsForCurrentStudent();
+    return apRoleIsAdmin() || perms.includes('bienestar.publicar');
+}
+
+function apCanEditWellnessPost() {
+    const perms = getAdminPermissionsForCurrentStudent();
+    return apRoleIsAdmin() || perms.includes('bienestar.editar-publicacion');
+}
+
+function apCanDeleteWellnessPost() {
+    const perms = getAdminPermissionsForCurrentStudent();
+    return apRoleIsAdmin() || perms.includes('bienestar.eliminar-publicacion');
+}
+
+async function apWellbeingAdminRequest(method, path, payload) {
+    const options = { method, headers: { 'Content-Type': 'application/json' } };
+    if (payload !== undefined) options.body = JSON.stringify(payload || {});
+    const res = await apiFetch(path, options);
+    if (!res) throw new Error('Sin respuesta del servidor');
+    const txt = await res.text();
+    let data = null;
+    try { data = txt ? JSON.parse(txt) : null; } catch (e) { data = null; }
+    if (!res.ok) throw new Error((data && data.message) || txt || ('HTTP ' + res.status));
+    return data;
+}
+
+function apOpenWellbeingPostModal(section, type, postId) {
+    const mode = String(type || 'post') === 'article' ? 'article' : 'post';
+    const existing = (apGetWellnessPosts(section).concat(apGetWellnessArticles(section))).find(p => String(p.id || '') === String(postId || '')) || null;
+    const title = existing ? 'Editar publicación' : (mode === 'article' ? 'Nuevo artículo' : 'Nueva publicación');
+    document.getElementById('modalTitle').textContent = title;
+    document.getElementById('modalBody').innerHTML = `
+        <div class="form-group"><label class="form-label">Título</label><input id="wbPostTitle" class="form-input" value="${escapeHtml((existing && existing.title) || '')}"></div>
+        <div class="form-group"><label class="form-label">Autor</label><input id="wbPostAuthor" class="form-input" value="${escapeHtml((existing && existing.author) || ((currentUser && currentUser.name) || 'Administración'))}"></div>
+        <div class="form-group"><label class="form-label">Video (opcional)</label><input id="wbPostVideo" class="form-input" placeholder="https://..." value="${escapeHtml((existing && existing.videoLink) || '')}"></div>
+        <div class="form-group"><label class="form-label">Contenido</label>${buildStudentRichEditorHtml('wbPostEditor', 220)}</div>
+        <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+            <button class="btn btn-primary" onclick="apSaveWellbeingPostFromModal('${escapeJsSingle(String(section || ''))}','${mode}','${escapeJsSingle(String((existing && existing.id) || ''))}')">Guardar</button>
+        </div>
+    `;
+    const editor = document.getElementById('wbPostEditor');
+    if (editor) editor.innerHTML = String((existing && existing.content) || '');
+    srtEnsureEditor('wbPostEditor');
+    srtSetModalSize('xl');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+
+async function apSaveWellbeingPostFromModal(section, type, postId) {
+    const safeSection = String(section || '').trim().toLowerCase();
+    const safeType = String(type || 'post').trim().toLowerCase() === 'article' ? 'article' : 'post';
+    const payload = {
+        section: safeSection,
+        type: safeType,
+        title: String((document.getElementById('wbPostTitle') || {}).value || '').trim(),
+        author: String((document.getElementById('wbPostAuthor') || {}).value || '').trim(),
+        videoLink: String((document.getElementById('wbPostVideo') || {}).value || '').trim(),
+        content: String(srtGetHtml('wbPostEditor') || '').trim(),
+        date: new Date().toISOString().slice(0, 10)
+    };
+    if (!payload.title || !payload.content) {
+        showToast('Completa título y contenido', 'error');
+        return;
+    }
+    try {
+        if (postId) {
+            await apWellbeingAdminRequest('PUT', '/api/admin/wellbeing/publications/' + encodeURIComponent(String(postId)), payload);
+        } else {
+            await apWellbeingAdminRequest('POST', '/api/admin/wellbeing/publications', payload);
+        }
+        await apLoadWellnessContentFromBackend();
+        apSetFeedConfig(safeSection, { query: '', sort: 'recent', page: 1 });
+        const state = apGetWellnessState();
+        state.activeSection = safeSection;
+        apSaveWellnessState(state);
+        closeModal();
+        apOpenWellnessSection(safeSection);
+        showToast('Publicación guardada', 'success');
+    } catch (e) {
+        showToast((e && e.message) ? e.message : 'No se pudo guardar la publicación', 'error');
+    }
+}
+
+async function apDeleteWellbeingPost(section, postId) {
+    if (!window.confirm('¿Eliminar esta publicación de bienestar?')) return;
+    try {
+        await apWellbeingAdminRequest('DELETE', '/api/admin/wellbeing/publications/' + encodeURIComponent(String(postId)));
+        await apLoadWellnessContentFromBackend();
+        apRenderWellnessSection(section);
+        showToast('Publicación eliminada', 'success');
+    } catch (e) {
+        showToast((e && e.message) ? e.message : 'No se pudo eliminar la publicación', 'error');
+    }
 }
 
 function apWellnessCardsHtml() {
@@ -1862,15 +2513,38 @@ function apSocialReactionCount(section, post, reactionKey) {
     const mine = (((state.postReactions || {})[section] || {})[key] || '');
     return base + (mine === reactionKey ? 1 : 0);
 }
-function apSetPostReaction(section, postId, reactionKey) {
+async function apSetPostReaction(section, postId, reactionKey) {
     const state = apGetWellnessState();
     state.postReactions = state.postReactions || {};
     state.postReactions[section] = state.postReactions[section] || {};
-    state.postReactions[section][postId] = state.postReactions[section][postId] === reactionKey ? '' : reactionKey;
+    const current = state.postReactions[section][postId] || '';
+    const nextReaction = current === reactionKey ? '' : reactionKey;
+    state.postReactions[section][postId] = nextReaction;
     apSaveWellnessState(state);
-    apOpenWellnessSection(section);
+    apRenderWellnessSection(section);
+
+    const sid = currentStudent ? currentStudent.id : null;
+    const moduleType = apWellnessModuleType(section);
+    if (!sid || !moduleType) return;
+
+    try {
+        await apCreateWellbeingRequest({
+            studentId: sid,
+            moduleType,
+            title: WELLBEING_REQUEST_TITLES.POST_REACTION,
+            message: '',
+            payload: { section, postId, reaction: nextReaction }
+        });
+        const active = (apGetWellnessState().activeSection || '') === section;
+        if (active) {
+            await apSyncWellnessStateFromBackend(section);
+            apRenderWellnessSection(section);
+        }
+    } catch (e) {
+        // Mantiene fallback local en caso de error de red/API.
+    }
 }
-function apAddPostComment(section, postId) {
+async function apAddPostComment(section, postId) {
     const input = document.getElementById(`bwCommentInput-${section}-${postId}`);
     const text = (input ? input.value : '').trim();
     if (!text) { showToast('Escribe un comentario.', 'error'); return; }
@@ -1880,7 +2554,28 @@ function apAddPostComment(section, postId) {
     state.postComments[section][postId] = state.postComments[section][postId] || [];
     state.postComments[section][postId].push({ id: 'c-' + Date.now(), author: (currentUser && currentUser.name) || 'Estudiante', text, createdAt: new Date().toISOString() });
     apSaveWellnessState(state);
-    apOpenWellnessSection(section);
+    apRenderWellnessSection(section);
+
+    const sid = currentStudent ? currentStudent.id : null;
+    const moduleType = apWellnessModuleType(section);
+    if (!sid || !moduleType) return;
+
+    try {
+        await apCreateWellbeingRequest({
+            studentId: sid,
+            moduleType,
+            title: WELLBEING_REQUEST_TITLES.POST_COMMENT,
+            message: text,
+            payload: { section, postId }
+        });
+        const active = (apGetWellnessState().activeSection || '') === section;
+        if (active) {
+            await apSyncWellnessStateFromBackend(section);
+            apRenderWellnessSection(section);
+        }
+    } catch (e) {
+        // Mantiene fallback local en caso de error de red/API.
+    }
 }
 function apOpenAllPostComments(section, postId) {
     const state = apGetWellnessState();
@@ -1899,11 +2594,14 @@ function apRenderPostCard(section, post) {
     const commentsPreview = lastComment
         ? `<div class="bw-comment-item"><strong>${lastComment.author}</strong><span>${new Date(lastComment.createdAt).toLocaleDateString('es-CO')}</span><div>${lastComment.text}</div></div>${comments.length > 1 ? `<div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="apOpenAllPostComments('${section}','${post.id}')">Leer más (${comments.length - 1} más)</button></div>` : ''}`
         : '<div style="font-size:12px;color:var(--text-muted)">Sin comentarios aún.</div>';
-    return `<article class="bw-social-card"><div class="bw-post-head"><div class="bw-post-title">${post.title}</div><div class="bw-post-meta">${post.author ? post.author + ' · ' : ''}${new Date(post.date + 'T00:00:00').toLocaleDateString('es-CO')}</div></div><div class="bw-post-body">${post.content || ''}</div>${apVideoEmbedHtml(post.videoLink)}<div class="bw-reactions-row"><button class="bw-react-btn ${myReaction==='like'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','like')">👍 ${apSocialReactionCount(section, post, 'like')}</button><button class="bw-react-btn ${myReaction==='love'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','love')">❤️ ${apSocialReactionCount(section, post, 'love')}</button><button class="bw-react-btn ${myReaction==='clap'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','clap')">👏 ${apSocialReactionCount(section, post, 'clap')}</button></div><div class="bw-comments-wrap"><div class="bw-comments-list">${commentsPreview}</div><div class="bw-comment-form"><input id="bwCommentInput-${section}-${post.id}" class="form-input" placeholder="Escribe un comentario..."><button class="btn btn-sm btn-outline" onclick="apAddPostComment('${section}','${post.id}')">Comentar</button></div></div></article>`;
+    const adminActions = apCanManageWellnessPosts()
+        ? `<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">${apCanEditWellnessPost() ? `<button class="btn btn-sm btn-outline" onclick="apOpenWellbeingPostModal('${section}','${post.type || 'post'}','${post.id}')">Editar</button>` : ''}${apCanDeleteWellnessPost() ? `<button class="btn btn-sm btn-outline" onclick="apDeleteWellbeingPost('${section}','${post.id}')">Eliminar</button>` : ''}</div>`
+        : '';
+    return `<article class="bw-social-card"><div class="bw-post-head"><div class="bw-post-title">${post.title}</div><div class="bw-post-meta">${post.author ? post.author + ' · ' : ''}${new Date(post.date + 'T00:00:00').toLocaleDateString('es-CO')}</div></div>${adminActions}<div class="bw-post-body">${post.content || ''}</div>${apVideoEmbedHtml(post.videoLink)}<div class="bw-reactions-row"><button class="bw-react-btn ${myReaction==='like'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','like')">👍 ${apSocialReactionCount(section, post, 'like')}</button><button class="bw-react-btn ${myReaction==='love'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','love')">❤️ ${apSocialReactionCount(section, post, 'love')}</button><button class="bw-react-btn ${myReaction==='clap'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','clap')">👏 ${apSocialReactionCount(section, post, 'clap')}</button></div><div class="bw-comments-wrap"><div class="bw-comments-list">${commentsPreview}</div><div class="bw-comment-form"><input id="bwCommentInput-${section}-${post.id}" class="form-input" placeholder="Escribe un comentario..."><button class="btn btn-sm btn-outline" onclick="apAddPostComment('${section}','${post.id}')">Comentar</button></div></div></article>`;
 }
 function apRenderSocialFeed(section, title, actionButtonsHtml) {
     const cfg = apGetFeedConfig(section);
-    let posts = [...apGetWellnessPosts(section)];
+    let posts = [...apGetWellnessPosts(section), ...apGetWellnessArticles(section)];
     if (cfg.query) {
         const q = cfg.query.toLowerCase();
         posts = posts.filter(p => (p.title || '').toLowerCase().includes(q) || (p.author || '').toLowerCase().includes(q) || apStripHtmlToText(p.content || '').toLowerCase().includes(q));
@@ -1912,14 +2610,17 @@ function apRenderSocialFeed(section, title, actionButtonsHtml) {
     const totalPages = Math.max(1, Math.ceil(posts.length / cfg.pageSize));
     const safePage = Math.min(Math.max(1, cfg.page), totalPages);
     const chunk = posts.slice((safePage - 1) * cfg.pageSize, safePage * cfg.pageSize);
-    return `<div class="card"><div class="card-header"><span class="card-title">${title}</span><div style="display:flex;gap:8px;flex-wrap:wrap">${actionButtonsHtml || ''}<button class="btn btn-sm btn-outline" onclick="apOpenWellnessSection('')">Volver</button></div></div><div class="card-body"><div class="bw-feed-toolbar"><input class="form-input" placeholder="Buscar publicaciones..." value="${cfg.query}" oninput="apSetFeedConfig('${section}',{query:this.value,page:1});apOpenWellnessSection('${section}')"><select class="form-input" onchange="apSetFeedConfig('${section}',{sort:this.value,page:1});apOpenWellnessSection('${section}')"><option value="recent" ${cfg.sort==='recent'?'selected':''}>Más reciente</option><option value="old" ${cfg.sort==='old'?'selected':''}>Más antiguo</option></select></div><div class="bw-social-feed">${chunk.length ? chunk.map(p => apRenderPostCard(section, p)).join('') : '<div style="font-size:13px;color:var(--text-muted)">No hay publicaciones para estos filtros.</div>'}</div><div class="bw-pagination"><span style="font-size:12px;color:var(--text-muted)">Página ${safePage} de ${totalPages}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="apSetFeedConfig('${section}',{page:${safePage - 1}});apOpenWellnessSection('${section}')">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="apSetFeedConfig('${section}',{page:${safePage + 1}});apOpenWellnessSection('${section}')">Siguiente</button></div></div></div></div>`;
+    const adminButtons = apCanCreateWellnessPost()
+        ? `<button class="btn btn-sm btn-outline" onclick="apOpenWellbeingPostModal('${section}','post','')">Nueva publicación</button><button class="btn btn-sm btn-outline" onclick="apOpenWellbeingPostModal('${section}','article','')">Nuevo artículo</button>`
+        : '';
+    return `<div class="card"><div class="card-header"><span class="card-title">${title}</span><div style="display:flex;gap:8px;flex-wrap:wrap">${actionButtonsHtml || ''}${adminButtons}<button class="btn btn-sm btn-outline" onclick="apOpenWellnessSection('')">Volver</button></div></div><div class="card-body"><div class="bw-feed-toolbar"><input class="form-input" placeholder="Buscar publicaciones..." value="${cfg.query}" oninput="apSetFeedConfig('${section}',{query:this.value,page:1});apOpenWellnessSection('${section}')"><select class="form-input" onchange="apSetFeedConfig('${section}',{sort:this.value,page:1});apOpenWellnessSection('${section}')"><option value="recent" ${cfg.sort==='recent'?'selected':''}>Más reciente</option><option value="old" ${cfg.sort==='old'?'selected':''}>Más antiguo</option></select></div><div class="bw-social-feed">${chunk.length ? chunk.map(p => apRenderPostCard(section, p)).join('') : '<div style="font-size:13px;color:var(--text-muted)">No hay publicaciones para estos filtros.</div>'}</div><div class="bw-pagination"><span style="font-size:12px;color:var(--text-muted)">Página ${safePage} de ${totalPages}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="apSetFeedConfig('${section}',{page:${safePage - 1}});apOpenWellnessSection('${section}')">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="apSetFeedConfig('${section}',{page:${safePage + 1}});apOpenWellnessSection('${section}')">Siguiente</button></div></div></div></div>`;
 }
 
 function apOpenWellnessArticle(section, articleId) {
     const article = (apGetWellnessArticles(section) || []).find(a => a.id === articleId);
     if (!article) return;
     document.getElementById('modalTitle').textContent = article.title;
-    document.getElementById('modalBody').innerHTML = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${article.author ? article.author + ' · ' : ''}${new Date(article.date + 'T00:00:00').toLocaleDateString('es-CO')}</div><article class="bw-formal-article">${article.content || ''}</article>`;
+    document.getElementById('modalBody').innerHTML = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${article.author ? article.author + ' · ' : ''}${new Date(article.date + 'T00:00:00').toLocaleDateString('es-CO')}</div><article class="bw-formal-article">${article.content || ''}</article>`;
     srtSetModalSize('xl');
     document.getElementById('modalBackdrop').classList.add('show');
 }
@@ -1938,7 +2639,7 @@ function apRenderFormalFeed(section, title, actionButtonsHtml) {
     }
     posts.sort((a, b) => cfg.sort === 'old' ? new Date(a.date) - new Date(b.date) : new Date(b.date) - new Date(a.date));
     const totalPages = Math.max(1, Math.ceil(posts.length / cfg.pageSize));
-    const safePage = Math.min(Math.max(1, cfg.page), totalPages);
+    const safePage = Math.min(Math.max(1, page || 1), totalPages);
     const chunk = posts.slice((safePage - 1) * cfg.pageSize, safePage * cfg.pageSize);
     return `<div class="card"><div class="card-header"><span class="card-title">${title}</span><div style="display:flex;gap:8px;flex-wrap:wrap">${actionButtonsHtml || ''}<button class="btn btn-sm btn-outline" onclick="apOpenWellnessSection('')">Volver</button></div></div><div class="card-body"><div class="bw-feed-toolbar"><input class="form-input" placeholder="Buscar contenido..." value="${cfg.query}" oninput="apSetFeedConfig('${section}',{query:this.value,page:1});apOpenWellnessSection('${section}')"><select class="form-input" onchange="apSetFeedConfig('${section}',{sort:this.value,page:1});apOpenWellnessSection('${section}')"><option value="recent" ${cfg.sort==='recent'?'selected':''}>Más reciente</option><option value="old" ${cfg.sort==='old'?'selected':''}>Más antiguo</option></select></div><div class="bw-formal-feed">${chunk.length ? chunk.map(p => `<div class="bw-formal-item"><div class="bw-formal-title">${p.title}</div><div class="bw-formal-meta">${p.author ? p.author + ' · ' : ''}${new Date(p.date + 'T00:00:00').toLocaleDateString('es-CO')}</div><div class="bw-formal-excerpt">${apStripHtmlToText(p.content || '').slice(0, 220)}${apStripHtmlToText(p.content || '').length > 220 ? '...' : ''}</div>${p.videoLink ? `<a class="btn btn-sm btn-outline" href="${p.videoLink}" target="_blank" rel="noopener">Ver video</a>` : ''}</div>`).join('') : '<div style="font-size:13px;color:var(--text-muted)">No hay contenidos para estos filtros.</div>'}</div><div class="bw-pagination"><span style="font-size:12px;color:var(--text-muted)">Página ${safePage} de ${totalPages}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="apSetFeedConfig('${section}',{page:${safePage - 1}});apOpenWellnessSection('${section}')">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="apSetFeedConfig('${section}',{page:${safePage + 1}});apOpenWellnessSection('${section}')">Siguiente</button></div></div></div></div>`;
 }
@@ -1950,6 +2651,10 @@ function apInitBienestar() {
     const state = apGetWellnessState();
     document.getElementById('bwLandingCards').innerHTML = apWellnessCardsHtml();
     apOpenWellnessSection(state.activeSection || '');
+    apLoadWellnessContentFromBackend().then(() => {
+        document.getElementById('bwLandingCards').innerHTML = apWellnessCardsHtml();
+        apRenderWellnessSection(apGetWellnessState().activeSection || '');
+    }).catch(() => {});
 }
 function apOpenWellnessSection(section) {
     if (section && !canAccessWellnessSection(section)) {
@@ -1962,6 +2667,12 @@ function apOpenWellnessSection(section) {
     const landing = document.getElementById('bwLandingCards');
     if (landing) landing.style.display = section ? 'none' : '';
     apRenderWellnessSection(section);
+    if (section) {
+        apSyncWellnessStateFromBackend(section).then((synced) => {
+            const active = (apGetWellnessState().activeSection || '') === section;
+            if (synced && active) apRenderWellnessSection(section);
+        }).catch(() => {});
+    }
 }
 function apRenderWellnessSection(section) {
     const host = document.getElementById('bwSectionContainer');
@@ -1989,7 +2700,8 @@ function apRenderWellnessSection(section) {
         return;
     }
     if (section === 'scholarships') {
-        host.innerHTML = `<div class="card"><div class="card-header"><span class="card-title">Apoyos Económicos y Becas</span><button class="btn btn-sm btn-outline" onclick="apOpenWellnessSection('')">Volver</button></div><div class="card-body"><div class="bw-call-grid">${WELLNESS_DATA.scholarshipCalls.map(c => `<div class="bw-call-card"><div class="bw-call-title">${c.title}</div><div class="bw-call-meta">Cierre: ${new Date(c.closeDate + 'T00:00:00').toLocaleDateString('es-CO')}</div><div style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px">${c.requirement}</div><button class="btn btn-sm ${state.scholarshipRequests.includes(c.id) ? 'btn-success-outline' : 'btn-primary'}" onclick="apRequestScholarship('${c.id}')">${state.scholarshipRequests.includes(c.id) ? 'Postulación enviada' : 'Postularme'}</button></div>`).join('')}</div></div></div>`;
+        const calls = apCatalogList('scholarshipCalls');
+        host.innerHTML = `<div class="card"><div class="card-header"><span class="card-title">Apoyos Económicos y Becas</span><button class="btn btn-sm btn-outline" onclick="apOpenWellnessSection('')">Volver</button></div><div class="card-body"><div class="bw-call-grid">${calls.map(c => `<div class="bw-call-card"><div class="bw-call-title">${c.title}</div><div class="bw-call-meta">Cierre: ${new Date(c.closeDate + 'T00:00:00').toLocaleDateString('es-CO')} · Cupos: ${c.slots}</div><button class="btn btn-sm ${state.scholarshipRequests.includes(c.id) ? 'btn-success-outline' : 'btn-primary'}" onclick="apRequestScholarship('${c.id}')">${state.scholarshipRequests.includes(c.id) ? 'Postulación enviada' : 'Postularme'}</button></div>`).join('')}</div></div></div>`;
         return;
     }
 }
@@ -1999,53 +2711,79 @@ function apPsychModalRefreshSlots() {
     const date = (document.getElementById('psyModalDate') || {}).value;
     const slotSel = document.getElementById('psyModalSlot');
     if (!slotSel) return;
-    const prof = WELLNESS_DATA.psychologists.find(p => p.id === profId) || WELLNESS_DATA.psychologists[0];
+    const psychologists = apCatalogList('psychologists');
+    const prof = psychologists.find(p => p.id === profId) || psychologists[0];
     const dateInfo = prof && prof.dates ? prof.dates.find(d => d.date === date) : null;
     const slots = (dateInfo && dateInfo.slots && dateInfo.slots.length) ? dateInfo.slots : ['Sin disponibilidad'];
     slotSel.innerHTML = slots.map(s => `<option value="${s}">${s}</option>`).join('');
 }
 function apOpenPsychAppointmentModal() {
     document.getElementById('modalTitle').textContent = 'Agendar cita psicológica';
-    document.getElementById('modalBody').innerHTML = `<div class="form-group"><label class="form-label">Psicóloga</label><select id="psyModalProfessional" class="form-input" onchange="apPsychModalRefreshSlots()">${WELLNESS_DATA.psychologists.map(p => `<option value="${p.id}">${p.name} — ${p.specialty}</option>`).join('')}</select></div><div class="form-row"><div class="form-group"><label class="form-label">Fecha disponible</label><input type="date" id="psyModalDate" class="form-input" onchange="apPsychModalRefreshSlots()"></div><div class="form-group"><label class="form-label">Hora</label><select id="psyModalSlot" class="form-input"></select></div></div><div class="form-group"><label class="form-label">Motivo de la consulta</label>${buildStudentRichEditorHtml('psyModalReasonEditor',120)}</div><button class="btn btn-primary" onclick="apSubmitPsychAppointment()">Agendar cita</button>`;
-    const first = WELLNESS_DATA.psychologists[0];
+    const psychologists = apCatalogList('psychologists');
+    document.getElementById('modalBody').innerHTML = `<div class="form-group"><label class="form-label">Psicóloga</label><select id="psyModalProfessional" class="form-input" onchange="apPsychModalRefreshSlots()">${psychologists.map(p => `<option value="${p.id}">${p.name} — ${p.specialty}</option>`).join('')}</select></div><div class="form-row"><div class="form-group"><label class="form-label">Fecha disponible</label><input type="date" id="psyModalDate" class="form-input" onchange="apPsychModalRefreshSlots()"></div><div class="form-group"><label class="form-label">Hora</label><select id="psyModalSlot" class="form-input"></select></div></div><div class="form-group"><label class="form-label">Motivo de la consulta</label>${buildStudentRichEditorHtml('psyModalReasonEditor',120)}</div><button class="btn btn-primary" onclick="apSubmitPsychAppointment()">Agendar cita</button>`;
+    const first = psychologists[0];
     const dateInput = document.getElementById('psyModalDate');
     if (first && dateInput && first.dates.length) dateInput.value = first.dates[0].date;
     apPsychModalRefreshSlots();
     srtSetModalSize('xl');
     document.getElementById('modalBackdrop').classList.add('show');
 }
-function apSubmitPsychAppointment() {
+async function apSubmitPsychAppointment() {
     const profId = (document.getElementById('psyModalProfessional') || {}).value;
     const date = (document.getElementById('psyModalDate') || {}).value;
     const slot = (document.getElementById('psyModalSlot') || {}).value;
     const reason = srtGetHtml('psyModalReasonEditor');
     if (!profId || !date || !slot || slot === 'Sin disponibilidad' || !reason) { showToast('Completa profesional, fecha, hora y motivo.', 'error'); return; }
-    const prof = WELLNESS_DATA.psychologists.find(p => p.id === profId);
+    const prof = apCatalogList('psychologists').find(p => p.id === profId);
     const state = apGetWellnessState();
-    state.psychAppointments.push({ id: 'pa-' + Date.now(), professionalId: profId, professionalName: prof ? prof.name : 'Psicología', date, slot, reason, status: 'pendiente', createdAt: new Date().toISOString() });
-    apSaveWellnessState(state);
+    let savedInBackend = false;
+    try {
+        await apCreateWellbeingRequest({
+            studentId: currentStudent ? currentStudent.id : null,
+            moduleType: 'PSYCHOLOGY',
+            title: WELLBEING_REQUEST_TITLES.PSYCH_APPOINTMENT,
+            message: apStripHtmlToText(reason),
+            scheduledAt: date + 'T' + slot + ':00',
+            payload: {
+                professionalId: profId,
+                professionalName: prof ? prof.name : 'Psicología',
+                slot,
+                reasonHtml: reason
+            }
+        });
+        savedInBackend = true;
+        await apSyncWellnessStateFromBackend('psychology');
+    } catch (e) {
+        state.psychAppointments.push({ id: 'pa-' + Date.now(), professionalId: profId, professionalName: prof ? prof.name : 'Psicología', date, slot, reason, status: 'pendiente', createdAt: new Date().toISOString() });
+        apSaveWellnessState(state);
+    }
     closeModal();
-    showToast('Cita psicológica agendada', 'success');
+    showToast(savedInBackend ? 'Cita psicológica agendada' : 'Cita guardada localmente (sin conexión backend)', 'success');
     apOpenWellnessSection('psychology');
 }
 function apOpenPsychHistoryModal() {
     const state = apGetWellnessState();
     document.getElementById('modalTitle').textContent = 'Mis citas psicológicas';
-    document.getElementById('modalBody').innerHTML = `<div class="bw-mini-list">${state.psychAppointments.length ? state.psychAppointments.slice().reverse().map(a => `<div class="bw-mini-item"><strong>${a.professionalName}</strong><span>${a.date} · ${a.slot}</span><span class="badge badge-gold">${a.status}</span></div>`).join('') : '<div style="font-size:12.5px;color:var(--text-muted)">Sin citas registradas.</div>'}</div>`;
+    document.getElementById('modalBody').innerHTML = `<div class="bw-mini-list">${state.psychAppointments.length ? state.psychAppointments.slice().reverse().map(a => {
+        const s = apWellbeingStatusUi(a.statusRaw || a.status);
+        return `<div class="bw-mini-item"><strong>${a.professionalName}</strong><span>${a.date} · ${a.slot}</span><span class="badge ${s.cls}">${s.text}</span>${a.resolutionComment ? `<span style="font-size:12px;color:var(--text-muted)">Resolución: ${a.resolutionComment}</span>` : ''}</div>`;
+    }).join('') : '<div style="font-size:12.5px;color:var(--text-muted)">Sin citas registradas.</div>'}</div>`;
     srtSetModalSize('lg');
     document.getElementById('modalBackdrop').classList.add('show');
 }
 function apOpenSportsCallsModal() {
     const state = apGetWellnessState();
     document.getElementById('modalTitle').textContent = 'Convocatorias deportivas';
-    document.getElementById('modalBody').innerHTML = `<div class="bw-call-grid">${WELLNESS_DATA.sportCalls.map(c => `<div class="bw-call-card"><div class="bw-call-title">${c.title}</div><div class="bw-call-meta">Cierre: ${new Date(c.closeDate + 'T00:00:00').toLocaleDateString('es-CO')} · Cupos: ${c.slots}</div><button class="btn btn-sm ${state.sportRegistrations.includes(c.id) ? 'btn-success-outline' : 'btn-primary'}" onclick="apRegisterSportsCall('${c.id}')">${state.sportRegistrations.includes(c.id) ? 'Inscrito' : 'Inscribirme'}</button></div>`).join('')}</div>`;
+    const calls = apCatalogList('sportCalls');
+    document.getElementById('modalBody').innerHTML = `<div class="bw-call-grid">${calls.map(c => `<div class="bw-call-card"><div class="bw-call-title">${c.title}</div><div class="bw-call-meta">Cierre: ${new Date(c.closeDate + 'T00:00:00').toLocaleDateString('es-CO')} · Cupos: ${c.slots}</div><button class="btn btn-sm ${state.sportRegistrations.includes(c.id) ? 'btn-success-outline' : 'btn-primary'}" onclick="apRegisterSportsCall('${c.id}')">${state.sportRegistrations.includes(c.id) ? 'Inscrito' : 'Inscribirme'}</button></div>`).join('')}</div>`;
     srtSetModalSize('xl');
     document.getElementById('modalBackdrop').classList.add('show');
 }
 function apOpenWorkshopsModal() {
     const state = apGetWellnessState();
     document.getElementById('modalTitle').textContent = 'Talleres de orientación vocacional';
-    document.getElementById('modalBody').innerHTML = `<div class="bw-call-grid">${WELLNESS_DATA.workshops.map(w => `<div class="bw-call-card"><div class="bw-call-title">${w.title}</div><div class="bw-call-meta">Fecha: ${new Date(w.date + 'T00:00:00').toLocaleDateString('es-CO')} · Cupos: ${w.capacity}</div><button class="btn btn-sm ${state.workshopRegistrations.includes(w.id) ? 'btn-success-outline' : 'btn-primary'}" onclick="apRegisterWorkshop('${w.id}')">${state.workshopRegistrations.includes(w.id) ? 'Registrado' : 'Participar'}</button></div>`).join('')}</div>`;
+    const workshops = apCatalogList('workshops');
+    document.getElementById('modalBody').innerHTML = `<div class="bw-call-grid">${workshops.map(w => `<div class="bw-call-card"><div class="bw-call-title">${w.title}</div><div class="bw-call-meta">Fecha: ${new Date(w.date + 'T00:00:00').toLocaleDateString('es-CO')} · Cupos: ${w.capacity}</div><button class="btn btn-sm ${state.workshopRegistrations.includes(w.id) ? 'btn-success-outline' : 'btn-primary'}" onclick="apRegisterWorkshop('${w.id}')">${state.workshopRegistrations.includes(w.id) ? 'Registrado' : 'Participar'}</button></div>`).join('')}</div>`;
     srtSetModalSize('xl');
     document.getElementById('modalBackdrop').classList.add('show');
 }
@@ -2056,46 +2794,103 @@ function apOpenMedicalRequestModal() {
     document.getElementById('modalBackdrop').classList.add('show');
 }
 
-function apRegisterSportsCall(callId) {
+async function apRegisterSportsCall(callId) {
+    const call = apCatalogList('sportCalls').find(c => c.id === callId);
     const state = apGetWellnessState();
-    if (!state.sportRegistrations.includes(callId)) state.sportRegistrations.push(callId);
-    apSaveWellnessState(state);
-    showToast('Inscripción deportiva registrada', 'success');
+    let savedInBackend = false;
+    try {
+        await apCreateWellbeingRequest({
+            studentId: currentStudent ? currentStudent.id : null,
+            moduleType: 'SPORTS',
+            title: WELLBEING_REQUEST_TITLES.SPORT_CALL_REGISTRATION,
+            message: 'Solicitud de inscripción a convocatoria deportiva',
+            payload: { callId }
+        });
+        savedInBackend = true;
+        await apSyncWellnessStateFromBackend('sports');
+    } catch (e) {
+        if (!state.sportRegistrations.includes(callId)) state.sportRegistrations.push(callId);
+        apSaveWellnessState(state);
+    }
+    showToast(savedInBackend ? 'Inscripción deportiva registrada' : 'Inscripción guardada localmente (sin conexión backend)', 'success');
     apOpenWellnessSection('sports');
     if (document.getElementById('modalBackdrop').classList.contains('show')) apOpenSportsCallsModal();
 }
-function apRegisterWorkshop(workshopId) {
+async function apRegisterWorkshop(workshopId) {
+    const workshop = apCatalogList('workshops').find(w => w.id === workshopId);
     const state = apGetWellnessState();
-    if (!state.workshopRegistrations.includes(workshopId)) state.workshopRegistrations.push(workshopId);
-    apSaveWellnessState(state);
-    showToast('Registro a taller completado', 'success');
+    let savedInBackend = false;
+    try {
+        await apCreateWellbeingRequest({
+            studentId: currentStudent ? currentStudent.id : null,
+            moduleType: 'ORIENTATION',
+            title: WELLBEING_REQUEST_TITLES.WORKSHOP_REGISTRATION,
+            message: 'Solicitud de registro a taller de orientación vocacional',
+            scheduledAt: workshop && workshop.date ? (workshop.date + 'T08:00:00') : null,
+            payload: { workshopId }
+        });
+        savedInBackend = true;
+        await apSyncWellnessStateFromBackend('orientation');
+    } catch (e) {
+        if (!state.workshopRegistrations.includes(workshopId)) state.workshopRegistrations.push(workshopId);
+        apSaveWellnessState(state);
+    }
+    showToast(savedInBackend ? 'Registro a taller completado' : 'Registro guardado localmente (sin conexión backend)', 'success');
     apOpenWellnessSection('orientation');
     if (document.getElementById('modalBackdrop').classList.contains('show')) apOpenWorkshopsModal();
 }
-function apRequestMedicalAppointment() {
+async function apRequestMedicalAppointment() {
     const date = (document.getElementById('medDate') || {}).value;
     const time = (document.getElementById('medTime') || {}).value;
     const reason = ((document.getElementById('medReason') || {}).value || '').trim();
     if (!date || !time || !reason) { showToast('Completa fecha, hora y motivo de atención médica.', 'error'); return; }
     const state = apGetWellnessState();
-    state.medicalAppointments.push({ id: 'ma-' + Date.now(), date, time, reason, status: 'pendiente' });
-    apSaveWellnessState(state);
+    let savedInBackend = false;
+    try {
+        await apCreateWellbeingRequest({
+            studentId: currentStudent ? currentStudent.id : null,
+            moduleType: 'MEDICAL',
+            title: WELLBEING_REQUEST_TITLES.MEDICAL_APPOINTMENT,
+            message: reason,
+            scheduledAt: date + 'T' + time + ':00',
+            payload: { reason, time }
+        });
+        savedInBackend = true;
+        await apSyncWellnessStateFromBackend('medical');
+    } catch (e) {
+        state.medicalAppointments.push({ id: 'ma-' + Date.now(), date, time, reason, status: 'pendiente' });
+        apSaveWellnessState(state);
+    }
     closeModal();
-    showToast('Solicitud médica enviada', 'success');
+    showToast(savedInBackend ? 'Solicitud médica enviada' : 'Solicitud guardada localmente (sin conexión backend)', 'success');
     apOpenWellnessSection('medical');
 }
-function apRequestScholarship(callId) {
+async function apRequestScholarship(callId) {
+    const call = apCatalogList('scholarshipCalls').find(c => c.id === callId);
     const state = apGetWellnessState();
-    if (!state.scholarshipRequests.includes(callId)) state.scholarshipRequests.push(callId);
-    apSaveWellnessState(state);
-    showToast('Postulación a beca registrada', 'success');
+    let savedInBackend = false;
+    try {
+        await apCreateWellbeingRequest({
+            studentId: currentStudent ? currentStudent.id : null,
+            moduleType: 'SCHOLARSHIPS',
+            title: WELLBEING_REQUEST_TITLES.SCHOLARSHIP_APPLICATION,
+            message: 'Solicitud de postulación a convocatoria de beca',
+            payload: { callId }
+        });
+        savedInBackend = true;
+        await apSyncWellnessStateFromBackend('scholarships');
+    } catch (e) {
+        if (!state.scholarshipRequests.includes(callId)) state.scholarshipRequests.push(callId);
+        apSaveWellnessState(state);
+    }
+    showToast(savedInBackend ? 'Postulación a beca registrada' : 'Postulación guardada localmente (sin conexión backend)', 'success');
     apOpenWellnessSection('scholarships');
 }
 
 // ═══════════════════ FIN ÁREA PERSONAL ═══════════════════════════
 
 function loadActualizacion() {
-    const u = currentUser || MOCK.user;
+    const u = currentUser || {};
     document.getElementById('updName').value  = u.name  || '';
     document.getElementById('updEmail').value = u.email || '';
 }
@@ -2108,7 +2903,7 @@ async function saveProfile() {
     alertEl.style.display = 'none';
     if (!name || !email) { alertEl.textContent='Nombre y correo son obligatorios.'; alertEl.style.display='flex'; alertEl.className='alert alert-error'; return; }
     if (password && password !== confirm) { alertEl.textContent='Las contraseñas no coinciden.'; alertEl.style.display='flex'; alertEl.className='alert alert-error'; return; }
-    const u = currentUser || MOCK.user;
+    const u = currentUser || {};
     const body = { name, email, roleId:u.role?u.role.id:3, status:u.status||true };
     if (password) body.password = password;
     try { const res=await apiFetch('/api/users/'+u.id,{method:'PUT',body:JSON.stringify(body)}); if(res&&res.ok){currentUser=await res.json(); document.getElementById('sidebarUserName').textContent=currentUser.name;} } catch(e){}
@@ -2119,7 +2914,7 @@ async function saveProfile() {
 function openCourseView(courseId, options) {
     saveCurrentStudentScroll();
     const allCourses = enrollments.map(e=>e.course).filter(Boolean);
-    currentCourse = allCourses.find(c=>c.id===courseId) || MOCK.courses.find(c=>c.id===courseId);
+    currentCourse = allCourses.find(c => c.id === courseId) || null;
     if (!currentCourse) return;
     currentUnitIdx = Math.max(0, parseInt((options && options.unitIdx) || 0, 10) || 0);
     document.getElementById('mainContent').style.display = 'none';
@@ -2161,7 +2956,7 @@ document.getElementById('breadcrumbBack').addEventListener('click', closeCourseV
 
 function renderUnitTabs() {
     const units = getUnits(currentCourse.id), bar = document.getElementById('unitTabsBar');
-    if (!units.length) { bar.innerHTML='<div style="padding:0 20px;font-size:13px;color:var(--text-muted);display:flex;align-items:center;min-height:52px">Sin unidades registradas para este curso.</div>'; return; }
+    if (!units.length) { bar.innerHTML='<div class="empty-state"><div class="empty-state-title">Sin contenido</div><div class="empty-state-text">Este curso aún no tiene unidades configuradas.</div></div>'; return; }
     bar.innerHTML = units.map((u,i)=>`<button class="unit-tab ${i===0?'active':''}" onclick="renderUnit(${i})"><span class="unit-tab-num">${i+1}</span>${u.name}</button>`).join('');
 }
 
@@ -2215,7 +3010,7 @@ function deleteSubmission(actId) {
         '¿Seguro que deseas eliminar esta entrega? Esta acción no se puede deshacer.',
         'Eliminar',
         () => {
-            localStorage.removeItem('educat_sub_' + (currentStudent ? currentStudent.id : 1) + '_' + actId);
+            storageService.removeItem('educat_sub_' + (currentStudent ? currentStudent.id : 1) + '_' + actId);
             showToast('Entrega eliminada');
             renderUnit(currentUnitIdx);
         }
@@ -2308,11 +3103,11 @@ function renderUnit(idx, options) {
     const IBELL=`<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>`;
     const IVID=`<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>`;
     const ILINK=`<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>`;
-    const annHtml = announcements.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Anuncios del Docente</span><span class="badge badge-gold">${announcements.length}</span></div><div class="card-body" style="padding:0">${announcements.map((a,i)=>{ const isObj=typeof a==='object'&&a!==null; const title=isObj?(a.title||'Anuncio'):String(a).slice(0,80); const content=isObj?(a.content||a.title||''):String(a); const dateStr=isObj&&a.date?new Date(a.date+'T00:00:00').toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'}):''; const attachments=isObj&&Array.isArray(a.attachments)?a.attachments:[]; const cid=`ann-${currentCourse.id}-${idx}-${i}`; return `<div class="announcement-card ${isStudentCardOpen(cid)?'open':''}" id="${cid}"><div class="announcement-card-header" onclick="toggleCard('${cid}')"><div class="announcement-card-icon">${IBELL}</div><div class="announcement-card-meta"><div class="announcement-card-title">${title}</div>${dateStr?`<div class="announcement-card-date">${dateStr}</div>`:''}<div class="announcement-card-preview">${content}</div></div><button class="announcement-toggle-btn" onclick="event.stopPropagation();toggleCard('${cid}')">${IC}</button></div><div class="announcement-card-body"><div class="announcement-full-text">${content}</div>${attachments.length?`<div class="announcement-section-label">Archivos adjuntos</div><div class="attachment-list">${attachments.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Descargar</a></div>`).join('')}</div>`:''}</div></div>`; }).join('')}</div></div>` : '';
+    const annHtml = announcements.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Anuncios del Docente</span><span class="badge badge-gold">${announcements.length}</span></div><div class="card-body" style="padding:0">${announcements.map((a,i)=>{ const isObj=typeof a==='object'&&a!==null; const title=isObj?(a.title||'Anuncio'):String(a).slice(0,80); const content=isObj?(a.content||a.title||''):String(a); const dateStr=isObj&&a.date?new Date(a.date+'T00:00:00').toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'}):''; const attachments=isObj&&Array.isArray(a.attachments)?a.attachments:[]; const cid=`ann-${currentCourse.id}-${idx}-${i}`; return `<div class="announcement-card ${isStudentCardOpen(cid)?'open':''}" id="${cid}"><div class="announcement-card-header" onclick="toggleCard('${cid}')"><div class="announcement-card-icon">${IBELL}</div><div class="announcement-card-meta"><div class="announcement-card-title">${title}</div>${dateStr?`<div class="announcement-card-date">${dateStr}</div>`:''}<div class="announcement-card-preview">${content}</div></div><button class="announcement-toggle-btn" onclick="event.stopPropagation();toggleCard('${cid}')">${IC}</button></div><div class="announcement-card-body"><div class="announcement-full-text">${content}</div>${attachments.length?`<div class="announcement-section-label" style="margin-top:16px">Archivos adjuntos</div><div class="attachment-list">${attachments.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Descargar</a></div>`).join('')}</div>`:''}</div></div>`; }).join('')}</div></div>` : '';
     const actsHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Talleres y Actividades</span><span class="badge badge-navy">${acts.length}</span></div><div class="card-body" style="${acts.length?'padding:0':''}">${acts.length?acts.map((a,i)=>{ const sub=getSubmission(a.id); const cid=`act-${a.id}-${currentCourse.id}`; const isGraded=sub&&sub.graded; const isSubmitted=sub&&sub.submitted&&!sub.editing; const isLate=sub&&isSubmissionLate(a,sub); const keepOpen=isStudentCardOpen(cid)||!!(sub&&sub.editing); const statusBadge=isGraded?`<span class="badge badge-gold">Calificado: ${sub.grade}/10</span>`:isSubmitted?`<span class="badge badge-success">Enviado</span>`:`<span class="badge badge-navy">Pendiente</span>`; const dl=getActivityDeadline(a); const dueDateStr=dl?dl.toLocaleString('es-CO',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'}):''; const remaining=dl?formatRemaining(dl):''; return `<div class="activity-card ${keepOpen?'open':''}" id="${cid}"><div class="activity-card-header" onclick="toggleCard('${cid}')"><div class="activity-num">${i+1}</div><div class="activity-header-meta"><div class="activity-title">${a.title}</div><div class="activity-due-row">${dueDateStr?`<span class="activity-due">${ICAL} Entrega: ${dueDateStr}</span>`:''} ${remaining?`<span class="badge badge-warning">${remaining}</span>`:''} <span class="badge ${a.allowLateSubmission===false?'badge-navy':'badge-warning'}">${a.allowLateSubmission===false?'Sin retraso':'Permite retraso'}</span> ${statusBadge} ${isLate?'<span class="badge badge-warning">Tardia</span>':''}</div></div><button class="activity-toggle-btn" onclick="event.stopPropagation();toggleCard('${cid}')">${IC}</button></div><div class="activity-card-body"><div class="activity-description">${a.description||''}</div>${a.attachments&&a.attachments.length?`<div class="announcement-section-label" style="margin-top:16px">Material del docente</div><div class="attachment-list">${a.attachments.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Descargar</a></div>`).join('')}</div>`:''} ${a.materials&&a.materials.length?`<div class="announcement-section-label" style="margin-top:16px">Bibliografía y apoyo</div><div class="attachment-list">${a.materials.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Abrir</a></div>`).join('')}</div>`:''} ${renderSubmissionSection(a,sub)}</div></div>`; }).join(''):'<div style="color:var(--text-muted);font-size:13px;padding:4px 0">Sin talleres asignados para esta unidad.</div>'}</div></div>`;
     const examsHtml = exams.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Evaluaciones</span><span class="badge badge-error">${exams.length}</span></div><div class="card-body" style="padding:0">${exams.map((x,i)=>{ const cid=`exam-${x.id}-${currentCourse.id}`; const examDateStr=x.examDate?new Date(x.examDate+'T00:00:00').toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):''; return `<div class="exam-card" id="${cid}"><div class="exam-card-header" onclick="toggleCard('${cid}')"><div class="exam-num">${i+1}</div><div class="exam-header-meta"><div class="exam-title">${x.title}</div>${examDateStr?`<div class="exam-date">${ICAL} ${examDateStr}</div>`:''}</div></div>${x.description?`<div class="exam-card-body"><p style="font-size:14px;color:var(--text-body);line-height:1.75">${x.description}</p></div>`:''}</div>`; }).join('')}</div></div>` : '';
     const resourcesHtml = resources.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Bibliografía y Recursos</span><span class="badge badge-success">${resources.length}</span></div><div class="card-body">${resources.map(r=>`<a class="resource-card-item" href="${r.url||'#'}" target="_blank"><div class="resource-icon ${r.type||'doc'}"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${r.type==='video'?IVID:r.type==='link'?ILINK:'<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>'}</svg></div><span class="resource-name">${r.name}</span><span class="resource-type">${(r.type||'doc').toUpperCase()}</span></a>`).join('')}</div></div>` : '';
-    const forumsHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Foros</span><span class="badge badge-teal">${forums.length}</span></div><div class="card-body">${forums.length ? forums.map((forum,fi)=>{ const recent=(forum.messages||[]).slice(-3).reverse(); return `<div class="forum-card" style="margin-bottom:12px"><div class="forum-card-header"><div class="forum-card-icon"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div><div class="forum-card-meta"><div class="forum-card-title">${forum.title}</div><div class="forum-card-desc">${forum.description||'Sin descripcion.'}</div></div></div><div class="forum-card-stats"><span class="forum-stat">${(forum.messages||[]).length} publicacion(es)</span></div><div class="forum-threads-body">${recent.length?recent.map(m=>`<div class="forum-thread-item"><div class="forum-thread-title">${m.authorName}</div><div class="forum-thread-meta"><span>${new Date(m.createdAt).toLocaleString('es-CO')}</span></div><div style="font-size:12.8px;color:var(--text-body);margin-top:6px;line-height:1.6">${m.text}</div></div>`).join(''):'<div style="font-size:12.5px;color:var(--text-muted)">Sin mensajes aun.</div>'}</div><div style="padding:0 20px 16px"><button class="btn btn-sm btn-teal" onclick="openStudentForumDetail(${idx},${fi})">Abrir foro completo</button></div></div>`; }).join(''):'<div style="font-size:13px;color:var(--text-muted)">No hay foros disponibles en esta unidad.</div>'}</div></div>`;
+    const forumsHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Foros</span><span class="badge badge-teal">${forums.length}</span></div><div class="card-body">${forums.length ? forums.map((forum,fi)=>{ const recent=(forum.messages||[]).slice(-3).reverse(); return `<div class="forum-card" style="margin-bottom:12px"><div class="forum-card-header"><div class="forum-card-icon"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div><div class="forum-card-meta"><div class="forum-card-title">${forum.title}</div><div class="forum-card-desc">${forum.description||'Sin descripcion.'}</div></div></div><div class="forum-card-stats"><span class="forum-stat">${(forum.messages||[]).length} publicacion(es)</span></div><div class="forum-threads-body">${recent.length?recent.map(m=>`<div class="forum-thread-item"><div class="forum-thread-title">${m.authorName}</div><div class="forum-thread-meta"><span>${new Date(m.createdAt).toLocaleString('es-CO')}</span></div><div style="font-size:12.8px;color:var(--text-body);margin-top:6px">${m.text}</div></div>`).join(''):'<div style="font-size:12px;color:var(--text-muted)">Sin mensajes aun.</div>'}</div><div style="padding:0 20px 16px"><button class="btn btn-sm btn-teal" onclick="openStudentForumDetail(${idx},${fi})">Abrir foro completo</button></div></div>`; }).join(''):'<div style="font-size:13px;color:var(--text-muted)">No hay foros disponibles en esta unidad.</div>'}</div></div>`;
     const glossaryHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Glosarios</span><span class="badge badge-teal">${glossaries.length}</span></div><div class="card-body">${glossaries.map((g,gi)=>{ const terms=g.terms||[]; const initials=[...new Set(terms.map(t=>(t.term||'').charAt(0).toUpperCase()).filter(Boolean))].sort(); return `<div class="forum-card" style="margin-bottom:12px"><div class="forum-card-header"><div class="forum-card-meta"><div class="forum-card-title">${g.title||'Glosario'}</div><div class="forum-card-desc">${terms.length} término(s)</div></div></div><div style="padding:0 20px 8px;display:flex;gap:6px;flex-wrap:wrap">${initials.length?initials.map(i=>`<span class="badge badge-navy">${i}</span>`).join(''):'<span style="font-size:12px;color:var(--text-muted)">Sin iniciales.</span>'}</div><div class="forum-threads-body">${terms.slice(-4).reverse().map(t=>`<div class="forum-thread-item"><div class="forum-thread-title">${t.term}</div><div style="font-size:12.8px;color:var(--text-body);line-height:1.6;margin-top:6px">${t.definition}</div></div>`).join('') || '<div style="font-size:12.5px;color:var(--text-muted)">Sin términos aún.</div>'}</div><div style="padding:0 20px 16px;display:flex;gap:8px"><button class="btn btn-sm btn-outline" onclick="addStudentGlossaryTerm(${idx},${gi})">Sugerir termino</button><button class="btn btn-sm btn-teal" onclick="openStudentGlossaryDetail(${idx},${gi},'ALL',1)">Ver completo</button></div></div>`; }).join('')}</div></div>`;
     contentArea.innerHTML = `<div class="unit-welcome"><div class="unit-welcome-content"><div class="unit-welcome-label">Bienvenida a la Unidad</div><div class="unit-welcome-title">${unit.name}</div><div class="unit-welcome-text">${unit.welcome||''}</div></div></div><div class="unit-description-card" style="margin-bottom:20px"><div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);margin-bottom:10px">Descripción del Tema</div><p style="font-size:14px;line-height:1.75;color:var(--text-body)">${unit.description||'Sin descripción disponible.'}</p></div>${annHtml}${actsHtml}${examsHtml}${resourcesHtml}${forumsHtml}${glossaryHtml}`;
     if (currentCourse) {
@@ -2349,7 +3144,7 @@ function postStudentForumMessage(unitIdx, forumIdx) {
         text,
         createdAt: new Date().toISOString()
     });
-    localStorage.setItem('educat_units_' + currentCourse.id, JSON.stringify(units));
+    storageService.setItem('educat_units_' + currentCourse.id, JSON.stringify(units));
     openStudentForumDetail(unitIdx, forumIdx, 1);
 }
 
@@ -2464,7 +3259,7 @@ function saveStudentGlossaryTerm(unitIdx, glossaryIdx) {
         studentId: currentStudent ? currentStudent.id : null,
         authorName: (currentUser && currentUser.name) || 'Estudiante'
     });
-    localStorage.setItem('educat_units_' + currentCourse.id, JSON.stringify(units));
+    storageService.setItem('educat_units_' + currentCourse.id, JSON.stringify(units));
     closeModal();
     renderUnit(unitIdx);
     showToast('Termino agregado al glosario', 'success');
@@ -2548,35 +3343,28 @@ document.getElementById('btnReportarAusencia').addEventListener('click', async (
     const curso=document.getElementById('ausCurso'), fecha=document.getElementById('ausFecha').value, motivo=document.getElementById('ausMotivo').value, descripcion=document.getElementById('ausDescripcion').value.trim();
     document.getElementById('ausenciaOk').style.display='none';
     if(!curso.value||!fecha||!motivo||!descripcion){showToast('Completa todos los campos obligatorios','error');return;}
-    const sid=currentStudent?currentStudent.id:1, key='educat_ausencias_'+sid;
-    const historial=JSON.parse(localStorage.getItem(key)||'[]');
+    const sid=currentStudent?currentStudent.id:1;
     const supportFiles = await mapAbsenceSupportFiles(selectedFiles);
-    const record = {
-        id: 'abs-' + Date.now(),
-        studentId: sid,
-        studentName: (currentUser && currentUser.name) || 'Estudiante',
-        studentCode: (currentStudent && currentStudent.studentCode) || '',
-        courseId: parseInt(curso.value),
-        courseName: curso.options[curso.selectedIndex].text,
-        fecha,
-        motivo,
-        descripcion,
-        archivos: selectedFiles.length,
-        files: supportFiles,
-        status: 'pending',
-        ts: Date.now()
-    };
-    historial.push(record);
-    localStorage.setItem(key,JSON.stringify(historial));
-
-    const central = JSON.parse(localStorage.getItem('educat_absence_reports') || '[]');
-    central.push(record);
-    localStorage.setItem('educat_absence_reports', JSON.stringify(central));
+    const attachments = supportFiles.map(f => f && f.name ? String(f.name) : '').filter(Boolean);
+    try {
+        await postJson('/api/student/absence-reports', {
+            studentId: sid,
+            courseId: parseInt(curso.value, 10),
+            absenceDate: fecha,
+            reason: motivo,
+            description: descripcion,
+            attachments
+        });
+    } catch (e) {
+        showToast('No se pudo reportar la ausencia en backend', 'error');
+        return;
+    }
 
     document.getElementById('ausenciaOk').style.display='flex';
     curso.value=''; document.getElementById('ausMotivo').value=''; document.getElementById('ausDescripcion').value='';
     selectedFiles=[]; renderFileList();
-    showToast('Ausencia reportada correctamente','success'); loadAusencias();
+    showToast('Ausencia reportada correctamente','success');
+    await loadAusencias();
 });
 
 function hideInitialBootLoader() {
@@ -2593,20 +3381,48 @@ function hideInitialBootLoader() {
 
 async function init() {
     try {
-        authHeader = getAuth() || btoa('demo@educat.edu.co:demo1234');
+        authHeader = '';
         setDate();
-        currentUser    = MOCK.user;
-        currentStudent = {...MOCK.student, user:currentUser};
+        initStorageBackendSync();
+        await hydrateStorageFromBackend();
+        const me = await tryFetch('/api/auth/me');
+        if (!me || !me.id) {
+            window.location.href = '/login?role=student&redirect=/student-dashboard';
+            return;
+        }
+        const roleName = String((((me || {}).role || {}).name) || '').toUpperCase();
+        const studentRoles = ['ESTUDIANTE', 'STUDENT'];
+        currentUser = me;
+        const access = await tryFetch('/api/access/me');
+        const hasStudentPortal = !!(access && access.portals && access.portals.student);
+        if (!hasStudentPortal) {
+            window.location.href = roleName === 'DOCENTE' || roleName === 'TEACHER' || roleName === 'PROFESOR'
+                ? '/teacher-dashboard'
+                : '/login?role=student&redirect=/student-dashboard';
+            return;
+        }
+        try {
+            currentEffectivePermissions = Array.isArray((access || {}).permissions) ? access.permissions : [];
+        } catch (e) {
+            currentEffectivePermissions = [];
+        }
+        if (studentRoles.indexOf(roleName) >= 0) {
+            const studentsData = await tryFetch('/api/students');
+            currentStudent = (studentsData || []).find(s => s.user && s.user.id === currentUser.id) || null;
+            if (!currentStudent) {
+                window.location.href = '/login?role=student&redirect=/student-dashboard';
+                return;
+            }
+        } else {
+            // Usuario con acceso delegado al portal estudiantil (ej. admin).
+            currentStudent = { id: 0, studentCode: 'ACCESO-ADMIN' };
+        }
+        await hydrateStudentGuidesFromBackend();
+        await apLoadWellnessContentFromBackend().catch(() => {});
         document.getElementById('sidebarUserName').textContent    = currentUser.name;
         document.getElementById('sidebarStudentCode').textContent = currentStudent.studentCode;
         await loadOverview();
         restoreStudentNavigationState();
-        Promise.all([tryFetch('/api/users'), tryFetch('/api/students')]).then(([usersData,studentsData]) => {
-            const email = getEmail()||MOCK.user.email;
-            if(usersData&&usersData.length){const u=usersData.find(u=>u.email===email);if(u){currentUser=u;document.getElementById('sidebarUserName').textContent=currentUser.name;}}
-            if(studentsData&&studentsData.length){const s=studentsData.find(s=>s.user&&s.user.id===currentUser.id);if(s){currentStudent=s;document.getElementById('sidebarStudentCode').textContent=currentStudent.studentCode;}}
-            restoreStudentNavigationState();
-        });
     } finally {
         hideInitialBootLoader();
     }
@@ -2615,37 +3431,23 @@ async function init() {
 document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => navigateTo(btn.dataset.section)));
 document.getElementById('menuToggle').addEventListener('click', () => { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sidebarOverlay').classList.toggle('show'); });
 document.getElementById('sidebarCloseBtn').addEventListener('click', () => { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarOverlay').classList.remove('show'); });
-document.getElementById('logoutBtn').addEventListener('click', () => { localStorage.removeItem('educat_auth'); localStorage.removeItem('educat_email'); sessionStorage.removeItem('educat_auth'); sessionStorage.removeItem('educat_email'); sessionStorage.removeItem(STUDENT_NAV_STATE_KEY); window.location.href='login.html'; });
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+    sessionService.removeItem(STUDENT_NAV_STATE_KEY);
+    try {
+        await fetch(API + '/api/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch (e) {}
+    window.location.href = '/login';
+});
 document.getElementById('saveProfileBtn').addEventListener('click', saveProfile);
 const btnJoinCourseCodeStudent = document.getElementById('btnJoinCourseCodeStudent');
 if (btnJoinCourseCodeStudent) btnJoinCourseCodeStudent.addEventListener('click', openStudentJoinCourseModal);
+const btnReloadStudentCourses = document.getElementById('btnReloadStudentCourses');
+if (btnReloadStudentCourses) btnReloadStudentCourses.addEventListener('click', forceReloadStudentCourses);
 
-window.addEventListener('storage', (ev) => {
-    if (!ev || !ev.key) return;
-    if (ev.key === LOCAL_KEYS.courses || ev.key === LOCAL_KEYS.enrollments) {
-        loadOverview();
-        loadCursos();
-        return;
-    }
-    if (ev.key === 'educat_admin_instructivos') {
-        AP_GUIDES = loadAdminGuidesOrDefault();
-        const subView = document.getElementById('personalSubView');
-        const title = document.getElementById('personalSubTitle');
-        if (subView && subView.classList.contains('show') && title && String(title.textContent || '').toLowerCase().includes('instructivos')) {
-            const content = document.getElementById('personalSubContent');
-            if (content) content.innerHTML = apInstructivosHtml();
-        }
-        return;
-    }
-    if (!currentCourse) return;
-    if (ev.key === ('educat_units_' + currentCourse.id)) {
-        renderUnit(currentUnitIdx || 0);
-        return;
-    }
-    if (ev.key.startsWith('educat_sub_')) {
-        renderUnit(currentUnitIdx || 0);
-    }
+window.addEventListener('storage', () => {
+    // Backend-driven: no refresh por cambios en storage del navegador.
 });
 
 setupStudentScrollPersistence();
 init();
+

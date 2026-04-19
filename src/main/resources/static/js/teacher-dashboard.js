@@ -1,4 +1,4 @@
-const API = 'http://localhost:8080';
+const API = '';
 let authHeader = '';
 let currentUser = null;
 let currentTeacher = null;
@@ -8,12 +8,74 @@ let currentCourse = null;
 let currentUnitIdx = 0;
 let currentSubmissionsActivityId = null;
 let teacherForumReplyPanels = {};
+let teacherEvaluationById = {};
+let teacherStudents = [];
+let teacherGrades = [];
+let teacherActivities = [];
+let teacherExams = [];
+let teacherSchedules = [];
+let currentEffectiveAccess = null;
+let currentEffectivePermissions = [];
+
+function buildRuntimeStore() {
+    const data = Object.create(null);
+    const keys = [];
+    const add = k => { if (keys.indexOf(k) === -1) keys.push(k); };
+    const del = k => {
+        const idx = keys.indexOf(k);
+        if (idx >= 0) keys.splice(idx, 1);
+    };
+    return {
+        getItem(key) {
+            const k = String(key || '');
+            return Object.prototype.hasOwnProperty.call(data, k) ? data[k] : null;
+        },
+        setItem(key, value) {
+            const k = String(key || '');
+            data[k] = String(value);
+            add(k);
+        },
+        removeItem(key) {
+            const k = String(key || '');
+            delete data[k];
+            del(k);
+        },
+        key(index) {
+            const i = Number(index);
+            if (isNaN(i) || i < 0 || i >= keys.length) return null;
+            return keys[i];
+        },
+        clear() {
+            keys.slice().forEach(k => delete data[k]);
+            keys.length = 0;
+        },
+        get length() {
+            return keys.length;
+        }
+    };
+}
+const runtimeUnitsByCourse = Object.create(null);
+const runtimeSubmissionsByKey = Object.create(null);
+const runtimeUnitPartialByKey = Object.create(null);
+const storageService = buildRuntimeStore();
+const sessionService = buildRuntimeStore();
+const APP_STATE_PREFIX = 'educat_';
+let appStateHydrated = false;
+let appStateSyncInitialized = false;
+let appStateHydrating = false;
+const rawStorageGetItem = storageService.getItem.bind(storageService);
+const rawStorageSetItem = storageService.setItem.bind(storageService);
+const rawStorageRemoveItem = storageService.removeItem.bind(storageService);
 const GRADE_SCALE_MAX = 10;
 const DEFAULT_FORUM_PARTICIPATION_GRADE = 4.0;
+const TEACHER_EVAL_REVIEWS_KEY = 'educat_teacher_eval_report_reviews';
+const ADMIN_DELEGATED_TEACHER_COURSES_PREFIX = 'educat_admin_delegate_teacher_courses_';
 const tableUiState = {
     grades: { page: 1, pageSize: 8, query: '' },
     students: { page: 1, pageSize: 8 },
     absences: { page: 1, pageSize: 5, query: '', status: 'all' },
+    wellbeing: { page: 1, pageSize: 5, query: '', status: 'all', module: 'all' },
+    evalReports: { page: 1, pageSize: 6, query: '', type: 'all', submitted: 'all', courseId: 'all' },
     attendanceSummary: { page: 1, pageSize: 8, query: '' },
 };
 
@@ -75,14 +137,7 @@ function syncTeacherNavUrl(state) {
 function readTeacherNavState() {
     const fromUrl = readTeacherNavStateFromUrl();
     if (fromUrl) return fromUrl;
-    try {
-        const raw = JSON.parse(sessionStorage.getItem(TEACHER_NAV_STATE_KEY) || '{}');
-        if (!raw || typeof raw !== 'object') return null;
-        if (raw.userId && currentUser && String(raw.userId) !== String(currentUser.id || '')) return null;
-        return raw;
-    } catch (e) {
-        return null;
-    }
+    return null;
 }
 
 function writeTeacherNavState(partial) {
@@ -95,7 +150,6 @@ function writeTeacherNavState(partial) {
         updatedAt: new Date().toISOString()
     };
     syncTeacherNavUrl(next);
-    sessionStorage.setItem(TEACHER_NAV_STATE_KEY, JSON.stringify(next));
 }
 
 function resolveTeacherCourseById(courseId) {
@@ -103,8 +157,7 @@ function resolveTeacherCourseById(courseId) {
     if (!id) return null;
     const pool = ([])
         .concat(teacherCourses || [])
-        .concat(availableTeacherCourses || [])
-        .concat((MOCK && MOCK.courses) || []);
+        .concat(availableTeacherCourses || []);
     return pool.find(c => String((c && c.id) || '') === id) || null;
 }
 
@@ -273,8 +326,50 @@ const DEFAULT_UNITS = {
     ],
 };
 
-function getAuth() { return localStorage.getItem('educat_auth') || sessionStorage.getItem('educat_auth'); }
-function getEmail() { return localStorage.getItem('educat_email') || sessionStorage.getItem('educat_email'); }
+function getAuth() { return ''; }
+function getEmail() { return ''; }
+
+try {
+    MOCK.user = { id: null, name: '', email: '', role: { id: null, name: '' }, status: true };
+    MOCK.teacher = { id: null, specialization: '' };
+    MOCK.courses = [];
+    MOCK.students = [];
+    MOCK.grades = [];
+    MOCK.activities = [];
+    MOCK.exams = [];
+    MOCK.schedules = [];
+    Object.keys(DEFAULT_UNITS || {}).forEach(k => { delete DEFAULT_UNITS[k]; });
+} catch (e) {
+    // noop
+}
+
+function getStorageKeys() {
+    const keys = [];
+    for (let i = 0; i < storageService.length; i++) {
+        const key = storageService.key(i);
+        if (key) keys.push(key);
+    }
+    return keys;
+}
+
+function delegatedTeacherCoursesKey() {
+    const userId = String((currentUser && currentUser.id) || '').trim();
+    return ADMIN_DELEGATED_TEACHER_COURSES_PREFIX + (userId || '0');
+}
+
+function readDelegatedTeacherCourses() {
+    try {
+        const raw = storageService.getItem(delegatedTeacherCoursesKey()) || '[]';
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveDelegatedTeacherCourses(courses) {
+    storageService.setItem(delegatedTeacherCoursesKey(), JSON.stringify(Array.isArray(courses) ? courses : []));
+}
 
 const LOCAL_KEYS = {
     courses: 'educat_local_courses',
@@ -282,18 +377,14 @@ const LOCAL_KEYS = {
 };
 
 const TEACHER_GUIDES_KEY = 'educat_admin_instructivos';
+let teacherGuideAttachmentDraft = [];
 
 function readLocalArray(key) {
-    try {
-        const parsed = JSON.parse(localStorage.getItem(key) || '[]');
-        return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-        return [];
-    }
+    return [];
 }
 
 function writeLocalArray(key, data) {
-    localStorage.setItem(key, JSON.stringify(Array.isArray(data) ? data : []));
+    // backend-only
 }
 
 function getLocalCourses() {
@@ -305,58 +396,11 @@ function getLocalEnrollments() {
 }
 
 function getTeacherCourseLocalSets() {
-    const localCourses = getLocalCourses();
-    const localEnrollments = getLocalEnrollments();
-    const myTeacherId = String((currentTeacher && currentTeacher.id) || '');
-    const myUserId = String((currentUser && currentUser.id) || '');
-    const mine = [];
-    const available = [];
-    localCourses.forEach(c => {
-        const teacherId = String((c.teacher || {}).id || '');
-        const teacherUserId = String(((c.teacher || {}).user || {}).id || '');
-        const cid = String(c.id || '');
-        const studentsCount = localEnrollments.filter(e => String(e.courseId || (e.course || {}).id || '') === cid).length;
-        const normalized = { ...c, studentsCount };
-        if (!teacherId && !teacherUserId) {
-            available.push(normalized);
-            return;
-        }
-        if ((myTeacherId && teacherId === myTeacherId) || (myUserId && teacherUserId === myUserId)) {
-            mine.push(normalized);
-        }
-    });
-    return { mine, available };
+    return { mine: [], available: [] };
 }
 
 function claimCourseByCodeLocal(courseCode) {
-    const code = String(courseCode || '').trim().toLowerCase();
-    const localCourses = getLocalCourses();
-    const idx = localCourses.findIndex(c => String(c.courseCode || '').trim().toLowerCase() === code);
-    if (idx < 0) return { success: false, message: 'Código inválido o curso inexistente' };
-    const current = localCourses[idx] || {};
-    const currentTeacherId = String((current.teacher || {}).id || '');
-    const myTeacherId = String((currentTeacher && currentTeacher.id) || '');
-    if (currentTeacherId && currentTeacherId !== myTeacherId) {
-        return { success: false, message: 'El curso ya tiene otro docente asignado' };
-    }
-    if (currentTeacherId && currentTeacherId === myTeacherId) {
-        return { success: true, message: 'Ya estás asignado a este curso', course: current };
-    }
-
-    const claimed = {
-        ...current,
-        teacher: {
-            id: currentTeacher && currentTeacher.id ? currentTeacher.id : current.id,
-            specialization: (currentTeacher && currentTeacher.specialization) || 'Docente',
-            user: {
-                id: currentUser && currentUser.id ? currentUser.id : null,
-                name: (currentUser && currentUser.name) || 'Docente'
-            }
-        }
-    };
-    localCourses[idx] = claimed;
-    writeLocalArray(LOCAL_KEYS.courses, localCourses);
-    return { success: true, message: 'Curso tomado correctamente', course: claimed };
+    return { success: false, message: 'Modo backend-only activo. No se permiten asignaciones locales.' };
 }
 
 /* ─── Modal file attachment helpers ─────────────────────────────────────────── */
@@ -514,8 +558,8 @@ function removeExistingAttachment(key, unitIdx, annIdx, attIdx) {
 /* ─── END modal file helpers ─────────────────────────────────────────────────── */
 
 async function apiFetch(url, opts = {}) {
-    const headers = { 'Authorization': 'Basic ' + authHeader, 'Content-Type': 'application/json', ...opts.headers };
-    try { return await fetch(API + url, { ...opts, headers }); } catch (e) { return null; }
+    const headers = { 'Content-Type': 'application/json', ...opts.headers };
+    try { return await fetch(API + url, { ...opts, headers, credentials: 'include' }); } catch (e) { return null; }
 }
 
 async function tryFetch(url) {
@@ -532,6 +576,91 @@ async function postJson(url, payload) {
     try { data = txt ? JSON.parse(txt) : null; } catch (e) { data = null; }
     if (!res.ok) throw new Error((data && data.message) || txt || ('HTTP ' + res.status));
     return data;
+}
+
+function getEffectivePermissions() {
+    return Array.isArray(currentEffectivePermissions) ? currentEffectivePermissions : [];
+}
+
+function isCurrentUserAdmin() {
+    const roleName = String((((currentUser || {}).role || {}).name) || '').toUpperCase();
+    if (roleName === 'ADMIN' || roleName === 'ADMINISTRADOR') return true;
+    return getEffectivePermissions().includes('portal.admin');
+}
+
+function hasAnyPermission(permissions) {
+    if (isCurrentUserAdmin()) return true;
+    const granted = getEffectivePermissions();
+    return (permissions || []).some(p => granted.includes(String(p || '')));
+}
+
+function canReviewWellbeingAction(action) {
+    const approve = hasAnyPermission(['bienestar.aprobar-publicacion']);
+    const reject = hasAnyPermission(['bienestar.rechazar-publicacion']);
+    if (action === 'APPROVED') return approve;
+    if (action === 'REJECTED' || action === 'CANCELLED') return reject;
+    return approve || reject;
+}
+
+function canModerateEvaluationReports() {
+    return canReviewWellbeingAction('APPROVED') || canReviewWellbeingAction('REJECTED');
+}
+
+function isAppStateStorageKey(key) {
+    const storageKey = String(key || '').trim();
+    return !!storageKey && storageKey.indexOf(APP_STATE_PREFIX) === 0;
+}
+
+function persistStorageValueInBackend(key, value) {
+    if (!isAppStateStorageKey(key)) return;
+    apiFetch('/api/app-state/' + encodeURIComponent(String(key)), {
+        method: 'PUT',
+        body: JSON.stringify({ value: String(value == null ? '' : value) })
+    }).catch(() => {
+        // Mantener valor local cuando falle la red/backend.
+    });
+}
+
+function deleteStorageValueInBackend(key) {
+    if (!isAppStateStorageKey(key)) return;
+    apiFetch('/api/app-state/' + encodeURIComponent(String(key)), {
+        method: 'DELETE',
+        headers: {}
+    }).catch(() => {
+        // No bloquear UX por error de sincronización remota.
+    });
+}
+
+function initStorageBackendSync() {
+    if (appStateSyncInitialized) return;
+    appStateSyncInitialized = true;
+
+    storageService.getItem = function (key) {
+        return rawStorageGetItem(key);
+    };
+    storageService.setItem = function (key, value) {
+        rawStorageSetItem(key, value);
+        if (!appStateHydrating) persistStorageValueInBackend(key, value);
+    };
+    storageService.removeItem = function (key) {
+        rawStorageRemoveItem(key);
+        if (!appStateHydrating) deleteStorageValueInBackend(key);
+    };
+}
+
+async function hydrateStorageFromBackend() {
+    if (appStateHydrated) return;
+    appStateHydrating = true;
+    try {
+        const entries = await tryFetch('/api/app-state?prefix=' + encodeURIComponent(APP_STATE_PREFIX));
+        Object.keys(entries || {}).forEach(k => {
+            const value = entries[k];
+            if (typeof value === 'string') rawStorageSetItem(k, value);
+        });
+    } finally {
+        appStateHydrating = false;
+        appStateHydrated = true;
+    }
 }
 
 function showToast(msg, type = '') {
@@ -1104,19 +1233,19 @@ function toRichHtml(value) {
 }
 
 function getUnits(courseId) {
-    const s = localStorage.getItem('educat_units_' + courseId);
+    const s = storageService.getItem('educat_units_' + courseId);
     if (s) try { return JSON.parse(s); } catch (e) {}
     return JSON.parse(JSON.stringify(DEFAULT_UNITS[courseId] || []));
 }
 
-function saveUnits(courseId, units) { localStorage.setItem('educat_units_' + courseId, JSON.stringify(units)); }
+function saveUnits(courseId, units) { storageService.setItem('educat_units_' + courseId, JSON.stringify(units)); }
 
 function setDate() {
     document.getElementById('currentDate').textContent = new Date().toLocaleDateString('es-CO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 }
 
 function getStudentSubmission(studentId, actId) {
-    try { return JSON.parse(localStorage.getItem('educat_sub_' + studentId + '_' + actId)); } catch (e) { return null; }
+    try { return JSON.parse(storageService.getItem('educat_sub_' + studentId + '_' + actId)); } catch (e) { return null; }
 }
 
 function clampGrade(value) {
@@ -1136,17 +1265,17 @@ function fmtGrade(value) {
 }
 
 function getUnitPartialScores(courseId, unitId) {
-    try { return JSON.parse(localStorage.getItem('educat_unit_partial_' + courseId + '_' + unitId) || '{}'); } catch (e) { return {}; }
+    try { return JSON.parse(storageService.getItem('educat_unit_partial_' + courseId + '_' + unitId) || '{}'); } catch (e) { return {}; }
 }
 
 function saveUnitPartialScores(courseId, unitId, scores) {
-    localStorage.setItem('educat_unit_partial_' + courseId + '_' + unitId, JSON.stringify(scores || {}));
+    storageService.setItem('educat_unit_partial_' + courseId + '_' + unitId, JSON.stringify(scores || {}));
 }
 
 function getForumParticipantStudentId(msg) {
     if (!msg) return null;
     if (msg.studentId) return parseInt(msg.studentId, 10) || null;
-    const byName = MOCK.students.find(s => (s.user && s.user.name) === msg.authorName);
+    const byName = teacherStudents.find(s => (s.user && s.user.name) === msg.authorName);
     return byName ? byName.id : null;
 }
 
@@ -1159,7 +1288,7 @@ function splitStudentName(fullName) {
 }
 
 function getStudentIdByName(name) {
-    const byName = MOCK.students.find(s => (s.user && s.user.name) === name);
+    const byName = teacherStudents.find(s => (s.user && s.user.name) === name);
     return byName ? byName.id : null;
 }
 
@@ -1169,7 +1298,7 @@ function getForumParticipants(forum) {
         if ((msg.authorRole || '').toLowerCase() !== 'estudiante') return;
         const studentId = getForumParticipantStudentId(msg);
         if (!studentId || map[studentId]) return;
-        const student = MOCK.students.find(s => s.id === studentId);
+        const student = teacherStudents.find(s => s.id === studentId);
         if (student) map[studentId] = student;
     });
     return Object.values(map);
@@ -1246,7 +1375,7 @@ function getGlossaryParticipants(glossary) {
     (glossary.terms || []).forEach(term => {
         const sid = term.studentId || getStudentIdByName(term.authorName || '');
         if (!sid || map[sid]) return;
-        const st = MOCK.students.find(s => s.id === sid);
+        const st = teacherStudents.find(s => s.id === sid);
         if (st) map[sid] = st;
     });
     return Object.values(map);
@@ -1275,7 +1404,7 @@ function getAdminGradingConfig() {
         examMaxPercent: 100
     };
     try {
-        const raw = JSON.parse(localStorage.getItem('educat_admin_grade_policy') || '{}');
+        const raw = JSON.parse(storageService.getItem('educat_admin_grade_policy') || '{}');
         return {
             allowTeacherCustom: raw.allowTeacherCustom !== false,
             forcedModel: normalizeMode(raw.forcedModel || ''),
@@ -1289,7 +1418,7 @@ function getAdminGradingConfig() {
 }
 
 function upsertTeacherGradeRecord(courseId, student, grade, description, sourceUnitId) {
-    const existing = MOCK.grades.find(g => g.course && g.course.id === courseId && g.student && g.student.id === student.id && g.sourceUnitId === sourceUnitId);
+    const existing = teacherGrades.find(g => g.course && g.course.id === courseId && g.student && g.student.id === student.id && g.sourceUnitId === sourceUnitId);
     const payload = {
         student: { id: student.id, studentCode: student.studentCode, user: { name: student.user.name } },
         course: { id: courseId },
@@ -1299,23 +1428,31 @@ function upsertTeacherGradeRecord(courseId, student, grade, description, sourceU
         source: 'unit-final'
     };
     if (existing) Object.assign(existing, payload);
-    else MOCK.grades.push({ id: Date.now() + Math.floor(Math.random() * 1000), ...payload });
+    else teacherGrades.push({ id: Date.now() + Math.floor(Math.random() * 1000), ...payload });
 }
 
 function getStoredCourseActivities(courseId) {
-    try { return JSON.parse(localStorage.getItem('educat_course_activities_' + courseId) || '[]'); } catch (e) { return []; }
+    try {
+        return JSON.parse(storageService.getItem('educat_course_activities_' + courseId) || '[]');
+    } catch (e) {
+        return [];
+    }
 }
 function saveStoredCourseActivities(courseId, items) {
-    localStorage.setItem('educat_course_activities_' + courseId, JSON.stringify(items || []));
+    storageService.setItem('educat_course_activities_' + courseId, JSON.stringify(Array.isArray(items) ? items : []));
 }
 function getStoredCourseExams(courseId) {
-    try { return JSON.parse(localStorage.getItem('educat_course_exams_' + courseId) || '[]'); } catch (e) { return []; }
+    try {
+        return JSON.parse(storageService.getItem('educat_course_exams_' + courseId) || '[]');
+    } catch (e) {
+        return [];
+    }
 }
 function saveStoredCourseExams(courseId, items) {
-    localStorage.setItem('educat_course_exams_' + courseId, JSON.stringify(items || []));
+    storageService.setItem('educat_course_exams_' + courseId, JSON.stringify(Array.isArray(items) ? items : []));
 }
 function getCourseActivitiesMerged(courseId) {
-    const base = MOCK.activities.filter(a => a.course && a.course.id === courseId);
+    const base = teacherActivities.filter(a => a.course && a.course.id === courseId);
     const stored = getStoredCourseActivities(courseId);
     if (!stored.length) return base;
     const map = {};
@@ -1324,7 +1461,7 @@ function getCourseActivitiesMerged(courseId) {
     return Object.values(map);
 }
 function getCourseExamsMerged(courseId) {
-    const base = MOCK.exams.filter(x => x.course && x.course.id === courseId);
+    const base = teacherExams.filter(x => x.course && x.course.id === courseId);
     const stored = getStoredCourseExams(courseId);
     if (!stored.length) return base;
     const map = {};
@@ -1333,11 +1470,11 @@ function getCourseExamsMerged(courseId) {
     return Object.values(map);
 }
 function getAllActivitiesMerged() {
-    const ids = (teacherCourses.length ? teacherCourses : MOCK.courses).map(c => c.id);
+    const ids = (teacherCourses || []).map(c => c.id);
     return ids.flatMap(id => getCourseActivitiesMerged(id));
 }
 function getAllExamsMerged() {
-    const ids = (teacherCourses.length ? teacherCourses : MOCK.courses).map(c => c.id);
+    const ids = (teacherCourses || []).map(c => c.id);
     return ids.flatMap(id => getCourseExamsMerged(id));
 }
 
@@ -1364,7 +1501,7 @@ function isSubmissionLate(act, sub) {
 
 function saveStudentGrade(studentId, actId, grade, feedback) {
     const existing = getStudentSubmission(studentId, actId) || {};
-    localStorage.setItem('educat_sub_' + studentId + '_' + actId, JSON.stringify({ ...existing, graded: true, grade: clampGrade(grade), feedback, gradedAt: new Date().toISOString() }));
+    storageService.setItem('educat_sub_' + studentId + '_' + actId, JSON.stringify({ ...existing, graded: true, grade: clampGrade(grade), feedback, gradedAt: new Date().toISOString() }));
 }
 
 function normalizeFileSource(src) {
@@ -1455,7 +1592,7 @@ function getGradeSubmissionStats(gradeRow) {
 }
 
 function openGradeSubmissionFiles(gradeId) {
-    const grade = (MOCK.grades || []).find(g => String(g.id) === String(gradeId));
+    const grade = (teacherGrades || []).find(g => String(g.id) === String(gradeId));
     if (!grade) return;
     const stats = getGradeSubmissionStats(grade);
     if (!stats.totalFiles) {
@@ -1479,7 +1616,7 @@ function openGradeSubmissionFiles(gradeId) {
 
 function getPendingSubmissionsCount() {
     let count = 0;
-    getAllActivitiesMerged().forEach(a => MOCK.students.forEach(s => {
+    getAllActivitiesMerged().forEach(a => teacherStudents.forEach(s => {
         const sub = getStudentSubmission(s.id, a.id);
         if (sub && sub.submitted && !sub.graded) count++;
     }));
@@ -1554,18 +1691,29 @@ function navigateTo(section, options) {
 }
 
 async function loadOverview() {
+    if ((currentTeacher && currentTeacher.id === 0)) {
+        teacherCourses = readDelegatedTeacherCourses();
+    }
     const localSets = getTeacherCourseLocalSets();
     if (localSets.mine.length || localSets.available.length) {
         teacherCourses = localSets.mine;
     }
     const coursesData = await tryFetch('/api/courses/teacher/' + (currentTeacher ? currentTeacher.id : 0));
     if (!localSets.mine.length && !localSets.available.length) {
-        teacherCourses = (coursesData && coursesData.length) ? coursesData : MOCK.courses;
+        teacherCourses = (coursesData && coursesData.length) ? coursesData : [];
     }
     const activitiesData = await tryFetch('/api/activities');
-    const actividades = (activitiesData && activitiesData.length) ? activitiesData : MOCK.activities;
+    const actividades = (activitiesData && activitiesData.length) ? activitiesData : [];
     const examsData = await tryFetch('/api/exams');
-    const examenes = (examsData && examsData.length) ? examsData : MOCK.exams;
+    const examenes = (examsData && examsData.length) ? examsData : [];
+    const studentsData = await tryFetch('/api/students');
+    const gradesData = await tryFetch('/api/grades');
+    const schedulesData = await tryFetch('/api/schedules/teacher/' + (currentTeacher ? currentTeacher.id : 0));
+    teacherActivities = Array.isArray(actividades) ? actividades.slice() : [];
+    teacherExams = Array.isArray(examenes) ? examenes.slice() : [];
+    teacherStudents = Array.isArray(studentsData) ? studentsData.slice() : [];
+    teacherGrades = Array.isArray(gradesData) ? gradesData.slice() : [];
+    teacherSchedules = Array.isArray(schedulesData) ? schedulesData.slice() : [];
     const pending = getPendingSubmissionsCount();
     document.getElementById('statCursos').textContent = teacherCourses.length;
     document.getElementById('statEstudiantes').textContent = teacherCourses.reduce((s, c) => s + (c.studentsCount || 0), 0);
@@ -1584,8 +1732,8 @@ async function loadOverview() {
     }).join('');
 
     document.getElementById('overviewActividades').innerHTML = actividades.slice(0, 5).map(a => {
-        const course = MOCK.courses.find(c => c.id === (a.course ? a.course.id : 0)) || {};
-        const p = MOCK.students.filter(s => { const sub = getStudentSubmission(s.id, a.id); return sub && sub.submitted && !sub.graded; }).length;
+        const course = teacherCourses.find(c => c.id === (a.course ? a.course.id : 0)) || {};
+        const p = 0;
         return `<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid rgba(11,31,58,0.05);align-items:center">
     <div style="width:7px;height:7px;border-radius:50%;background:var(--gold);flex-shrink:0;margin-top:3px"></div>
 <div style="flex:1;min-width:0">
@@ -1598,10 +1746,6 @@ ${p > 0 ? `<span class="badge badge-error" style="flex-shrink:0">${p} pend.</spa
 
     const oP = document.getElementById('overviewPendingSubmissions');
     const pendingRows = [];
-    actividades.forEach(a => MOCK.students.forEach(s => {
-        const sub = getStudentSubmission(s.id, a.id);
-        if (sub && sub.submitted && !sub.graded) pendingRows.push({ act: a, student: s });
-    }));
     if (!pendingRows.length) {
         oP.innerHTML = '<div style="text-align:center;padding:20px 0"><div style="font-family:\'Cormorant Garamond\',serif;font-size:18px;font-weight:600;color:var(--success)">✓ Todo al día</div><div style="font-size:12px;color:var(--text-muted);margin-top:4px">No hay entregas pendientes.</div></div>';
     } else {
@@ -1617,7 +1761,7 @@ ${p > 0 ? `<span class="badge badge-error" style="flex-shrink:0">${p} pend.</spa
 
     const sorted = [...examenes].sort((a, b) => new Date(a.examDate) - new Date(b.examDate));
     document.getElementById('overviewExams').innerHTML = sorted.slice(0, 4).map(x => {
-        const course = MOCK.courses.find(c => c.id === (x.course ? x.course.id : 0)) || {};
+        const course = teacherCourses.find(c => c.id === (x.course ? x.course.id : 0)) || {};
         const d = x.examDate ? new Date(x.examDate + 'T00:00:00') : null;
         const diff = d ? Math.ceil((d - new Date()) / 86400000) : null;
         const col = diff !== null && diff <= 3 ? 'var(--error)' : diff !== null && diff <= 7 ? 'var(--gold)' : 'var(--success)';
@@ -1632,6 +1776,8 @@ ${p > 0 ? `<span class="badge badge-error" style="flex-shrink:0">${p} pend.</spa
 ${diff !== null ? `<span style="font-size:11px;font-weight:700;color:${col};flex-shrink:0">${diff <= 0 ? 'Hoy' : diff + 'd'}</span>` : ''}
 </div>`;
     }).join('') || '<div style="color:var(--text-muted);font-size:13px">Sin evaluaciones programadas.</div>';
+
+    initTeacherModerationOverview(teacherCourses || []);
 }
 
 async function loadCursos() {
@@ -1641,7 +1787,7 @@ async function loadCursos() {
         availableTeacherCourses = localSets.available;
     }
     if (!teacherCourses.length && !availableTeacherCourses.length) {
-        if (!teacherCourses.length) teacherCourses = MOCK.courses;
+        if (!teacherCourses.length) teacherCourses = [];
     }
     document.getElementById('cursosGrid').innerHTML = '<div class="grid-3">' + teacherCourses.map(c => {
         const cj = JSON.stringify(c).replace(/"/g, '&quot;');
@@ -1708,14 +1854,17 @@ async function joinCourseByCodeAsTeacher() {
     if (!code) return showToast('Ingresa un código de curso', 'error');
     try {
         const role = (currentUser && currentUser.role && currentUser.role.name) ? currentUser.role.name : 'DOCENTE';
-        let resp = null;
-        try {
-            resp = await postJson('/api/courses/join-by-code', { courseCode: code, userId: currentUser.id, role });
-        } catch (e) {
-            resp = claimCourseByCodeLocal(code);
-        }
+        const resp = await postJson('/api/courses/join-by-code', { courseCode: code, userId: currentUser.id, role });
         if (!resp || resp.success === false) return showToast((resp && resp.message) || 'No se pudo unir al curso', 'error');
         closeModal();
+        if ((currentTeacher && currentTeacher.id === 0) && resp.course) {
+            const exists = (teacherCourses || []).some(c => String(c.id || '') === String(resp.course.id || ''));
+            if (!exists) teacherCourses.push(resp.course);
+            saveDelegatedTeacherCourses(teacherCourses);
+            await loadCursos();
+            showToast(resp.message || 'Acceso administrativo concedido al curso', 'success');
+            return;
+        }
         await loadOverview();
         await loadCursos();
         showToast(resp.message || 'Curso vinculado', 'success');
@@ -1727,11 +1876,7 @@ async function joinCourseByCodeAsTeacher() {
 async function claimCourseByCode(courseCode) {
     if (!courseCode) return null;
     const role = (currentUser && currentUser.role && currentUser.role.name) ? currentUser.role.name : 'DOCENTE';
-    try {
-        return await postJson('/api/courses/join-by-code', { courseCode, userId: currentUser.id, role });
-    } catch (e) {
-        return claimCourseByCodeLocal(courseCode);
-    }
+    return await postJson('/api/courses/join-by-code', { courseCode, userId: currentUser.id, role });
 }
 
 async function claimCourseAsTeacher(courseCode) {
@@ -1739,6 +1884,11 @@ async function claimCourseAsTeacher(courseCode) {
     try {
         const resp = await claimCourseByCode(courseCode);
         if (!resp || resp.success === false) return showToast((resp && resp.message) || 'No fue posible tomar el curso', 'error');
+        if ((currentTeacher && currentTeacher.id === 0) && resp.course) {
+            const exists = (teacherCourses || []).some(c => String(c.id || '') === String(resp.course.id || ''));
+            if (!exists) teacherCourses.push(resp.course);
+            saveDelegatedTeacherCourses(teacherCourses);
+        }
         await loadOverview();
         await loadCursos();
         showToast(resp.message || 'Curso tomado correctamente', 'success');
@@ -1752,6 +1902,11 @@ async function claimAndOpenCourseAsTeacher(courseCode) {
     try {
         const resp = await claimCourseByCode(courseCode);
         if (!resp || resp.success === false) return showToast((resp && resp.message) || 'No fue posible tomar el curso', 'error');
+        if ((currentTeacher && currentTeacher.id === 0) && resp.course) {
+            const exists = (teacherCourses || []).some(c => String(c.id || '') === String(resp.course.id || ''));
+            if (!exists) teacherCourses.push(resp.course);
+            saveDelegatedTeacherCourses(teacherCourses);
+        }
         await loadOverview();
         await loadCursos();
         showToast(resp.message || 'Curso tomado correctamente', 'success');
@@ -1768,7 +1923,7 @@ window.claimAndOpenCourseAsTeacher = claimAndOpenCourseAsTeacher;
 function loadEntregas() {
     const coursesSel = document.getElementById('subCourseFilter');
     const actSel = document.getElementById('subActivityFilter');
-    const courses = teacherCourses.length ? teacherCourses : MOCK.courses;
+    const courses = teacherCourses || [];
     const statusFilter = document.getElementById('subStatusFilter');
     if (statusFilter && !statusFilter.querySelector('option[value="late"]')) {
         statusFilter.insertAdjacentHTML('beforeend', '<option value="late">Entregas tardias</option>');
@@ -1776,7 +1931,7 @@ function loadEntregas() {
     coursesSel.innerHTML = '<option value="">Todos los cursos</option>' + courses.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
     coursesSel.onchange = () => {
         const cId = parseInt(coursesSel.value) || 0;
-        const acts = cId ? MOCK.activities.filter(a => a.course && a.course.id === cId) : MOCK.activities;
+        const acts = cId ? teacherActivities.filter(a => a.course && a.course.id === cId) : teacherActivities;
         actSel.innerHTML = '<option value="">Todas las actividades</option>' + acts.map(a => `<option value="${a.id}">${a.title}</option>`).join('');
         renderEntregasList();
     };
@@ -1791,7 +1946,7 @@ function renderEntregasList() {
     const status = document.getElementById('subStatusFilter').value;
     const container = document.getElementById('entregasContainer');
     document.getElementById('submissionDetailView').style.display = 'none';
-    let activities = MOCK.activities;
+    let activities = teacherActivities;
     if (cId) activities = activities.filter(a => a.course && a.course.id === cId);
     if (aId) activities = activities.filter(a => a.id === aId);
     if (!activities.length) {
@@ -1800,8 +1955,8 @@ function renderEntregasList() {
     }
     let html = '';
     activities.forEach(act => {
-        const course = MOCK.courses.find(c => c.id === (act.course ? act.course.id : 0)) || {};
-        const rows = MOCK.students.map(s => {
+        const course = (teacherCourses || []).find(c => c.id === (act.course ? act.course.id : 0)) || {};
+        const rows = teacherStudents.map(s => {
             const sub = getStudentSubmission(s.id, act.id);
             const isLate = isSubmissionLate(act, sub);
             const state = !sub || !sub.submitted ? 'none' : sub.graded ? 'graded' : 'pending';
@@ -1878,16 +2033,16 @@ function quickGrade(actId, studentId) {
 
 function openActivitySubmissions(actId, courseIdFallback, defaultFilter, options) {
     const opts = options || {};
-    let act = actId ? MOCK.activities.find(a => a.id === actId) : null;
+    let act = actId ? teacherActivities.find(a => a.id === actId) : null;
     if (!act && courseIdFallback) {
-        const acts = MOCK.activities.filter(a => a.course && a.course.id === courseIdFallback);
+        const acts = teacherActivities.filter(a => a.course && a.course.id === courseIdFallback);
         if (!acts.length) { showToast('Este curso no tiene actividades registradas', 'error'); return; }
         act = acts[0];
         actId = act.id;
     }
     if (!act) return;
     currentSubmissionsActivityId = actId;
-    const course = MOCK.courses.find(c => c.id === (act.course ? act.course.id : 0)) || {};
+    const course = (teacherCourses || []).find(c => c.id === (act.course ? act.course.id : 0)) || {};
     document.getElementById('courseView').classList.remove('show');
     showView('submissions');
     document.getElementById('topbarBreadcrumb').style.display = 'flex';
@@ -1926,7 +2081,7 @@ function renderSubmissionsList() {
         filterSel.insertAdjacentHTML('beforeend', '<option value="submitted">Enviados</option>');
     }
     const filter = filterSel.value;
-    const rows = MOCK.students.map(s => {
+    const rows = teacherStudents.map(s => {
         const sub = getStudentSubmission(s.id, actId);
         const state = !sub || !sub.submitted ? 'missing' : sub.graded ? 'graded' : 'pending';
         const isLate = isSubmissionLate(act, sub);
@@ -1937,8 +2092,8 @@ function renderSubmissionsList() {
         if (filter === 'submitted') return r.state !== 'missing';
         return r.state === filter;
     });
-    const totalPend = MOCK.students.filter(s => { const sub = getStudentSubmission(s.id, actId); return sub && sub.submitted && !sub.graded; }).length;
-    const totalGrad = MOCK.students.filter(s => { const sub = getStudentSubmission(s.id, actId); return sub && sub.graded; }).length;
+    const totalPend = teacherStudents.filter(s => { const sub = getStudentSubmission(s.id, actId); return sub && sub.submitted && !sub.graded; }).length;
+    const totalGrad = teacherStudents.filter(s => { const sub = getStudentSubmission(s.id, actId); return sub && sub.graded; }).length;
     document.getElementById('submissionsPendingBadge').textContent = totalPend + ' sin calificar';
     document.getElementById('submissionsGradedBadge').textContent = totalGrad + ' calificados';
     const body = document.getElementById('submissionsListBody');
@@ -2073,8 +2228,8 @@ function saveGradeFromView(actId, studentId) {
 }
 
 function openGradeModal(actId, studentId) {
-    const act = MOCK.activities.find(a => a.id === actId);
-    const student = MOCK.students.find(s => s.id === studentId);
+    const act = teacherActivities.find(a => a.id === actId);
+    const student = teacherStudents.find(s => s.id === studentId);
     if (!act || !student) return;
     const existing = getStudentSubmission(studentId, actId);
     const files = existing && Array.isArray(existing.files) ? existing.files : [];
@@ -2121,7 +2276,7 @@ function applyMassGrade() {
     const fb = document.getElementById('mMassFb').value.trim();
     if (isNaN(val) || val < 0 || val > 10) { showToast('Ingresa una nota válida entre 0 y 10', 'error'); return; }
     let count = 0;
-    MOCK.students.forEach(s => {
+    teacherStudents.forEach(s => {
         const sub = getStudentSubmission(s.id, currentSubmissionsActivityId);
         if (sub && sub.submitted && !sub.graded) { saveStudentGrade(s.id, currentSubmissionsActivityId, val, fb); count++; }
     });
@@ -2132,7 +2287,7 @@ function applyMassGrade() {
 
 async function loadCalificaciones() {
     const sel = document.getElementById('gradeCourseFilter');
-    const courses = teacherCourses.length ? teacherCourses : MOCK.courses;
+    const courses = teacherCourses || [];
     sel.innerHTML = '<option value="">Selecciona un curso</option>' + courses.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
     sel.onchange = () => { tableUiState.grades.page = 1; renderGrades(parseInt(sel.value)); };
     document.getElementById('gradesSummaryBar').style.display = 'none';
@@ -2146,7 +2301,7 @@ function renderGrades(courseId) {
         document.getElementById('gradesSummaryBar').style.display = 'none';
         return;
     }
-    const allCourseGrades = MOCK.grades.filter(g => g.course && g.course.id === courseId);
+    const allCourseGrades = teacherGrades.filter(g => g.course && g.course.id === courseId);
     const query = (state.query || '').trim().toLowerCase();
     let courseGrades = [...allCourseGrades];
     if (query) {
@@ -2222,7 +2377,7 @@ function changeGradesPage(delta, courseId) {
 }
 
 function editGrade(gradeId, courseId) {
-    const g = MOCK.grades.find(x => x.id === gradeId);
+    const g = teacherGrades.find(x => x.id === gradeId);
     if (!g) return;
     openModal('Editar Calificación', `
         <div class="form-group"><label class="form-label">Calificación (0-10)</label><input type="number" class="form-input" id="mGrade" min="0" max="10" step="0.1" value="${g.grade}"></div>
@@ -2230,28 +2385,52 @@ function editGrade(gradeId, courseId) {
         <button class="btn btn-teal" style="width:100%" onclick="saveGradeEdit(${gradeId},${courseId})">Guardar cambios</button>`);
 }
 
-function saveGradeEdit(gradeId, courseId) {
+async function saveGradeEdit(gradeId, courseId) {
     const val = parseFloat(document.getElementById('mGrade').value);
     const desc = document.getElementById('mGradeDesc').value;
-    const g = MOCK.grades.find(x => x.id === gradeId);
-    if (g && !isNaN(val)) { g.grade = val; g.description = desc; }
+    const g = teacherGrades.find(x => x.id === gradeId);
+    if (!g || isNaN(val)) return;
+    try {
+        const res = await apiFetch('/api/grades/' + gradeId, {
+            method: 'PUT',
+            body: JSON.stringify({
+                studentId: (g.student || {}).id,
+                courseId: ((g.course || {}).id),
+                grade: val,
+                description: desc
+            })
+        });
+        if (res && res.ok) {
+            const saved = await res.json();
+            Object.assign(g, saved || {});
+        } else {
+            g.grade = val;
+            g.description = desc;
+        }
+    } catch (e) {
+        g.grade = val;
+        g.description = desc;
+    }
     closeModal(); renderGrades(courseId); showToast('Calificación actualizada', 'success');
 }
 
 function deleteGrade(gradeId, courseId) {
     openConfirmModal('Eliminar calificación', '¿Eliminar esta calificación?', () => {
-        const idx = MOCK.grades.findIndex(x => x.id === gradeId);
-        if (idx >= 0) MOCK.grades.splice(idx, 1);
-        renderGrades(courseId);
-        showToast('Calificación eliminada');
+        const idx = teacherGrades.findIndex(x => x.id === gradeId);
+        apiFetch('/api/grades/' + gradeId, { method: 'DELETE', headers: {} })
+            .finally(() => {
+                if (idx >= 0) teacherGrades.splice(idx, 1);
+                renderGrades(courseId);
+                showToast('Calificación eliminada');
+            });
     }, 'Eliminar');
 }
 
 function exportGrades() {
     const courseId = parseInt(document.getElementById('gradeCourseFilter').value);
     if (!courseId) { showToast('Selecciona un curso para exportar', 'error'); return; }
-    const course = MOCK.courses.find(c => c.id === courseId) || {};
-    const grades = MOCK.grades.filter(g => g.course && g.course.id === courseId);
+    const course = (teacherCourses || []).find(c => c.id === courseId) || {};
+    const grades = teacherGrades.filter(g => g.course && g.course.id === courseId);
     const csv = ['Código,Estudiante,Calificación,Descripción', ...grades.map(g => `${g.student ? g.student.studentCode || '' : ''},${g.student && g.student.user ? g.student.user.name : ''},${g.grade || 0},"${g.description || ''}"`)].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -2263,7 +2442,7 @@ function exportGrades() {
 }
 
 async function loadAsistencia() {
-    const courses = teacherCourses.length ? teacherCourses : MOCK.courses;
+    const courses = teacherCourses || [];
     const opts = '<option value="">Selecciona un curso</option>' + courses.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
     document.getElementById('attCourseFilter').innerHTML = opts;
     document.getElementById('attSummaryCourse').innerHTML = opts;
@@ -2284,14 +2463,47 @@ async function loadAsistencia() {
     renderTeacherAbsenceReports();
 }
 
+function initTeacherModerationOverview(courses) {
+    ensureTeacherWellbeingCard();
+    const wellbeingModuleSel = document.getElementById('wellbeingModuleFilter');
+    if (wellbeingModuleSel) wellbeingModuleSel.onchange = () => { tableUiState.wellbeing.module = wellbeingModuleSel.value || 'all'; tableUiState.wellbeing.page = 1; renderTeacherWellbeingRequests(); };
+    const wellbeingStatusSel = document.getElementById('wellbeingStatusFilter');
+    if (wellbeingStatusSel) wellbeingStatusSel.onchange = () => { tableUiState.wellbeing.status = wellbeingStatusSel.value || 'all'; tableUiState.wellbeing.page = 1; renderTeacherWellbeingRequests(); };
+    const wellbeingSearchInput = document.getElementById('wellbeingSearchInput');
+    if (wellbeingSearchInput) wellbeingSearchInput.oninput = () => { tableUiState.wellbeing.query = wellbeingSearchInput.value || ''; tableUiState.wellbeing.page = 1; renderTeacherWellbeingRequests(); };
+    renderTeacherWellbeingRequests();
+
+    ensureTeacherEvaluationReportsCard();
+    const evalTypeSel = document.getElementById('evalTypeFilter');
+    if (evalTypeSel) evalTypeSel.onchange = () => { tableUiState.evalReports.type = evalTypeSel.value || 'all'; tableUiState.evalReports.page = 1; renderTeacherEvaluationReports(); };
+    const evalSubmittedSel = document.getElementById('evalSubmittedFilter');
+    if (evalSubmittedSel) evalSubmittedSel.onchange = () => { tableUiState.evalReports.submitted = evalSubmittedSel.value || 'all'; tableUiState.evalReports.page = 1; renderTeacherEvaluationReports(); };
+    const evalCourseSel = document.getElementById('evalCourseFilter');
+    if (evalCourseSel) {
+        evalCourseSel.innerHTML = '<option value="all">Todos los cursos</option>' + (courses || []).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+        evalCourseSel.onchange = () => { tableUiState.evalReports.courseId = evalCourseSel.value || 'all'; tableUiState.evalReports.page = 1; renderTeacherEvaluationReports(); };
+    }
+    const evalSearchInput = document.getElementById('evalSearchInput');
+    if (evalSearchInput) evalSearchInput.oninput = () => { tableUiState.evalReports.query = evalSearchInput.value || ''; tableUiState.evalReports.page = 1; renderTeacherEvaluationReports(); };
+    renderTeacherEvaluationReports();
+}
+
 let attState = {};
+function attendanceStorageKey(courseId, date) {
+    return 'educat_att_' + courseId + '_' + date;
+}
+
 function renderAttendance() {
     const courseId = parseInt(document.getElementById('attCourseFilter').value);
     const date = document.getElementById('attDate').value;
     if (!courseId || !date) { showToast('Selecciona curso y fecha', 'error'); return; }
-    const key = 'att_' + courseId + '_' + date;
-    attState = JSON.parse(localStorage.getItem(key) || '{}');
-    MOCK.students.forEach(s => { if (attState[s.id] === undefined) attState[s.id] = true; });
+    const key = attendanceStorageKey(courseId, date);
+    const legacyKey = 'att_' + courseId + '_' + date;
+    attState = JSON.parse(storageService.getItem(key) || storageService.getItem(legacyKey) || '{}');
+    if (!storageService.getItem(key) && storageService.getItem(legacyKey)) {
+        storageService.setItem(key, JSON.stringify(attState));
+    }
+    teacherStudents.forEach(s => { if (attState[s.id] === undefined) attState[s.id] = true; });
     document.getElementById('asistenciaContainer').innerHTML = `
         <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
             <button class="btn btn-success-outline btn-sm" onclick="markAll(${courseId},'${date}',true)">Marcar todos presentes</button>
@@ -2302,7 +2514,7 @@ function renderAttendance() {
             </button>
         </div>
         <table><thead><tr><th>Código</th><th>Estudiante</th><th>Estado</th><th>Acción</th></tr></thead><tbody id="attBody"></tbody></table>`;
-    renderAttBody(MOCK.students, courseId, date);
+    renderAttBody(teacherStudents, courseId, date);
 }
 
 function renderAttBody(students, courseId, date) {
@@ -2322,11 +2534,11 @@ function renderAttBody(students, courseId, date) {
     }).join('');
 }
 
-function toggleAtt(sid, courseId, date) { attState[sid] = !attState[sid]; renderAttBody(MOCK.students, courseId, date); }
-function markAll(courseId, date, val) { MOCK.students.forEach(s => attState[s.id] = val); renderAttBody(MOCK.students, courseId, date); }
+function toggleAtt(sid, courseId, date) { attState[sid] = !attState[sid]; renderAttBody(teacherStudents, courseId, date); }
+function markAll(courseId, date, val) { teacherStudents.forEach(s => attState[s.id] = val); renderAttBody(teacherStudents, courseId, date); }
 
 function saveAttendance(courseId, date) {
-    localStorage.setItem('att_' + courseId + '_' + date, JSON.stringify(attState));
+    storageService.setItem(attendanceStorageKey(courseId, date), JSON.stringify(attState));
     showToast('Asistencia guardada correctamente', 'success');
     const sumSel = document.getElementById('attSummaryCourse');
     if (parseInt(sumSel.value) === courseId) renderAttendanceSummary(courseId);
@@ -2336,20 +2548,20 @@ function renderAttendanceSummary(courseId) {
     const state = tableUiState.attendanceSummary;
     const container = document.getElementById('asistenciaResumen');
     if (!courseId) { container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin datos</div></div>'; return; }
-    const prefix = 'att_' + courseId + '_';
-    const keys = Object.keys(localStorage).filter(k => k.startsWith(prefix));
+    const prefix = 'educat_att_' + courseId + '_';
+    const keys = getStorageKeys().filter(k => k.startsWith(prefix));
     if (!keys.length) { container.innerHTML = '<div style="color:var(--text-muted);font-size:13px">No hay registros de asistencia guardados para este curso.</div>'; return; }
     const totals = {};
-    MOCK.students.forEach(s => totals[s.id] = { present: 0, total: 0 });
+    teacherStudents.forEach(s => totals[s.id] = { present: 0, total: 0 });
     keys.forEach(k => {
         try {
-            const data = JSON.parse(localStorage.getItem(k));
+            const data = JSON.parse(storageService.getItem(k));
             if (!data) return;
-            MOCK.students.forEach(s => { if (data[s.id] !== undefined) { totals[s.id].total++; if (data[s.id]) totals[s.id].present++; } });
+            teacherStudents.forEach(s => { if (data[s.id] !== undefined) { totals[s.id].total++; if (data[s.id]) totals[s.id].present++; } });
         } catch (e) {}
     });
     const query = (state.query || '').trim().toLowerCase();
-    let rows = [...MOCK.students];
+    let rows = [...teacherStudents];
     if (query) rows = rows.filter(s => s.user.name.toLowerCase().includes(query) || s.studentCode.toLowerCase().includes(query));
     const totalPages = Math.max(1, Math.ceil(rows.length / state.pageSize));
     const safePage = Math.min(Math.max(1, state.page), totalPages);
@@ -2391,7 +2603,7 @@ function changeAttendanceSummaryPage(delta, courseId) {
 }
 
 async function loadHorarios() {
-    renderWeekView(MOCK.schedules);
+    renderWeekView(teacherSchedules);
 }
 
 function renderWeekView(schedules) {
@@ -2451,16 +2663,21 @@ function deleteSchedule(id) {
     openModal('Eliminar horario', `<p style="font-size:13.5px;color:var(--text-body);line-height:1.7;margin-bottom:14px">Esta accion eliminara el horario seleccionado de la vista semanal.</p><div style="display:flex;gap:8px"><button class="btn btn-outline" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn btn-danger" style="flex:1" onclick="confirmDeleteSchedule(${id})">Eliminar</button></div>`);
 }
 
-function confirmDeleteSchedule(id) {
-    const idx = MOCK.schedules.findIndex(s => s.id === id);
-    if (idx >= 0) MOCK.schedules.splice(idx, 1);
+async function confirmDeleteSchedule(id) {
+    const idx = teacherSchedules.findIndex(s => s.id === id);
+    try {
+        await apiFetch('/api/schedules/' + id, { method: 'DELETE', headers: {} });
+    } catch (e) {
+        // Fallback local.
+    }
+    if (idx >= 0) teacherSchedules.splice(idx, 1);
     closeModal();
     loadHorarios();
     showToast('Horario eliminado');
 }
 
 function loadEstudiantes() {
-    const courses = teacherCourses.length ? teacherCourses : MOCK.courses;
+    const courses = teacherCourses || [];
     const sel = document.getElementById('studentCourseFilter');
     sel.innerHTML = '<option value="">Todos los cursos</option>' + courses.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
     sel.onchange = () => { tableUiState.students.page = 1; renderEstudiantes(); };
@@ -2473,7 +2690,7 @@ function renderEstudiantes() {
     const courseId = parseInt(document.getElementById('studentCourseFilter').value) || 0;
     const query = document.getElementById('studentSearch').value.trim().toLowerCase();
     const container = document.getElementById('estudiantesContainer');
-    let students = MOCK.students;
+    let students = teacherStudents;
     if (query) students = students.filter(s => s.user.name.toLowerCase().includes(query) || s.studentCode.toLowerCase().includes(query));
     if (!students.length) {
         container.innerHTML = '<div class="empty-state"><div class="empty-state-title">Sin resultados</div><div class="empty-state-text">No se encontraron estudiantes con esos criterios.</div></div>';
@@ -2486,16 +2703,16 @@ function renderEstudiantes() {
 
     container.innerHTML = `<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><select class="form-input" id="studentPageSize" style="width:auto"><option value="8">8 por página</option><option value="12">12 por página</option><option value="20">20 por página</option></select></div><table><thead><tr><th>Código</th><th>Estudiante</th><th>Promedio</th><th>Asistencia</th><th>Entregas</th><th>Acciones</th></tr></thead><tbody>` +
         chunk.map(s => {
-            const sGrades = MOCK.grades.filter(g => g.student && g.student.id === s.id && (!courseId || g.course.id === courseId));
+            const sGrades = teacherGrades.filter(g => g.student && g.student.id === s.id && (!courseId || g.course.id === courseId));
             const avg = sGrades.length ? (sGrades.reduce((a, b) => a + parseFloat(b.grade || 0), 0) / sGrades.length).toFixed(1) : '—';
             const avgColor = avg !== '—' ? (parseFloat(avg) >= 7 ? 'var(--success)' : parseFloat(avg) >= 5 ? 'var(--gold)' : 'var(--error)') : 'var(--text-muted)';
-            const relActs = MOCK.activities.filter(a => !courseId || (a.course && a.course.id === courseId));
+            const relActs = teacherActivities.filter(a => !courseId || (a.course && a.course.id === courseId));
             const subCount = relActs.filter(a => { const sub = getStudentSubmission(s.id, a.id); return sub && sub.submitted; }).length;
             let attPct = '—';
             if (courseId) {
-                const keys = Object.keys(localStorage).filter(k => k.startsWith('att_' + courseId + '_'));
+                const keys = getStorageKeys().filter(k => k.startsWith('educat_att_' + courseId + '_'));
                 let present = 0, total = 0;
-                keys.forEach(k => { try { const d = JSON.parse(localStorage.getItem(k)); if (d && d[s.id] !== undefined) { total++; if (d[s.id]) present++; } } catch (e) {} });
+                keys.forEach(k => { try { const d = JSON.parse(storageService.getItem(k)); if (d && d[s.id] !== undefined) { total++; if (d[s.id]) present++; } } catch (e) {} });
                 attPct = total ? Math.round((present / total) * 100) + '%' : '—';
             }
             return `<tr>
@@ -2524,9 +2741,9 @@ function changeStudentsPage(delta) {
 }
 
 function viewStudentProfile(studentId) {
-    const student = MOCK.students.find(s => s.id === studentId);
+    const student = teacherStudents.find(s => s.id === studentId);
     if (!student) return;
-    const grades = MOCK.grades.filter(g => g.student && g.student.id === studentId);
+    const grades = teacherGrades.filter(g => g.student && g.student.id === studentId);
     const avg = grades.length ? (grades.reduce((a, b) => a + parseFloat(b.grade || 0), 0) / grades.length).toFixed(1) : '—';
     openModal('Perfil — ' + student.user.name, `
         <div style="background:linear-gradient(135deg,var(--navy),var(--navy-light));border-radius:10px;padding:18px 20px;margin-bottom:18px;display:flex;align-items:center;gap:14px">
@@ -2538,15 +2755,15 @@ function viewStudentProfile(studentId) {
         ${grades.length ? grades.map(g => {
         const val = parseFloat(g.grade || 0);
         const cl = val >= 7 ? 'high' : val >= 5 ? 'mid' : 'low';
-        const cn = MOCK.courses.find(c => c.id === (g.course ? g.course.id : 0));
+        const cn = (teacherCourses || []).find(c => c.id === (g.course ? g.course.id : 0));
         return `<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:13px">${cn ? cn.name : '—'}</span><strong>${val.toFixed(1)}</strong></div><div class="grade-bar"><div class="grade-fill ${cl}" style="width:${(val/10)*100}%"></div></div></div>`;
     }).join('') : '<p style="font-size:13px;color:var(--text-muted)">Sin calificaciones registradas.</p>'}
         <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);margin:16px 0 10px">Entregas</div>
-        ${MOCK.activities.map(a => {
+        ${teacherActivities.map(a => {
         const sub = getStudentSubmission(studentId, a.id);
         const state = !sub || !sub.submitted ? 'Sin entregar' : sub.graded ? 'Nota: ' + sub.grade + '/10' : 'Por calificar';
         const bc = !sub || !sub.submitted ? 'badge-navy' : sub.graded ? 'badge-success' : 'badge-gold';
-        const cn = MOCK.courses.find(c => c.id === (a.course ? a.course.id : 0));
+        const cn = (teacherCourses || []).find(c => c.id === (a.course ? a.course.id : 0));
         return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(11,31,58,0.05)"><div><div style="font-size:13px;font-weight:500">${a.title}</div><div style="font-size:11px;color:var(--text-muted)">${cn ? cn.name : '—'}</div></div><span class="badge ${bc}">${state}</span></div>`;
     }).join('')}`);
 }
@@ -2557,12 +2774,12 @@ function loadPerfil() {
     document.getElementById('profName').value = u.name || '';
     document.getElementById('profEmail').value = u.email || '';
     document.getElementById('profSpecialization').value = t.specialization || '';
-    const courses = teacherCourses.length ? teacherCourses : MOCK.courses;
+    const courses = teacherCourses || [];
     const pending = getPendingSubmissionsCount();
     document.getElementById('profSummary').innerHTML = [
         { icon: `<svg width="16" height="16" fill="none" stroke="var(--teal)" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>`, bg: 'rgba(30,107,116,0.1)', val: courses.length, lbl: 'Cursos activos' },
         { icon: `<svg width="16" height="16" fill="none" stroke="var(--navy)" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>`, bg: 'rgba(11,31,58,0.07)', val: courses.reduce((s, c) => s + (c.studentsCount || 0), 0), lbl: 'Estudiantes' },
-        { icon: `<svg width="16" height="16" fill="none" stroke="var(--gold)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/></svg>`, bg: 'rgba(200,150,46,0.1)', val: MOCK.activities.length, lbl: 'Actividades' },
+        { icon: `<svg width="16" height="16" fill="none" stroke="var(--gold)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/></svg>`, bg: 'rgba(200,150,46,0.1)', val: teacherActivities.length, lbl: 'Actividades' },
         { icon: `<svg width="16" height="16" fill="none" stroke="var(--error)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><line x1="16" y1="13" x2="8" y2="13"/></svg>`, bg: 'rgba(192,57,43,0.08)', val: pending, lbl: 'Pendientes', col: pending > 0 ? 'var(--error)' : 'var(--text-dark)' },
     ].map(item => `<div class="prof-summary-stat">
         <div class="prof-summary-icon" style="background:${item.bg}">${item.icon}</div>
@@ -2576,15 +2793,172 @@ function loadPerfil() {
 
 function readTeacherGuides() {
     try {
-        const raw = JSON.parse(localStorage.getItem(TEACHER_GUIDES_KEY) || '[]');
+        const raw = JSON.parse(storageService.getItem(TEACHER_GUIDES_KEY) || '[]');
         return Array.isArray(raw) ? raw : [];
     } catch (e) {
         return [];
     }
 }
 
+function guideOwnerUserId(guide) {
+    if (!guide || guide.ownerUserId === undefined || guide.ownerUserId === null || guide.ownerUserId === '') return null;
+    const parsed = parseInt(guide.ownerUserId, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+}
+
+function canManageTeacherGuide(guide) {
+    if (isCurrentUserAdmin()) return true;
+    const currentUserId = parseInt((currentUser && currentUser.id) || '0', 10);
+    if (!currentUserId) return false;
+    return guideOwnerUserId(guide) === currentUserId;
+}
+
+function normalizeGuideAttachments(rawAttachments) {
+    return (Array.isArray(rawAttachments) ? rawAttachments : []).map((file, idx) => ({
+        id: file && file.id ? String(file.id) : ('tg-att-' + idx),
+        name: String((file && file.name) || 'archivo'),
+        type: String((file && file.type) || 'archivo'),
+        dataUrl: String((file && (file.dataUrl || file.url || file.href)) || '')
+    })).filter(file => file.dataUrl.startsWith('data:') || file.dataUrl.startsWith('http') || file.dataUrl.startsWith('/'));
+}
+
+function resetTeacherGuideAttachmentDraft(rawAttachments) {
+    teacherGuideAttachmentDraft = normalizeGuideAttachments(rawAttachments).map((file, idx) => ({
+        id: file.id || ('tg-att-' + idx + '-' + Date.now()),
+        name: file.name,
+        type: file.type,
+        dataUrl: file.dataUrl
+    }));
+}
+
+function renderTeacherGuideAttachmentDraft() {
+    const host = document.getElementById('tgAttachmentList');
+    if (!host) return;
+    if (!teacherGuideAttachmentDraft.length) {
+        host.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">Sin adjuntos adicionales.</div>';
+        return;
+    }
+    host.innerHTML = teacherGuideAttachmentDraft.map((file, idx) => {
+        const safeName = htmlEscape(file.name || 'archivo');
+        const safeType = htmlEscape(teacherGuideTypeLabel(file.type, file.name));
+        const safeSrc = htmlEscape(file.dataUrl || '');
+        return `<div class="attachment-item" style="margin-bottom:6px"><div class="attachment-icon doc"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><span class="attachment-name">${safeName}</span><span class="attachment-meta">${safeType}</span><a class="attachment-download" href="${safeSrc}" target="_blank" rel="noopener">Abrir</a><button class="attachment-download" onclick="removeTeacherGuideAttachmentDraft(${idx})">Quitar</button></div>`;
+    }).join('');
+}
+
+function removeTeacherGuideAttachmentDraft(index) {
+    teacherGuideAttachmentDraft.splice(index, 1);
+    renderTeacherGuideAttachmentDraft();
+}
+
+async function onTeacherGuideAttachmentInputChange(event) {
+    const files = Array.from((event && event.target && event.target.files) || []);
+    for (let i = 0; i < files.length; i += 1) {
+        const file = files[i];
+        if (!file) continue;
+        if (file.size > 12 * 1024 * 1024) {
+            showToast('El adjunto "' + (file.name || 'archivo') + '" supera 12MB', 'error');
+            continue;
+        }
+        const dataUrl = await trtReadFileAsDataUrl(file);
+        if (!dataUrl) {
+            showToast('No se pudo leer el adjunto "' + (file.name || 'archivo') + '"', 'error');
+            continue;
+        }
+        teacherGuideAttachmentDraft.push({
+            id: 'tg-att-' + Date.now() + '-' + i,
+            name: String(file.name || 'archivo'),
+            type: String(file.type || ''),
+            dataUrl
+        });
+    }
+    renderTeacherGuideAttachmentDraft();
+    if (event && event.target) event.target.value = '';
+}
+
+function teacherGuideTypeLabel(typeValue, filename) {
+    const type = String(typeValue || '').toLowerCase();
+    const name = String(filename || '').toLowerCase();
+    if (type.includes('pdf') || name.endsWith('.pdf')) return 'PDF';
+    if (type.includes('word') || name.endsWith('.doc') || name.endsWith('.docx')) return 'Documento';
+    if (type.includes('image') || name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.webp')) return 'Imagen';
+    return 'Archivo';
+}
+
+function teacherGuideAttachmentPreviewHtml(attachment) {
+    const src = String((attachment && attachment.dataUrl) || '');
+    const type = String((attachment && attachment.type) || '').toLowerCase();
+    const name = String((attachment && attachment.name) || '').toLowerCase();
+    const isPdf = type.includes('pdf') || name.endsWith('.pdf') || src.indexOf('application/pdf') >= 0;
+    const isImage = type.startsWith('image/') || src.indexOf('data:image/') === 0;
+    const isDoc = type.includes('word') || name.endsWith('.doc') || name.endsWith('.docx');
+    if (isImage) return `<img src="${src}" alt="Vista previa" style="max-width:100%;max-height:62vh;border-radius:8px;border:1px solid rgba(11,31,58,0.1)">`;
+    if (isPdf) return `<iframe src="${src}" title="Vista previa PDF" style="width:100%;height:62vh;border:1px solid rgba(11,31,58,0.1);border-radius:8px"></iframe>`;
+    if (isDoc && src.startsWith('http')) {
+        const officeViewer = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(src);
+        return `<iframe src="${officeViewer}" title="Vista previa documento" style="width:100%;height:62vh;border:1px solid rgba(11,31,58,0.1);border-radius:8px"></iframe>`;
+    }
+    return '<div class="empty-state" style="padding:18px 0"><div class="empty-state-title">Vista previa no disponible</div><div class="empty-state-text">Puedes descargar el archivo para revisarlo.</div></div>';
+}
+
+function openTeacherGuideAttachmentPreview(guideId, attachmentId) {
+    const guide = readTeacherGuides().find(g => String(g.id) === String(guideId));
+    if (!guide) return;
+    const attachment = normalizeGuideAttachments(guide.attachments).find(a => String(a.id) === String(attachmentId));
+    if (!attachment) return;
+    const safeSrc = htmlEscape(attachment.dataUrl || '');
+    const safeName = htmlEscape(attachment.name || 'archivo');
+    openModal('Vista previa: ' + safeName, `${teacherGuideAttachmentPreviewHtml(attachment)}<div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end"><a class="btn btn-outline" href="${safeSrc}" target="_blank" rel="noopener">Abrir</a><a class="btn btn-teal" href="${safeSrc}" download="${safeName}" target="_blank" rel="noopener">Descargar</a></div>`, { size: 'xl' });
+}
+
+function openTeacherGuideReader(guideId) {
+    const guide = readTeacherGuides().find(g => String(g.id) === String(guideId));
+    if (!guide) return;
+    const rich = String(guide.richHtml || '').trim();
+    const sections = Array.isArray(guide.textSections) ? guide.textSections : [];
+    const attachments = normalizeGuideAttachments(guide.attachments);
+    const filesHtml = attachments.length
+        ? `<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">${attachments.map(file => {
+            const fileName = htmlEscape(file.name || 'archivo');
+            const fileType = htmlEscape(teacherGuideTypeLabel(file.type, file.name));
+            const safeUrl = htmlEscape(file.dataUrl || '');
+            return `<div class="attachment-item"><div class="attachment-icon doc"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><span class="attachment-name">${fileName}</span><span class="attachment-meta">${fileType}</span><button class="attachment-download" onclick="openTeacherGuideAttachmentPreview('${String(guide.id).replace(/'/g, "\\'")}','${String(file.id).replace(/'/g, "\\'")}')">Previsualizar</button><a class="attachment-download" href="${safeUrl}" download="${fileName}" target="_blank" rel="noopener">Descargar</a></div>`;
+        }).join('')}</div>`
+        : '';
+    const textHtml = rich
+        ? `<div style="line-height:1.65;font-size:13px">${rich}</div>`
+        : sections.length
+            ? `<article>${sections.map(section => {
+                const heading = section.heading ? `<h4 style="margin:0 0 8px;font-size:14px">${htmlEscape(section.heading)}</h4>` : '';
+                const paragraphs = (Array.isArray(section.paragraphs) ? section.paragraphs : []).map(p => `<p style="margin:0 0 8px">${htmlEscape(String(p || ''))}</p>`).join('');
+                const bullets = (Array.isArray(section.bullets) && section.bullets.length) ? `<ul style="margin:0 0 10px 18px">${section.bullets.map(item => `<li>${htmlEscape(String(item || ''))}</li>`).join('')}</ul>` : '';
+                return `<section style="margin-bottom:12px">${heading}${paragraphs}${bullets}</section>`;
+            }).join('')}</article>`
+            : '<div class="empty-state" style="padding:16px 0"><div class="empty-state-title">Sin contenido de texto</div></div>';
+
+    const pdfUrl = String(guide.pdfUrl || '').trim();
+    const pdfHtml = pdfUrl
+        ? `<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><a class="btn btn-sm btn-outline" href="${htmlEscape(pdfUrl)}" target="_blank" rel="noopener">Abrir PDF</a></div><iframe src="${htmlEscape(pdfUrl)}" title="${htmlEscape(guide.title || 'PDF')}" style="width:100%;height:58vh;border:1px solid rgba(11,31,58,0.1);border-radius:8px"></iframe>`
+        : '<div class="empty-state" style="padding:16px 0"><div class="empty-state-title">Sin PDF principal</div></div>';
+
+    openModal('Instructivo: ' + htmlEscape(guide.title || 'Instructivo'), `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap"><div style="font-size:12px;color:var(--text-muted)">${htmlEscape(guide.detail || '')}</div><span class="badge badge-navy">Solo lectura</span></div><div class="card" style="margin:0"><div class="card-header" style="padding:10px 14px"><span class="card-title" style="font-size:13px">Contenido</span></div><div class="card-body" style="padding:12px 14px">${textHtml}${filesHtml}</div></div><div class="card" style="margin:12px 0 0"><div class="card-header" style="padding:10px 14px"><span class="card-title" style="font-size:13px">PDF principal</span></div><div class="card-body" style="padding:12px 14px">${pdfHtml}</div></div>`, { size: 'xl' });
+}
+
 function saveTeacherGuides(guides) {
-    localStorage.setItem(TEACHER_GUIDES_KEY, JSON.stringify(Array.isArray(guides) ? guides : []));
+    storageService.setItem(TEACHER_GUIDES_KEY, JSON.stringify(Array.isArray(guides) ? guides : []));
+}
+
+async function hydrateTeacherGuidesFromBackend() {
+    const appState = await tryFetch('/api/app-state/' + encodeURIComponent(TEACHER_GUIDES_KEY));
+    const raw = appState && typeof appState.value === 'string' ? appState.value : '';
+    if (!raw) return;
+    try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return;
+        storageService.setItem(TEACHER_GUIDES_KEY, JSON.stringify(parsed));
+    } catch (e) {
+        // Mantener fallback local si el valor remoto viene corrupto.
+    }
 }
 
 function guideRichHtmlToSections(html) {
@@ -2598,20 +2972,32 @@ function guideRichHtmlToSections(html) {
     return [{ heading: 'Contenido', paragraphs: finalParagraphs, bullets }];
 }
 
-function loadInstructivos() {
+function loadInstructivos(skipRemoteSync) {
+    if (!skipRemoteSync) {
+        hydrateTeacherGuidesFromBackend().then(() => {
+            const panel = document.getElementById('panel-instructivos');
+            if (panel && panel.classList.contains('active')) loadInstructivos(true);
+        }).catch(() => {});
+    }
     const host = document.getElementById('teacherGuidesBoard');
     if (!host) return;
     const guides = readTeacherGuides();
+    const canCreate = isCurrentUserAdmin() || hasAnyPermission(['instructivos.crear', 'instructivos.editar']);
+    const createBtn = document.getElementById('btnNewTeacherGuide');
+    if (createBtn) createBtn.style.display = canCreate ? '' : 'none';
     host.innerHTML = guides.length
         ? guides.map(g => `<div class="card-check" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
             <div style="min-width:240px;flex:1">
                 <strong>${htmlEscape(g.title || 'Instructivo')}</strong>
                 <div class="muted" style="margin-top:4px">${htmlEscape(g.detail || '')}</div>
                 <div class="muted" style="margin-top:4px">Formato: ${g.hasPdf ? 'PDF' : 'Texto'}${g.hasPdf && g.hasText ? ' + Texto' : ''}</div>
+                <div class="muted" style="margin-top:4px">Propietario: ${htmlEscape(g.ownerName || 'Administración')}</div>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap">
-                <button class="btn btn-sm btn-outline" onclick="openTeacherGuideModal('${String(g.id)}')">Editar</button>
-                <button class="btn btn-sm btn-outline" onclick="deleteTeacherGuide('${String(g.id)}')">Eliminar</button>
+                <button class="btn btn-sm btn-outline" onclick="openTeacherGuideReader('${String(g.id)}')">Ver</button>
+                ${canManageTeacherGuide(g)
+                    ? `<button class="btn btn-sm btn-outline" onclick="openTeacherGuideModal('${String(g.id)}')">Editar</button><button class="btn btn-sm btn-outline" onclick="deleteTeacherGuide('${String(g.id)}')">Eliminar</button>`
+                    : '<span class="badge badge-navy">Solo lectura</span>'}
             </div>
         </div>`).join('')
         : '<div class="empty-state"><div class="empty-state-title">Sin instructivos</div><div class="empty-state-text">Crea el primer instructivo para docentes.</div></div>';
@@ -2622,6 +3008,11 @@ function openTeacherGuideModal(guideId) {
     const guide = guides.find(g => String(g.id) === String(guideId)) || {
         id: '', title: '', detail: '', hasPdf: false, hasText: true, pdfUrl: '', richHtml: ''
     };
+    if (guideId && !canManageTeacherGuide(guide)) {
+        showToast('No tienes permiso para editar este instructivo', 'error');
+        return;
+    }
+    resetTeacherGuideAttachmentDraft(guide.attachments);
     openModal((guideId ? 'Editar' : 'Nuevo') + ' instructivo', `
         <div class="form-group"><label class="form-label">Título</label><input class="form-input" id="tgTitle" value="${htmlEscape(guide.title || '')}" placeholder="Ej: Guía de evaluaciones"></div>
         <div class="form-group"><label class="form-label">Descripción breve</label><input class="form-input" id="tgDetail" value="${htmlEscape(guide.detail || '')}" placeholder="Resumen del instructivo"></div>
@@ -2630,8 +3021,11 @@ function openTeacherGuideModal(guideId) {
             <div class="form-group"><label class="form-label">PDF por URL (opcional)</label><input class="form-input" id="tgPdfUrl" value="${htmlEscape(guide.pdfUrl || '')}" placeholder="https://... o data:application/pdf..."></div>
             <div class="form-group"><label class="form-label">Adjuntar PDF</label><input type="file" class="form-input" id="tgPdfFile" accept="application/pdf"></div>
         </div>
+        <div class="form-group"><label class="form-label">Adjuntos del instructivo (PDF, DOC/DOCX, imágenes)</label><input type="file" class="form-input" id="tgAttachments" accept="application/pdf,.doc,.docx,image/*" multiple onchange="onTeacherGuideAttachmentInputChange(event)"></div>
+        <div id="tgAttachmentList" style="margin-bottom:12px"></div>
         <button class="btn btn-teal" style="width:100%" onclick="saveTeacherGuideFromModal('${String(guide.id || '')}')">Guardar instructivo</button>
     `);
+    renderTeacherGuideAttachmentDraft();
     setTimeout(() => {
         const editor = document.getElementById('teacherGuideEditor');
         if (editor) editor.innerHTML = toRichHtml(guide.richHtml || '');
@@ -2667,13 +3061,27 @@ async function saveTeacherGuideFromModal(guideId) {
         pdfUrl,
         richHtml: editorHtml,
         textSections: guideRichHtmlToSections(editorHtml),
+        attachments: teacherGuideAttachmentDraft.map(file => ({
+            id: String(file.id || ('tg-att-' + Date.now())),
+            name: String(file.name || 'archivo'),
+            type: String(file.type || 'application/octet-stream'),
+            dataUrl: String(file.dataUrl || '')
+        })).filter(file => !!file.dataUrl),
         audience: ['DOCENTE', 'ESTUDIANTE'],
+        ownerUserId: parseInt((currentUser && currentUser.id) || '0', 10) || null,
+        ownerName: (currentUser && currentUser.name) || 'Docente',
         updatedAt: new Date().toISOString()
     };
 
     const guides = readTeacherGuides();
     const idx = guides.findIndex(g => String(g.id) === String(payload.id));
-    if (idx >= 0) guides[idx] = { ...guides[idx], ...payload };
+    if (idx >= 0) {
+        if (!canManageTeacherGuide(guides[idx])) {
+            showToast('No tienes permiso para editar este instructivo', 'error');
+            return;
+        }
+        guides[idx] = { ...guides[idx], ...payload, ownerUserId: guideOwnerUserId(guides[idx]) || payload.ownerUserId, ownerName: guides[idx].ownerName || payload.ownerName };
+    }
     else guides.unshift(payload);
     saveTeacherGuides(guides);
     closeModal();
@@ -2682,6 +3090,11 @@ async function saveTeacherGuideFromModal(guideId) {
 }
 
 function deleteTeacherGuide(guideId) {
+    const guide = readTeacherGuides().find(g => String(g.id) === String(guideId));
+    if (!guide || !canManageTeacherGuide(guide)) {
+        showToast('No tienes permiso para eliminar este instructivo', 'error');
+        return;
+    }
     openConfirmModal('Eliminar instructivo', '¿Deseas eliminar este instructivo?', () => {
         const next = readTeacherGuides().filter(g => String(g.id) !== String(guideId));
         saveTeacherGuides(next);
@@ -3439,19 +3852,19 @@ function getFinalizeUnitContext(unitIdx) {
 }
 
 function getUnitExamScores(courseId, unitId) {
-    try { return JSON.parse(localStorage.getItem('educat_unit_exam_scores_' + courseId + '_' + unitId) || '{}'); } catch (e) { return {}; }
+    try { return JSON.parse(storageService.getItem('educat_unit_exam_scores_' + courseId + '_' + unitId) || '{}'); } catch (e) { return {}; }
 }
 
 function saveUnitExamScores(courseId, unitId, scores) {
-    localStorage.setItem('educat_unit_exam_scores_' + courseId + '_' + unitId, JSON.stringify(scores || {}));
+    storageService.setItem('educat_unit_exam_scores_' + courseId + '_' + unitId, JSON.stringify(scores || {}));
 }
 
 function getUnitFinalizeConfig(courseId, unitId) {
-    try { return JSON.parse(localStorage.getItem('educat_unit_finalize_cfg_' + courseId + '_' + unitId) || '{}'); } catch (e) { return {}; }
+    try { return JSON.parse(storageService.getItem('educat_unit_finalize_cfg_' + courseId + '_' + unitId) || '{}'); } catch (e) { return {}; }
 }
 
 function saveUnitFinalizeConfig(courseId, unitId, cfg) {
-    localStorage.setItem('educat_unit_finalize_cfg_' + courseId + '_' + unitId, JSON.stringify(cfg || {}));
+    storageService.setItem('educat_unit_finalize_cfg_' + courseId + '_' + unitId, JSON.stringify(cfg || {}));
 }
 
 function getScoreByCategory(ctx, student, examScoresByExam) {
@@ -3773,7 +4186,7 @@ function finalizeUnitApply() {
             upsertTeacherGradeRecord(currentCourse.id, st, r.final, description, ctx.unit.id);
         });
     }
-    localStorage.setItem('educat_unit_closure_' + currentCourse.id + '_' + ctx.unit.id, JSON.stringify({
+    storageService.setItem('educat_unit_closure_' + currentCourse.id + '_' + ctx.unit.id, JSON.stringify({
         courseId: currentCourse.id,
         unitId: ctx.unit.id,
         unitName: ctx.unit.name,
@@ -4458,9 +4871,23 @@ function removeResource(unitIdx, resIdx) {
     renderUnit(unitIdx); showToast('Recurso eliminado');
 }
 
-function saveCourseEdit() {
+async function saveCourseEdit() {
     currentCourse.name = document.getElementById('mCourseName').value.trim() || currentCourse.name;
     currentCourse.description = document.getElementById('mCourseDesc').value;
+    try {
+        await apiFetch('/api/courses/' + currentCourse.id, {
+            method: 'PUT',
+            body: JSON.stringify({
+                name: currentCourse.name,
+                description: currentCourse.description,
+                teacherId: currentCourse.teacher && currentCourse.teacher.id
+                    ? currentCourse.teacher.id
+                    : (currentTeacher ? currentTeacher.id : null)
+            })
+        });
+    } catch (e) {
+        // Mantener fallback local en caso de fallo backend.
+    }
     document.getElementById('breadcrumbCourseName').textContent = currentCourse.name;
     document.getElementById('cvCourseName').textContent = currentCourse.name;
     closeModal(); showToast('Curso actualizado', 'success');
@@ -4469,17 +4896,27 @@ function saveCourseEdit() {
 /* ═══════════════════════════════════════════════════════════════════════════
    GRADE HELPERS
 ═══════════════════════════════════════════════════════════════════════════ */
-function createGrade(courseId) {
+async function createGrade(courseId) {
     const sId = parseInt(document.getElementById('mStudent').value);
     const val = parseFloat(document.getElementById('mGrade').value);
     const desc = document.getElementById('mGradeDesc').value;
     if (isNaN(val) || val < 0 || val > 10) { showToast('Calificación inválida', 'error'); return; }
     const student = MOCK.students.find(s => s.id === sId);
-    MOCK.grades.push({ id: Date.now(), student: { id: sId, studentCode: student ? student.studentCode : '—', user: { name: student ? student.user.name : '—' } }, course: { id: courseId }, grade: val, description: desc });
+    try {
+        const saved = await postJson('/api/grades', {
+            studentId: sId,
+            courseId,
+            grade: val,
+            description: desc
+        });
+        if (saved) teacherGrades.push(saved);
+    } catch (e) {
+        teacherGrades.push({ id: Date.now(), student: { id: sId, studentCode: student ? student.studentCode : '—', user: { name: student ? student.user.name : '—' } }, course: { id: courseId }, grade: val, description: desc });
+    }
     closeModal(); renderGrades(courseId); showToast('Calificación registrada', 'success');
 }
 
-function createSchedule() {
+async function createSchedule() {
     const cId = parseInt(document.getElementById('schCourse').value);
     const day = document.getElementById('schDay').value;
     const start = document.getElementById('schStart').value;
@@ -4487,17 +4924,28 @@ function createSchedule() {
     if (!cId || !day || !start || !end) { showToast('Completa todos los campos del horario', 'error'); return; }
     if (start >= end) { showToast('La hora de fin debe ser mayor que la hora de inicio', 'error'); return; }
     const course = MOCK.courses.find(c => c.id === cId) || {};
-    MOCK.schedules.push({ id: Date.now(), course: { id: cId, name: course.name }, day, startTime: start, endTime: end });
+    try {
+        const saved = await postJson('/api/schedules', {
+            courseId: cId,
+            day,
+            startTime: start,
+            endTime: end
+        });
+        if (saved) teacherSchedules.push(saved);
+        else teacherSchedules.push({ id: Date.now(), course: { id: cId, name: course.name }, day, startTime: start, endTime: end });
+    } catch (e) {
+        teacherSchedules.push({ id: Date.now(), course: { id: cId, name: course.name }, day, startTime: start, endTime: end });
+    }
     closeModal(); loadHorarios(); showToast('Horario agregado', 'success');
 }
 
 function getAllAbsenceReports() {
-    const central = JSON.parse(localStorage.getItem('educat_absence_reports') || '[]');
+    const central = JSON.parse(storageService.getItem('educat_absence_reports') || '[]');
     if (central.length) return central;
 
     const reports = [];
     MOCK.students.forEach(s => {
-        const items = JSON.parse(localStorage.getItem('educat_ausencias_' + s.id) || '[]');
+        const items = JSON.parse(storageService.getItem('educat_ausencias_' + s.id) || '[]');
         items.forEach(item => {
             reports.push({
                 id: item.id || ('abs-' + s.id + '-' + (item.ts || Date.now())),
@@ -4664,19 +5112,401 @@ function updateAbsenceReportStatus(reportId, status) {
     if (idx < 0) return;
     reports[idx].status = status;
     reports[idx].reviewedAt = new Date().toISOString();
-    localStorage.setItem('educat_absence_reports', JSON.stringify(reports));
+    storageService.setItem('educat_absence_reports', JSON.stringify(reports));
     if (reports[idx].studentId) {
         const studentKey = 'educat_ausencias_' + reports[idx].studentId;
-        const studentReports = JSON.parse(localStorage.getItem(studentKey) || '[]');
+        const studentReports = JSON.parse(storageService.getItem(studentKey) || '[]');
         const studentIdx = studentReports.findIndex(r => String(r.id) === String(reportId));
         if (studentIdx >= 0) {
             studentReports[studentIdx].status = status;
             studentReports[studentIdx].reviewedAt = reports[idx].reviewedAt;
-            localStorage.setItem(studentKey, JSON.stringify(studentReports));
+            storageService.setItem(studentKey, JSON.stringify(studentReports));
         }
     }
     showToast(status === 'approved' ? 'Excusa marcada como valida' : 'Excusa marcada como no valida', 'success');
     renderTeacherAbsenceReports();
+}
+
+function ensureTeacherWellbeingCard() {
+    const slot = document.getElementById('teacherWellbeingOverviewSlot');
+    if (!slot || document.getElementById('teacherWellbeingContainer')) return;
+    slot.innerHTML = `
+        <div class="card" style="margin-top:0">
+            <div class="card-header">
+                <span class="card-title">Solicitudes de Bienestar Estudiantil</span>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <select class="form-input" id="wellbeingModuleFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                        <option value="all">Todos los módulos</option>
+                        <option value="PSYCHOLOGY">Psicología</option>
+                        <option value="SPORTS">Deportes</option>
+                        <option value="ART">Arte</option>
+                        <option value="ORIENTATION">Orientación</option>
+                        <option value="MEDICAL">Salud</option>
+                        <option value="SCHOLARSHIPS">Becas</option>
+                    </select>
+                    <select class="form-input" id="wellbeingStatusFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                        <option value="all">Todos los estados</option>
+                        <option value="PENDING">Pendiente</option>
+                        <option value="APPROVED">Aprobada</option>
+                        <option value="REJECTED">Rechazada</option>
+                        <option value="CANCELLED">Cancelada</option>
+                    </select>
+                    <input class="form-input" id="wellbeingSearchInput" placeholder="Filtrar por estudiante, título o mensaje" style="min-width:260px">
+                </div>
+            </div>
+            <div class="card-body" id="teacherWellbeingContainer">
+                <div class="empty-state" style="padding:24px 0">
+                    <div class="empty-state-title">Sin solicitudes</div>
+                    <div class="empty-state-text">Aun no hay solicitudes de bienestar registradas.</div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function getWellbeingModuleLabel(moduleType) {
+    const map = {
+        PSYCHOLOGY: 'Psicología',
+        SPORTS: 'Deportes',
+        ART: 'Arte',
+        ORIENTATION: 'Orientación',
+        MEDICAL: 'Salud',
+        SCHOLARSHIPS: 'Becas'
+    };
+    return map[String(moduleType || '').toUpperCase()] || String(moduleType || '—');
+}
+
+function getWellbeingStatusBadge(status) {
+    const normalized = String(status || 'PENDING').toUpperCase();
+    if (normalized === 'APPROVED') return '<span class="badge badge-success">Aprobada</span>';
+    if (normalized === 'REJECTED') return '<span class="badge badge-error">Rechazada</span>';
+    if (normalized === 'CANCELLED') return '<span class="badge badge-navy">Cancelada</span>';
+    return '<span class="badge badge-gold">Pendiente</span>';
+}
+
+function wellbeingReviewActionButtons(item) {
+    const currentStatus = String((item || {}).status || '').toUpperCase();
+    if (currentStatus !== 'PENDING') return '<div style="margin-top:10px"><button class="btn btn-sm btn-outline" onclick="renderTeacherWellbeingRequests()">Refrescar</button></div>';
+    const canApprove = canReviewWellbeingAction('APPROVED');
+    const canReject = canReviewWellbeingAction('REJECTED');
+    if (!canApprove && !canReject) {
+        return '<div style="margin-top:10px;font-size:12px;color:var(--text-muted)">Solo lectura. No cuentas con permisos para aprobar o rechazar.</div>';
+    }
+    return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">${canApprove ? `<button class="btn btn-sm btn-success-outline" onclick="updateWellbeingRequestStatus(${item.id},'APPROVED')">Aprobar</button>` : ''}${canReject ? `<button class="btn btn-sm btn-danger" onclick="updateWellbeingRequestStatus(${item.id},'REJECTED')">Rechazar</button>` : ''}</div>`;
+}
+
+async function renderTeacherWellbeingRequests() {
+    ensureTeacherWellbeingCard();
+    const state = tableUiState.wellbeing;
+    const container = document.getElementById('teacherWellbeingContainer');
+    if (!container) return;
+
+    const moduleSel = document.getElementById('wellbeingModuleFilter');
+    const statusSel = document.getElementById('wellbeingStatusFilter');
+    const searchEl = document.getElementById('wellbeingSearchInput');
+    const moduleType = moduleSel ? (moduleSel.value || 'all') : (state.module || 'all');
+    const status = statusSel ? (statusSel.value || 'all') : (state.status || 'all');
+    const query = ((searchEl ? searchEl.value : state.query) || '').trim().toLowerCase();
+    state.module = moduleType;
+    state.status = status;
+    state.query = query;
+
+    const params = ['page=0', 'size=200'];
+    if (moduleType !== 'all') params.push('moduleType=' + encodeURIComponent(moduleType));
+    if (status !== 'all') params.push('status=' + encodeURIComponent(status));
+    const page = await tryFetch('/api/student/wellbeing-requests?' + params.join('&'));
+    let items = Array.isArray(page) ? page : (page && Array.isArray(page.content) ? page.content : []);
+    if (query) {
+        items = items.filter(r => {
+            const studentName = ((r.student || {}).name || '').toLowerCase();
+            const studentCode = ((r.student || {}).studentCode || '').toLowerCase();
+            const title = String(r.title || '').toLowerCase();
+            const message = String(r.message || '').toLowerCase();
+            return studentName.includes(query) || studentCode.includes(query) || title.includes(query) || message.includes(query);
+        });
+    }
+
+    const totalPages = Math.max(1, Math.ceil(items.length / state.pageSize));
+    const safePage = Math.min(Math.max(1, state.page), totalPages);
+    state.page = safePage;
+    const pageItems = items.slice((safePage - 1) * state.pageSize, safePage * state.pageSize);
+
+    if (!items.length) {
+        container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin solicitudes</div><div class="empty-state-text">No hay solicitudes para los filtros seleccionados.</div></div>';
+        return;
+    }
+
+    container.innerHTML = pageItems.map((r) => {
+        const studentName = (r.student || {}).name || 'Estudiante';
+        const studentCode = (r.student || {}).studentCode || '';
+        const requestedAt = r.requestedAt ? new Date(r.requestedAt).toLocaleString('es-CO') : '—';
+        const scheduledAt = r.scheduledAt ? new Date(r.scheduledAt).toLocaleString('es-CO') : '';
+        const statusBadge = getWellbeingStatusBadge(r.status);
+        return `<div class="card" style="margin-bottom:14px">
+            <div class="card-header" style="padding:14px 18px">
+                <div>
+                    <div style="font-size:14px;font-weight:700">${studentName} <span style="font-size:11px;color:var(--text-muted);font-weight:500">${studentCode}</span></div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${getWellbeingModuleLabel(r.moduleType)} · ${requestedAt}</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${statusBadge}</div>
+            </div>
+            <div class="card-body" style="padding:16px 18px">
+                <div style="font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;margin-bottom:6px">Título</div>
+                <div style="font-size:13px;line-height:1.65;color:var(--text-body);background:var(--cream);border-radius:8px;padding:10px 12px;border:1px solid rgba(11,31,58,0.06)">${r.title || 'Sin título'}</div>
+                <div style="font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;margin:12px 0 6px">Mensaje</div>
+                <div style="font-size:13px;line-height:1.65;color:var(--text-body);background:#fff;border-radius:8px;padding:10px 12px;border:1px solid rgba(11,31,58,0.08)">${r.message || 'Sin detalle adicional'}</div>
+                ${scheduledAt ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted)"><strong>Programada para:</strong> ${scheduledAt}</div>` : ''}
+                ${r.resolutionComment ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted)"><strong>Resolución:</strong> ${r.resolutionComment}</div>` : ''}
+                ${wellbeingReviewActionButtons(r)}
+            </div>
+        </div>`;
+    }).join('') + `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;flex-wrap:wrap"><span style="font-size:12px;color:var(--text-muted)">Mostrando ${(safePage - 1) * state.pageSize + 1}-${Math.min(safePage * state.pageSize, items.length)} de ${items.length}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="changeWellbeingRequestsPage(-1)">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="changeWellbeingRequestsPage(1)">Siguiente</button></div></div>`;
+}
+
+function changeWellbeingRequestsPage(delta) {
+    tableUiState.wellbeing.page += delta;
+    renderTeacherWellbeingRequests();
+}
+
+async function updateWellbeingRequestStatus(requestId, status) {
+    const normalizedStatus = String(status || '').toUpperCase();
+    const okStatuses = ['APPROVED', 'REJECTED', 'CANCELLED'];
+    if (!okStatuses.includes(normalizedStatus)) return;
+    if (!canReviewWellbeingAction(normalizedStatus)) {
+        showToast('No tienes permisos para cambiar este estado', 'error');
+        return;
+    }
+    const res = await apiFetch('/api/student/wellbeing-requests/' + requestId + '/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: normalizedStatus, resolutionComment: '' })
+    });
+    if (!res || !res.ok) {
+        showToast('No se pudo actualizar el estado de la solicitud', 'error');
+        return;
+    }
+    showToast(normalizedStatus === 'APPROVED' ? 'Solicitud aprobada' : (normalizedStatus === 'REJECTED' ? 'Solicitud rechazada' : 'Solicitud cancelada'), 'success');
+    renderTeacherWellbeingRequests();
+}
+
+function ensureTeacherEvaluationReportsCard() {
+    const slot = document.getElementById('teacherEvaluationOverviewSlot');
+    if (!slot || document.getElementById('teacherEvaluationReportsContainer')) return;
+    slot.innerHTML = `
+        <div class="card" style="margin-top:0">
+            <div class="card-header">
+                <span class="card-title">Reportes de Evaluación (Docente / Autoevaluación)</span>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <select class="form-input" id="evalTypeFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                        <option value="all">Todos los tipos</option>
+                        <option value="EVAL">Evaluación docente</option>
+                        <option value="AUTOEVAL">Autoevaluación</option>
+                    </select>
+                    <select class="form-input" id="evalSubmittedFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                        <option value="all">Enviadas y borradores</option>
+                        <option value="true">Solo enviadas</option>
+                        <option value="false">Solo borradores</option>
+                    </select>
+                    <select class="form-input" id="evalCourseFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                        <option value="all">Todos los cursos</option>
+                    </select>
+                    <input class="form-input" id="evalSearchInput" placeholder="Filtrar por estudiante o curso" style="min-width:240px">
+                </div>
+            </div>
+            <div class="card-body" id="teacherEvaluationReportsContainer">
+                <div class="empty-state" style="padding:24px 0">
+                    <div class="empty-state-title">Sin reportes</div>
+                    <div class="empty-state-text">Aun no hay reportes de evaluación registrados.</div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function getEvalTypeLabel(evalType) {
+    const normalized = String(evalType || '').toUpperCase();
+    if (normalized === 'AUTOEVAL') return 'Autoevaluación';
+    if (normalized === 'EVAL') return 'Evaluación docente';
+    return normalized || '—';
+}
+
+function getEvalSubmittedBadge(submitted) {
+    return submitted ? '<span class="badge badge-success">Enviada</span>' : '<span class="badge badge-gold">Borrador</span>';
+}
+
+function readEvaluationModerationState() {
+    try {
+        const raw = JSON.parse(storageService.getItem(TEACHER_EVAL_REVIEWS_KEY) || '{}');
+        return raw && typeof raw === 'object' ? raw : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+function saveEvaluationModerationState(state) {
+    storageService.setItem(TEACHER_EVAL_REVIEWS_KEY, JSON.stringify(state && typeof state === 'object' ? state : {}));
+}
+
+function getEvaluationModerationBadge(review) {
+    const status = String((review || {}).status || '').toUpperCase();
+    if (status === 'APPROVED') return '<span class="badge badge-success">Aprobado</span>';
+    if (status === 'REJECTED') return '<span class="badge badge-error">Declinado</span>';
+    return '<span class="badge badge-gold">Pendiente de revisión</span>';
+}
+
+function moderateEvaluationSubmission(submissionId, status) {
+    const normalized = String(status || '').toUpperCase();
+    if (normalized !== 'APPROVED' && normalized !== 'REJECTED') return;
+    if (!canReviewWellbeingAction(normalized)) {
+        showToast('No tienes permisos para moderar reportes', 'error');
+        return;
+    }
+    const state = readEvaluationModerationState();
+    state[String(submissionId)] = {
+        status: normalized,
+        reviewerId: (currentUser && currentUser.id) || null,
+        reviewerName: (currentUser && currentUser.name) || 'Docente',
+        reviewedAt: new Date().toISOString()
+    };
+    saveEvaluationModerationState(state);
+    showToast(normalized === 'APPROVED' ? 'Reporte aprobado' : 'Reporte declinado', 'success');
+    renderTeacherEvaluationReports();
+}
+
+function renderEvaluationAnswersPreview(answers) {
+    const obj = answers && typeof answers === 'object' ? answers : {};
+    const keys = Object.keys(obj);
+    if (!keys.length) return '<div style="font-size:12px;color:var(--text-muted)">Sin respuestas registradas.</div>';
+    const take = keys.slice(0, 4);
+    const rows = take.map(k => {
+        const raw = obj[k];
+        const val = Array.isArray(raw) ? raw.join(', ') : (typeof raw === 'object' ? JSON.stringify(raw) : String(raw));
+        return `<div style="font-size:12px;color:var(--text-body);margin-bottom:4px"><strong>${k}:</strong> ${val.length > 120 ? val.slice(0, 117) + '...' : val}</div>`;
+    }).join('');
+    const more = keys.length > take.length ? `<div style="font-size:11px;color:var(--text-muted)">+${keys.length - take.length} respuesta(s) más</div>` : '';
+    return rows + more;
+}
+
+function openEvaluationSubmissionDetail(item) {
+    const studentName = ((item.student || {}).name) || 'Estudiante';
+    const courseName = ((item.course || {}).name) || 'Curso';
+    const type = getEvalTypeLabel(item.evaluationType);
+    const submittedAt = item.submittedAt ? new Date(item.submittedAt).toLocaleString('es-CO') : '—';
+    const answers = item.answers && typeof item.answers === 'object' ? item.answers : {};
+    const pretty = Object.keys(answers).length ? JSON.stringify(answers, null, 2) : '{}';
+    openModal('Detalle de evaluación', `
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${studentName} · ${courseName} · ${type} · ${submittedAt}</div>
+        <pre style="background:#f7f8fb;border:1px solid rgba(11,31,58,0.08);border-radius:8px;padding:12px;max-height:58vh;overflow:auto;font-size:12px;line-height:1.5;white-space:pre-wrap">${pretty.replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>
+    `, { size: 'xl' });
+}
+
+function openEvaluationSubmissionDetailById(submissionId) {
+    const item = teacherEvaluationById[String(submissionId)] || null;
+    if (!item) {
+        showToast('No se pudo cargar el detalle del reporte', 'error');
+        return;
+    }
+    openEvaluationSubmissionDetail(item);
+}
+
+async function deleteEvaluationSubmission(submissionId) {
+    const res = await apiFetch('/api/student/evaluation-submissions/' + submissionId, { method: 'DELETE' });
+    if (!res || !res.ok) {
+        showToast('No se pudo eliminar el reporte', 'error');
+        return;
+    }
+    showToast('Reporte eliminado', 'success');
+    renderTeacherEvaluationReports();
+}
+
+async function renderTeacherEvaluationReports() {
+    ensureTeacherEvaluationReportsCard();
+    const state = tableUiState.evalReports;
+    const container = document.getElementById('teacherEvaluationReportsContainer');
+    if (!container) return;
+
+    const typeSel = document.getElementById('evalTypeFilter');
+    const submittedSel = document.getElementById('evalSubmittedFilter');
+    const courseSel = document.getElementById('evalCourseFilter');
+    const searchEl = document.getElementById('evalSearchInput');
+    const type = typeSel ? (typeSel.value || 'all') : (state.type || 'all');
+    const submittedVal = submittedSel ? (submittedSel.value || 'all') : (state.submitted || 'all');
+    const courseId = courseSel ? (courseSel.value || 'all') : (state.courseId || 'all');
+    const query = ((searchEl ? searchEl.value : state.query) || '').trim().toLowerCase();
+    state.type = type;
+    state.submitted = submittedVal;
+    state.courseId = courseId;
+    state.query = query;
+
+    const params = ['page=0', 'size=300'];
+    if (type !== 'all') params.push('evaluationType=' + encodeURIComponent(type));
+    if (submittedVal !== 'all') params.push('submitted=' + encodeURIComponent(submittedVal));
+    if (courseId !== 'all') params.push('courseId=' + encodeURIComponent(courseId));
+    const page = await tryFetch('/api/student/evaluation-submissions?' + params.join('&'));
+    let items = Array.isArray(page) ? page : (page && Array.isArray(page.content) ? page.content : []);
+    if (query) {
+        items = items.filter(r => {
+            const studentName = ((r.student || {}).name || '').toLowerCase();
+            const studentCode = ((r.student || {}).studentCode || '').toLowerCase();
+            const courseName = ((r.course || {}).name || '').toLowerCase();
+            return studentName.includes(query) || studentCode.includes(query) || courseName.includes(query);
+        });
+    }
+
+    teacherEvaluationById = {};
+    items.forEach(it => { if (it && it.id !== undefined && it.id !== null) teacherEvaluationById[String(it.id)] = it; });
+    const reviewState = readEvaluationModerationState();
+
+    const totalPages = Math.max(1, Math.ceil(items.length / state.pageSize));
+    const safePage = Math.min(Math.max(1, state.page), totalPages);
+    state.page = safePage;
+    const pageItems = items.slice((safePage - 1) * state.pageSize, safePage * state.pageSize);
+
+    if (!items.length) {
+        container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin reportes</div><div class="empty-state-text">No hay reportes para los filtros seleccionados.</div></div>';
+        return;
+    }
+
+    container.innerHTML = pageItems.map(r => {
+        const studentName = (r.student || {}).name || 'Estudiante';
+        const studentCode = (r.student || {}).studentCode || '';
+        const courseName = (r.course || {}).name || 'Curso';
+        const typeLabel = getEvalTypeLabel(r.evaluationType);
+        const submittedAt = r.submittedAt ? new Date(r.submittedAt).toLocaleString('es-CO') : 'Sin fecha de envío';
+        const answers = r.answers && typeof r.answers === 'object' ? r.answers : {};
+        const answerCount = Object.keys(answers).length;
+        const review = reviewState[String(r.id)] || null;
+        const canApprove = canReviewWellbeingAction('APPROVED');
+        const canReject = canReviewWellbeingAction('REJECTED');
+        const reviewDetails = review && review.reviewedAt
+            ? `<div style="font-size:11px;color:var(--text-muted);margin-top:8px">${review.status === 'APPROVED' ? 'Aprobado' : 'Declinado'} por ${htmlEscape(review.reviewerName || 'revisor')} el ${new Date(review.reviewedAt).toLocaleString('es-CO')}</div>`
+            : '';
+        return `<div class="card" style="margin-bottom:12px">
+            <div class="card-header" style="padding:14px 18px">
+                <div>
+                    <div style="font-size:14px;font-weight:700">${studentName} <span style="font-size:11px;color:var(--text-muted);font-weight:500">${studentCode}</span></div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${courseName} · ${typeLabel}</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${getEvalSubmittedBadge(!!r.submitted)}</div>
+            </div>
+            <div class="card-body" style="padding:16px 18px">
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${submittedAt} · ${answerCount} respuesta(s)</div>
+                <div style="background:#fff;border-radius:8px;padding:10px 12px;border:1px solid rgba(11,31,58,0.08)">${renderEvaluationAnswersPreview(answers)}</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+                    <button class="btn btn-sm btn-outline" onclick="openEvaluationSubmissionDetailById(${r.id})">Ver detalle</button>
+                    ${canApprove ? `<button class="btn btn-sm btn-success-outline" onclick="moderateEvaluationSubmission(${r.id},'APPROVED')">Aceptar</button>` : ''}
+                    ${canReject ? `<button class="btn btn-sm btn-danger" onclick="moderateEvaluationSubmission(${r.id},'REJECTED')">Declinar</button>` : ''}
+                    ${(!canApprove && !canReject) ? '<span style="font-size:12px;color:var(--text-muted);display:flex;align-items:center">Solo lectura</span>' : ''}
+                </div>
+                <div style="margin-top:8px">${getEvaluationModerationBadge(review)}</div>
+                ${reviewDetails}
+            </div>
+        </div>`;
+    }).join('') + `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;flex-wrap:wrap"><span style="font-size:12px;color:var(--text-muted)">Mostrando ${(safePage - 1) * state.pageSize + 1}-${Math.min(safePage * state.pageSize, items.length)} de ${items.length}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="changeEvaluationReportsPage(-1)">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="changeEvaluationReportsPage(1)">Siguiente</button></div></div>`;
+}
+
+function changeEvaluationReportsPage(delta) {
+    tableUiState.evalReports.page += delta;
+    renderTeacherEvaluationReports();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -4684,13 +5514,41 @@ function updateAbsenceReportStatus(reportId, status) {
 ═══════════════════════════════════════════════════════════════════════════ */
 async function init() {
     try {
-        authHeader = getAuth() || btoa('docente@educat.edu.co:demo1234');
+        authHeader = '';
         setDate();
-        const usersData = await tryFetch('/api/users');
-        const email = getEmail() || MOCK.user.email;
-        currentUser = (usersData && usersData.length) ? (usersData.find(u => u.email === email) || MOCK.user) : MOCK.user;
-        const teachersData = await tryFetch('/api/teachers');
-        currentTeacher = (teachersData && teachersData.length) ? (teachersData.find(t => t.user && t.user.id === currentUser.id) || MOCK.teacher) : MOCK.teacher;
+        initStorageBackendSync();
+        await hydrateStorageFromBackend();
+        const me = await tryFetch('/api/auth/me');
+        if (!me || !me.id) {
+            window.location.href = '/login?role=teacher&redirect=/teacher-dashboard';
+            return;
+        }
+        const roleName = String((((me || {}).role || {}).name) || '').toUpperCase();
+        const teacherRoles = ['DOCENTE', 'TEACHER', 'PROFESOR'];
+        const effectiveAccess = await tryFetch('/api/access/me');
+        currentEffectiveAccess = effectiveAccess || null;
+        currentEffectivePermissions = Array.isArray((effectiveAccess || {}).permissions) ? effectiveAccess.permissions.slice() : [];
+        const hasTeacherPortal = !!(effectiveAccess && effectiveAccess.portals && effectiveAccess.portals.teacher);
+        if (!hasTeacherPortal) {
+            window.location.href = roleName === 'ESTUDIANTE' || roleName === 'STUDENT'
+                ? '/student-dashboard'
+                : '/login?role=teacher&redirect=/teacher-dashboard';
+            return;
+        }
+        currentUser = me;
+        if (teacherRoles.indexOf(roleName) >= 0) {
+            const teachersData = await tryFetch('/api/teachers');
+            currentTeacher = (teachersData && teachersData.length)
+                ? (teachersData.find(t => t.user && t.user.id === currentUser.id) || null)
+                : null;
+            if (!currentTeacher) {
+                window.location.href = '/login?role=teacher&redirect=/teacher-dashboard';
+                return;
+            }
+        } else {
+            // Usuario con acceso delegado al portal docente (ej. admin).
+            currentTeacher = { id: 0, specialization: 'Acceso administrativo' };
+        }
         document.getElementById('sidebarUserName').textContent = currentUser.name;
         document.getElementById('sidebarSpecialization').textContent = currentTeacher.specialization || 'Docente';
         await loadOverview();
@@ -4713,11 +5571,10 @@ document.getElementById('sidebarCloseBtn').addEventListener('click', () => {
 });
 
 document.getElementById('logoutBtn').addEventListener('click', () => {
-    localStorage.removeItem('educat_auth'); localStorage.removeItem('educat_email');
-    sessionStorage.removeItem(TEACHER_NAV_STATE_KEY);
-    localStorage.removeItem('educat_teacher_nav_state');
-    sessionStorage.removeItem('educat_auth'); sessionStorage.removeItem('educat_email');
-    window.location.href = 'login.html';
+    sessionService.removeItem(TEACHER_NAV_STATE_KEY);
+    fetch(API + '/api/auth/logout', { method: 'POST', credentials: 'include' }).finally(() => {
+        window.location.href = '/login';
+    });
 });
 
 document.getElementById('modalClose').addEventListener('click', closeModal);
@@ -4771,7 +5628,7 @@ document.getElementById('btnAddUnit').addEventListener('click', () => { if (curr
 
 document.getElementById('btnCourseSubmissions').addEventListener('click', () => {
     if (!currentCourse) return;
-    const acts = MOCK.activities.filter(a => a.course && a.course.id === currentCourse.id);
+    const acts = getCourseActivitiesMerged(currentCourse.id);
     if (!acts.length) { showToast('Este curso no tiene actividades registradas', 'error'); return; }
     openActivitySubmissions(acts[0].id);
 });
@@ -4826,17 +5683,8 @@ document.getElementById('btnBackToList').addEventListener('click', () => {
 const btnJoinCourseCodeTeacher = document.getElementById('btnJoinCourseCodeTeacher');
 if (btnJoinCourseCodeTeacher) btnJoinCourseCodeTeacher.addEventListener('click', openTeacherJoinCourseModal);
 
-window.addEventListener('storage', (ev) => {
-    if (!ev || !ev.key) return;
-    if (ev.key === LOCAL_KEYS.courses || ev.key === LOCAL_KEYS.enrollments) {
-        loadOverview();
-        loadCursos();
-        return;
-    }
-    if (ev.key === TEACHER_GUIDES_KEY) {
-        const panel = document.getElementById('panel-instructivos');
-        if (panel && panel.classList.contains('active')) loadInstructivos();
-    }
+window.addEventListener('storage', () => {
+    // backend-only: sin sincronización por storage del navegador.
 });
 
 init();

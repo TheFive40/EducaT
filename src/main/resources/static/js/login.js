@@ -1,4 +1,4 @@
-const API = 'http://localhost:8080';
+const API = '';
 
 const params = new URLSearchParams(window.location.search);
 const role = params.get('role');
@@ -25,9 +25,24 @@ if (role) {
 function resolveRedirectTarget() {
     const safe = String(redirectParam || '').trim();
     if (!safe || !safe.startsWith('/')) {
-        return role === 'student' ? '/student-dashboard' : '/admin-dashboard';
+        return role === 'student' ? '/student-dashboard' : (role === 'teacher' ? '/teacher-dashboard' : '/admin-dashboard');
     }
     return safe;
+}
+
+function resolveRedirectByUserRole(user) {
+    const roleName = String(((user || {}).role || {}).name || '').toUpperCase();
+    if (roleName === 'ESTUDIANTE') return '/student-dashboard';
+    if (roleName === 'DOCENTE' || roleName === 'TEACHER') return '/teacher-dashboard';
+    return '/admin-dashboard';
+}
+
+function resolveRedirectByEffectivePortals(access) {
+    const portals = access && access.portals ? access.portals : {};
+    if (portals.admin) return '/admin-dashboard';
+    if (portals.teacher) return '/teacher-dashboard';
+    if (portals.student) return '/student-dashboard';
+    return '/';
 }
 
 document.getElementById('togglePass').addEventListener('click', function () {
@@ -79,21 +94,32 @@ document.getElementById('loginBtn').addEventListener('click', async () => {
     btn.disabled = true;
 
     try {
-        const credentials = btoa(email + ':' + password);
-        const res = await fetch(API + '/api/users', {
+        const res = await fetch(API + '/api/auth/login', {
+            method: 'POST',
+            credentials: 'include',
             headers: {
-                'Authorization': 'Basic ' + credentials,
                 'Content-Type': 'application/json'
-            }
+            },
+            body: JSON.stringify({ email, password, remember })
         });
 
         if (res.ok) {
-            const storage = remember ? localStorage : sessionStorage;
-            storage.setItem('educat_auth', credentials);
-            storage.setItem('educat_email', email);
+            const user = await res.json();
             setAlert('alertSuccess', true);
-            setTimeout(() => { window.location.href = resolveRedirectTarget(); }, 1200);
-        } else if (res.status === 401) {
+            let target = redirectParam ? resolveRedirectTarget() : resolveRedirectByUserRole(user);
+            if (!redirectParam) {
+                try {
+                    const accessRes = await fetch(API + '/api/access/me', { credentials: 'include' });
+                    if (accessRes.ok) {
+                        const access = await accessRes.json();
+                        target = resolveRedirectByEffectivePortals(access);
+                    }
+                } catch (e) {
+                    // Si falla este fetch, se mantiene redirección por rol.
+                }
+            }
+            setTimeout(() => { window.location.href = target; }, 700);
+        } else if (res.status === 401 || res.status === 403) {
             setAlert('alertError', true, 'Credenciales incorrectas. Verifica tu correo y contraseña.');
         } else {
             setAlert('alertError', true, 'Error al conectar con el servidor. Intenta de nuevo.');

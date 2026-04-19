@@ -10,6 +10,14 @@ import java.util.List;
 @Repository
 public interface ScheduleRepository extends JpaRepository<Schedule, Integer> {
     List<Schedule> findByCourseId(Integer courseId);
+    java.util.Optional<Schedule> findFirstByCourseIdAndDayIgnoreCase(Integer courseId, String day);
+
+    @Query("""
+            SELECT s
+            FROM Schedule s
+            WHERE s.course.teacher.id = :teacherId
+            """)
+    List<Schedule> findByTeacherId(@Param("teacherId") Integer teacherId);
 
     @Query("""
             SELECT DISTINCT s

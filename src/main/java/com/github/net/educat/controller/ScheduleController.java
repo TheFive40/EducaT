@@ -20,7 +20,7 @@ public class ScheduleController {
     public ResponseEntity<List<ScheduleResponse>> findAll() {
         return ResponseEntity.ok(scheduleService.findAll());
     }
-    @GetMapping("/{id}")
+    @GetMapping("/{id:\\d+}")
     public ResponseEntity<ScheduleResponse> findById(@PathVariable Integer id) {
         return ResponseEntity.ok(scheduleService.findById(id));
     }
@@ -32,6 +32,11 @@ public class ScheduleController {
     @GetMapping("/student/{studentId}")
     public ResponseEntity<List<ScheduleResponse>> findByStudent(@PathVariable Integer studentId) {
         return ResponseEntity.ok(scheduleService.findByStudentId(studentId));
+    }
+
+    @GetMapping("/teacher/{teacherId}")
+    public ResponseEntity<List<ScheduleResponse>> findByTeacher(@PathVariable Integer teacherId) {
+        return ResponseEntity.ok(scheduleService.findByTeacherId(teacherId));
     }
 
     @PostMapping

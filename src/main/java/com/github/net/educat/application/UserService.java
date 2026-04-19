@@ -6,6 +6,7 @@ import java.util.List;
 
 public interface UserService {
     List<UserResponse> findAll();
+    List<UserResponse> search(String query, Integer limit);
     UserResponse findById(Integer id);
     UserResponse save(UserRequest request);
     UserResponse update(Integer id, UserRequest request);

@@ -11,5 +11,6 @@ public interface ScheduleService {
     ScheduleResponse update(Integer id, ScheduleRequest request);
     void delete(Integer id);
     List<ScheduleResponse> findByCourseId(Integer courseId);
+    List<ScheduleResponse> findByTeacherId(Integer teacherId);
     List<ScheduleResponse> findByStudentId(Integer studentId);
 }

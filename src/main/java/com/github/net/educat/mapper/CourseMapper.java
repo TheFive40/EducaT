@@ -17,6 +17,9 @@ public class CourseMapper {
                 .name(course.getName())
                 .description(course.getDescription())
                 .courseCode(course.getCourseCode())
+                .defaultScheduleDay(course.getDefaultScheduleDay())
+                .defaultStartTime(course.getDefaultStartTime())
+                .defaultEndTime(course.getDefaultEndTime())
                 .teacher(course.getTeacher() != null ? teacherMapper.toResponse(course.getTeacher()) : null)
                 .build();
     }
@@ -24,6 +27,9 @@ public class CourseMapper {
         return Course.builder()
                 .name(request.getName())
                 .description(request.getDescription())
+                .defaultScheduleDay(request.getDefaultScheduleDay())
+                .defaultStartTime(request.getDefaultStartTime())
+                .defaultEndTime(request.getDefaultEndTime())
                 .build();
     }
 }

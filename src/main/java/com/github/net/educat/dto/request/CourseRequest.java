@@ -3,10 +3,15 @@ package com.github.net.educat.dto.request;
 import jakarta.validation.constraints.*;
 import lombok.*;
 
+import java.time.LocalTime;
+
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class CourseRequest {
     @NotBlank
     private String name;
     private String description;
     private Integer teacherId;
+    private String defaultScheduleDay;
+    private LocalTime defaultStartTime;
+    private LocalTime defaultEndTime;
 }

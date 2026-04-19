@@ -147,7 +147,10 @@
                 <div class="card">
                     <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
                         <span class="card-title">Cursos Matriculados</span>
-                        <button class="btn btn-sm btn-primary" id="btnJoinCourseCodeStudent" title="Unirse por código">+</button>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <button class="btn btn-sm btn-outline" id="btnReloadStudentCourses" title="Recargar cursos">Recargar</button>
+                            <button class="btn btn-sm btn-primary" id="btnJoinCourseCodeStudent" title="Unirse por código">+</button>
+                        </div>
                     </div>
                     <div class="card-body">
                         <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px">Selecciona un curso para acceder a su contenido completo, actividades, evaluaciones y materiales.</p>
@@ -306,6 +309,7 @@
 
 <div class="toast-container" id="toastContainer"></div>
 
+<script src="/js/storage-service.js"></script>
 <script src="/js/student-dashboard.js"></script>
 </body>
 </html>

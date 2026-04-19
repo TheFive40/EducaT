@@ -1,4 +1,4 @@
-const API = 'http://localhost:8080';
+const API = '';
 
 function showToast(msg, type) {
     const t = document.getElementById('toast');
@@ -21,8 +21,8 @@ function animateCount(el, target, suffix) {
 async function loadPublicData() {
     try {
         const [newsRes, forumsRes] = await Promise.allSettled([
-            fetch(API + '/api/news', { headers: { 'Authorization': 'Basic ' + btoa('admin:admin') } }),
-            fetch(API + '/api/forums', { headers: { 'Authorization': 'Basic ' + btoa('admin:admin') } })
+            fetch(API + '/api/news', { credentials: 'include' }),
+            fetch(API + '/api/forums', { credentials: 'include' })
         ]);
 
         if (newsRes.status === 'fulfilled' && newsRes.value.ok) {
@@ -81,7 +81,7 @@ function resolveAccessTarget(roleValue, dashboardValue) {
     const role = String(roleValue || '').toLowerCase();
     const dashboard = String(dashboardValue || '').trim();
     const targetDashboard = dashboard || ({
-        teacher: '/admin-dashboard',
+        teacher: '/teacher-dashboard',
         student: '/student-dashboard',
         staff: '/admin-dashboard'
     }[role] || '/');

@@ -1,4 +1,48 @@
-const API = 'http://localhost:8080';
+const API = '';
+let activeSessionUser = null;
+
+function buildRuntimeStore() {
+    const data = Object.create(null);
+    const keys = [];
+    const add = k => { if (keys.indexOf(k) === -1) keys.push(k); };
+    const del = k => {
+        const idx = keys.indexOf(k);
+        if (idx >= 0) keys.splice(idx, 1);
+    };
+    return {
+        getItem(key) {
+            const k = String(key || '');
+            return Object.prototype.hasOwnProperty.call(data, k) ? data[k] : null;
+        },
+        setItem(key, value) {
+            const k = String(key || '');
+            data[k] = String(value);
+            add(k);
+        },
+        removeItem(key) {
+            const k = String(key || '');
+            delete data[k];
+            del(k);
+        },
+        key(index) {
+            const i = Number(index);
+            if (isNaN(i) || i < 0 || i >= keys.length) return null;
+            return keys[i];
+        },
+        clear() {
+            keys.slice().forEach(k => delete data[k]);
+            keys.length = 0;
+        },
+        get length() {
+            return keys.length;
+        }
+    };
+}
+
+const storageService = buildRuntimeStore();
+const sessionService = buildRuntimeStore();
+const APP_STATE_PREFIX = 'educat_';
+let appStateHydrated = false;
 const STORAGE_KEYS = {
     guides: 'educat_admin_instructivos',
     forms: 'educat_admin_eval_forms',
@@ -31,58 +75,9 @@ const STORAGE_KEYS = {
     enrollmentFormConfig: 'educat_enrollment_form_config'
 };
 
-const PERMISSIONS = [
-    'cursos.crear', 'cursos.editar', 'cursos.eliminar', 'cursos.asignar',
-    'niveles.crear', 'niveles.asignar',
-    'roles.crear', 'roles.permisos',
-    'certificados.emitir', 'certificados.eliminar',
-    'instructivos.editar',
-    'formularios.editar', 'formularios.reportes',
-    'notas.configurar',
-    'bienestar.psicologia',
-    'bienestar.deportes',
-    'bienestar.arte',
-    'bienestar.orientacion',
-    'bienestar.salud',
-    'bienestar.becas',
-    'bienestar.publicar',
-    'bienestar.editar-publicacion',
-    'bienestar.eliminar-publicacion',
-    'bienestar.aprobar-publicacion',
-    'bienestar.rechazar-publicacion',
-    'bienestar.eliminar-comentario',
-    'bienestar.eliminar-reaccion'
-];
-
-const PERMISSION_LABELS = {
-    'cursos.crear': 'Cursos - Crear',
-    'cursos.editar': 'Cursos - Editar',
-    'cursos.eliminar': 'Cursos - Eliminar',
-    'cursos.asignar': 'Cursos - Asignar estudiantes',
-    'niveles.crear': 'Niveles - Crear',
-    'niveles.asignar': 'Niveles - Asignar cursos/docentes',
-    'roles.crear': 'Roles - Crear',
-    'roles.permisos': 'Roles - Gestionar permisos',
-    'certificados.emitir': 'Certificados - Emitir',
-    'certificados.eliminar': 'Certificados - Eliminar',
-    'instructivos.editar': 'Instructivos - Editar',
-    'formularios.editar': 'Formularios - Editar',
-    'formularios.reportes': 'Formularios - Reportes',
-    'notas.configurar': 'Notas - Configurar política',
-    'bienestar.psicologia': 'Bienestar - Apoyo Psicológico',
-    'bienestar.deportes': 'Bienestar - Actividad Física y Deportes',
-    'bienestar.arte': 'Bienestar - Arte y Cultura',
-    'bienestar.orientacion': 'Bienestar - Orientación Vocacional',
-    'bienestar.salud': 'Bienestar - Servicio Médico y Salud',
-    'bienestar.becas': 'Bienestar - Apoyos Económicos y Becas',
-    'bienestar.publicar': 'Bienestar - Publicar',
-    'bienestar.editar-publicacion': 'Bienestar - Editar publicación',
-    'bienestar.eliminar-publicacion': 'Bienestar - Eliminar publicación',
-    'bienestar.aprobar-publicacion': 'Bienestar - Aprobar solicitud de publicación',
-    'bienestar.rechazar-publicacion': 'Bienestar - Denegar solicitud de publicación',
-    'bienestar.eliminar-comentario': 'Bienestar - Eliminar comentarios',
-    'bienestar.eliminar-reaccion': 'Bienestar - Eliminar reacciones'
-};
+const PERMISSIONS = [];
+const PERMISSION_LABELS = {};
+const PORTAL_PERMISSIONS = ['portal.admin', 'portal.teacher', 'portal.student'];
 
 const DEFAULT_GUIDES = [
     { id: 'ins-manual', title: 'Manual de Convivencia', detail: 'Normas y rutas institucionales.', hasText: true, hasPdf: true, pdfUrl: '/docs/manual-convivencia.pdf', textSections: [{ heading: 'Proposito', paragraphs: ['Define acuerdos institucionales.'], bullets: ['Respeto', 'Dialogo', 'Corresponsabilidad'] }] },
@@ -159,8 +154,10 @@ const state = {
     formResponses: [],
     formShares: {},
     surveys: [],
+    permissionCatalog: [],
     rolePerms: {},
     userPerms: {},
+    userPortalAccess: {},
     gradePolicy: { ...DEFAULT_POLICY },
     academicLevels: [],
     academicGrades: [],
@@ -180,6 +177,7 @@ const state = {
         permRolePage: 1,
         permRolePageSize: 20,
         permUserSearch: '',
+        permUserSearchTimer: null,
         permUserPage: 1,
         permUserPageSize: 20,
         permRoleChecklistPage: 1,
@@ -333,7 +331,7 @@ const modalState = {
     courseLevel: { levelId: '', queryCourse: '', pageCourses: 1, pageSize: 10, levelPage: 1, levelPageSize: 8, selectedCourses: {} },
     enrollmentSummary: { page: 1, pageSize: 8 },
     levelsSummary: { page: 1, pageSize: 6, query: '', filter: 'all' },
-    courseCreate: { gradeIds: [], menuOpen: false, draft: { name: '', description: '', teacherId: '', levelId: '', capacity: '35', gradeIds: [] } },
+    courseCreate: { gradeIds: [], menuOpen: false, draft: { name: '', description: '', teacherId: '', levelId: '', capacity: '35', gradeIds: [], scheduleDay: '', startTime: '', endTime: '' } },
     teacherAssign: { gradeIds: [], menuOpen: false },
     surveyVoteSelections: {},
     surveyVotePages: {},
@@ -357,7 +355,7 @@ const publicFormRuntime = {
 };
 
 function getAuth() {
-    return localStorage.getItem('educat_auth') || sessionStorage.getItem('educat_auth') || '';
+    return '';
 }
 
 function buildAuthHeaderValue(authValue) {
@@ -370,18 +368,17 @@ function buildAuthHeaderValue(authValue) {
 function headers(json = true) {
     const h = {};
     if (json) h['Content-Type'] = 'application/json';
-    const authHeader = buildAuthHeaderValue(getAuth());
-    if (authHeader) h.Authorization = authHeader;
     return h;
 }
 
 function shouldUseBackend() {
-    return !!readStorage('educat_use_backend', false);
+    return true;
 }
 
 async function api(path, options = {}) {
     const requestOptions = {
         ...options,
+        credentials: 'include',
         headers: {
             ...headers(false),
             ...(options.headers || {})
@@ -398,7 +395,7 @@ async function api(path, options = {}) {
 
 function readStorage(key, fallback) {
     try {
-        const raw = localStorage.getItem(key);
+        const raw = storageService.getItem(key);
         if (!raw) return fallback;
         return JSON.parse(raw);
     } catch (e) {
@@ -406,13 +403,47 @@ function readStorage(key, fallback) {
     }
 }
 
+function persistStorageValueInBackend(key, serializedValue) {
+    const storageKey = String(key || '').trim();
+    if (!storageKey || storageKey.indexOf(APP_STATE_PREFIX) !== 0) return;
+    api('/api/app-state/' + encodeURIComponent(storageKey), {
+        method: 'PUT',
+        headers: headers(),
+        body: JSON.stringify({ value: String(serializedValue || '') })
+    }).catch(() => {
+        // Si falla la persistencia remota, el estado local sigue disponible en memoria.
+    });
+}
+
 function saveStorage(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
+    let serialized = 'null';
+    try {
+        serialized = JSON.stringify(value);
+    } catch (e) {
+        serialized = 'null';
+    }
+    storageService.setItem(key, serialized);
+    persistStorageValueInBackend(key, serialized);
+}
+
+async function hydrateStorageFromBackend() {
+    if (appStateHydrated) return;
+    try {
+        const entries = await api('/api/app-state?prefix=' + encodeURIComponent(APP_STATE_PREFIX), {
+            headers: headers(false)
+        }).catch(() => ({}));
+        Object.keys(entries || {}).forEach(k => {
+            const value = entries[k];
+            if (typeof value === 'string') storageService.setItem(k, value);
+        });
+    } finally {
+        appStateHydrated = true;
+    }
 }
 
 function readSessionJson(key, fallback) {
     try {
-        const raw = sessionStorage.getItem(String(key || ''));
+        const raw = sessionService.getItem(String(key || ''));
         if (!raw) return fallback;
         return JSON.parse(raw);
     } catch (e) {
@@ -422,7 +453,7 @@ function readSessionJson(key, fallback) {
 
 function writeSessionJson(key, value) {
     try {
-        sessionStorage.setItem(String(key || ''), JSON.stringify(value));
+        sessionService.setItem(String(key || ''), JSON.stringify(value));
     } catch (e) {
         // Ignorar errores de cuota/storage bloqueado.
     }
@@ -547,33 +578,18 @@ function closeModal() {
 }
 
 async function loadData() {
-    const fallbackUsers = asArray(readStorage(STORAGE_KEYS.localUsers, []));
-    if (!fallbackUsers.length) {
-        fallbackUsers.push({ id: 1, name: 'Admin', email: 'admin@educat.edu.co', role: { id: 1, name: 'ADMIN' } });
-    }
-    const fallbackTeachers = asArray(readStorage(STORAGE_KEYS.localTeachers, cloneDemoTeachers()));
-    if (!fallbackTeachers.length) fallbackTeachers.push(...cloneDemoTeachers());
-    const fallbackStudents = asArray(readStorage(STORAGE_KEYS.localStudents, []));
-    const fallbackCourses = asArray(readStorage(STORAGE_KEYS.localCourses, []));
-    const fallbackEnrollments = asArray(readStorage(STORAGE_KEYS.localEnrollments, []));
-    const fallbackRoles = asArray(readStorage(STORAGE_KEYS.localRoles, [
-        { id: 1, name: 'ADMIN' },
-        { id: 2, name: 'DOCENTE' },
-        { id: 3, name: 'ESTUDIANTE' }
-    ]));
-    if (!fallbackRoles.length) {
-        fallbackRoles.push({ id: 1, name: 'ADMIN' }, { id: 2, name: 'DOCENTE' }, { id: 3, name: 'ESTUDIANTE' });
-    }
+    await hydrateStorageFromBackend();
     const calls = [
-        api('/api/users').catch(() => fallbackUsers),
-        api('/api/teachers').catch(() => fallbackTeachers),
-        api('/api/students').catch(() => fallbackStudents),
-        api('/api/courses').catch(() => fallbackCourses),
-        api('/api/enrollments').catch(() => fallbackEnrollments),
-        api('/api/roles').catch(() => fallbackRoles),
-        api('/api/certificates').catch(() => [])
+        api('/api/users').catch(() => []),
+        api('/api/teachers').catch(() => []),
+        api('/api/students').catch(() => []),
+        api('/api/courses').catch(() => []),
+        api('/api/enrollments').catch(() => []),
+        api('/api/roles').catch(() => []),
+        api('/api/certificates').catch(() => []),
+        api('/api/admin/access/config').catch(() => ({ permissions: [], rolePerms: {}, userPerms: {}, userPortalAccess: {} }))
     ];
-    const [users, teachers, students, courses, enrollments, roles, certificates] = await Promise.all(calls);
+    const [users, teachers, students, courses, enrollments, roles, certificates, accessConfig] = await Promise.all(calls);
     state.users = users || [];
     state.teachers = teachers || [];
     state.students = students || [];
@@ -581,6 +597,10 @@ async function loadData() {
     state.enrollments = enrollments || [];
     state.roles = roles || [];
     state.certificates = certificates || [];
+    state.permissionCatalog = asArray((accessConfig || {}).permissions).map(p => ({ key: String((p || {}).key || ''), label: String((p || {}).label || '') })).filter(p => p.key);
+    state.rolePerms = asObject((accessConfig || {}).rolePerms);
+    state.userPerms = asObject((accessConfig || {}).userPerms);
+    state.userPortalAccess = asObject((accessConfig || {}).userPortalAccess);
 
     state.guides = asArray(readStorage(STORAGE_KEYS.guides, []));
     state.forms = asObject(readStorage(STORAGE_KEYS.forms, { eval: [], autoeval: [] }));
@@ -589,8 +609,7 @@ async function loadData() {
     state.formResponses = asArray(readStorage(STORAGE_KEYS.formResponses, []));
     state.formShares = asObject(readStorage(STORAGE_KEYS.formShares, {}));
     state.surveys = asArray(readStorage(STORAGE_KEYS.surveys, []));
-    state.rolePerms = asObject(readStorage(STORAGE_KEYS.rolePerms, {}));
-    state.userPerms = asObject(readStorage(STORAGE_KEYS.userPerms, {}));
+    // Permisos y accesos se gestionan por backend.
     state.gradePolicy = { ...DEFAULT_POLICY, ...readStorage(STORAGE_KEYS.gradePolicy, {}) };
     state.academicLevels = asArray(readStorage(STORAGE_KEYS.academicLevels, []));
     state.academicGrades = asArray(readStorage(STORAGE_KEYS.academicGrades, []));
@@ -658,7 +677,6 @@ async function loadData() {
         status: s.status === 'closed' ? 'closed' : 'active'
     }));
 
-    if (!state.roles.length) state.roles = fallbackRoles;
 
     if (!state.teachers.length) {
         const inferredTeachers = inferTeachersFromUsers(state.users);
@@ -668,18 +686,11 @@ async function loadData() {
         }
     }
     if (!state.teachers.length) {
-        state.teachers = fallbackTeachers;
-        showToast('Modo local activo: docentes cargados temporalmente.', 'info');
+        showToast('No hay docentes registrados en backend.', 'info');
     }
 
     cleanupStudentAcademicLinks();
 
-    saveStorage(STORAGE_KEYS.localUsers, state.users || []);
-    saveStorage(STORAGE_KEYS.localTeachers, state.teachers || []);
-    saveStorage(STORAGE_KEYS.localRoles, state.roles || []);
-    saveStorage(STORAGE_KEYS.localStudents, state.students || []);
-    saveStorage(STORAGE_KEYS.localCourses, state.courses || []);
-    saveStorage(STORAGE_KEYS.localEnrollments, state.enrollments || []);
 }
 
 function seedDemoDataIfNeeded() {
@@ -916,7 +927,10 @@ function readCourseCreateDraftFromDom() {
         description: (document.getElementById('courseDescription') || {}).value || current.description || '',
         teacherId: String((document.getElementById('courseTeacher') || {}).value || current.teacherId || ''),
         levelId: String((document.getElementById('courseLevel') || {}).value || current.levelId || ''),
-        capacity: String((document.getElementById('courseCapacity') || {}).value || current.capacity || '35')
+        capacity: String((document.getElementById('courseCapacity') || {}).value || current.capacity || '35'),
+        scheduleDay: String((document.getElementById('courseScheduleDay') || {}).value || current.scheduleDay || ''),
+        startTime: String((document.getElementById('courseStartTime') || {}).value || current.startTime || ''),
+        endTime: String((document.getElementById('courseEndTime') || {}).value || current.endTime || '')
     };
 }
 
@@ -934,6 +948,9 @@ function applyCourseCreateDraft() {
     const teacherEl = document.getElementById('courseTeacher');
     const levelEl = document.getElementById('courseLevel');
     const capEl = document.getElementById('courseCapacity');
+    const dayEl = document.getElementById('courseScheduleDay');
+    const startEl = document.getElementById('courseStartTime');
+    const endEl = document.getElementById('courseEndTime');
     if (nameEl && draft.name !== undefined) nameEl.value = draft.name || '';
     if (descEl && draft.description !== undefined) descEl.value = draft.description || '';
     if (teacherEl && draft.teacherId && Array.from(teacherEl.options || []).some(o => String(o.value) === String(draft.teacherId))) {
@@ -944,6 +961,9 @@ function applyCourseCreateDraft() {
         levelEl.value = String(draft.levelId);
     }
     if (capEl && draft.capacity !== undefined) capEl.value = draft.capacity || '35';
+    if (dayEl && draft.scheduleDay !== undefined) dayEl.value = draft.scheduleDay || '';
+    if (startEl && draft.startTime !== undefined) startEl.value = draft.startTime || '';
+    if (endEl && draft.endTime !== undefined) endEl.value = draft.endTime || '';
     modalState.courseCreate.gradeIds = Array.isArray(draft.gradeIds) ? draft.gradeIds.map(String) : (modalState.courseCreate.gradeIds || []);
 }
 
@@ -1000,6 +1020,9 @@ function renderAdminCoursesCards() {
             hasTeacher: !!c.teacher,
             name: c.name || 'Curso',
             description: c.description || '',
+            scheduleDay: c.defaultScheduleDay || '',
+            scheduleStart: c.defaultStartTime || '',
+            scheduleEnd: c.defaultEndTime || '',
             students,
             index
         };
@@ -1022,6 +1045,12 @@ function renderAdminCoursesCards() {
     const cards = paged.items.map(item => {
         const previewStudents = item.students.slice(0, 3).map(n => `<span class="admin-course-chip">${escapeHtml(n)}</span>`).join('');
         const extraStudents = item.students.length > 3 ? `<span class="admin-course-chip">+${item.students.length - 3}</span>` : '';
+        const scheduleDay = item.scheduleDay || '';
+        const scheduleStart = item.scheduleStart || '';
+        const scheduleEnd = item.scheduleEnd || '';
+        const scheduleMeta = (scheduleStart && scheduleEnd)
+            ? `${scheduleDay || 'N/A'} ${scheduleStart} - ${scheduleEnd}`
+            : 'Sin horario configurado';
         return `<div class="admin-course-card tone-${item.index % 4}">
             <div class="admin-course-card-head">
                 <div style="min-width:0">
@@ -1032,6 +1061,7 @@ function renderAdminCoursesCards() {
             </div>
             <div class="admin-course-meta">Docente: ${escapeHtml(item.teacher)}</div>
             <div class="admin-course-meta">Matriculados: ${item.total}</div>
+            <div class="admin-course-meta">Horario: ${escapeHtml(scheduleMeta)}</div>
             <div class="admin-course-desc">${escapeHtml(item.description || 'Sin descripción')}</div>
             <div class="admin-course-students">
                 ${item.students.length ? previewStudents + extraStudents : '<span class="muted">Sin alumnos matriculados</span>'}
@@ -1042,7 +1072,7 @@ function renderAdminCoursesCards() {
         <div class="form-row" style="margin-bottom:10px">
             <div class="form-group">
                 <label class="form-label">Buscar curso</label>
-                <input class="form-input" value="${escapeHtml(state.ui.adminCoursesQuery || '')}" placeholder="Nombre, código o docente" oninput="setAdminCoursesQuery(this.value)">
+                <input id="adminCoursesQueryInput" class="form-input" value="${escapeHtml(state.ui.adminCoursesQuery || '')}" placeholder="Nombre, código o docente" oninput="setAdminCoursesQuery(this.value)">
             </div>
             <div class="form-group">
                 <label class="form-label">Filtro</label>
@@ -1067,9 +1097,22 @@ function renderAdminCoursesCards() {
 }
 
 function setAdminCoursesQuery(value) {
+    const active = document.activeElement;
+    const shouldRestoreFocus = !!(active && active.id === 'adminCoursesQueryInput');
+    const selectionStart = shouldRestoreFocus && typeof active.selectionStart === 'number' ? active.selectionStart : null;
+    const selectionEnd = shouldRestoreFocus && typeof active.selectionEnd === 'number' ? active.selectionEnd : null;
     state.ui.adminCoursesQuery = String(value || '');
     state.ui.adminCoursesPage = 1;
     renderAdminCoursesCards();
+    if (shouldRestoreFocus) {
+        const input = document.getElementById('adminCoursesQueryInput');
+        if (input) {
+            input.focus();
+            if (selectionStart !== null && selectionEnd !== null) {
+                input.setSelectionRange(selectionStart, selectionEnd);
+            }
+        }
+    }
 }
 
 function setAdminCoursesFilter(value) {
@@ -1112,8 +1155,6 @@ async function confirmDeleteCourse(courseId) {
     delete state.courseGrades[String(courseId)];
     delete state.courseCapacity[String(courseId)];
     saveLevelsState();
-    saveStorage(STORAGE_KEYS.localCourses, state.courses || []);
-    saveStorage(STORAGE_KEYS.localEnrollments, state.enrollments || []);
     closeModal();
     renderCoursesSection();
     renderOverview();
@@ -1124,33 +1165,36 @@ async function createCourse() {
     const name = document.getElementById('courseName').value.trim();
     const description = document.getElementById('courseDescription').value.trim();
     const teacherRaw = (document.getElementById('courseTeacher').value || '').trim();
-    const teacherId = teacherRaw ? parseInt(teacherRaw, 10) : null;
+    let teacherId = null;
+    try {
+        teacherId = await resolveTeacherIdForCourseCreation(teacherRaw);
+    } catch (e) {
+        showToast((e && e.message) ? e.message : 'No se pudo vincular el docente seleccionado', 'error');
+        return;
+    }
     const levelId = (document.getElementById('courseLevel').value || '').trim();
     const gradeIds = (modalState.courseCreate.gradeIds || []).map(String).filter(Boolean);
     const capacity = Math.max(1, parseInt(document.getElementById('courseCapacity').value || '35', 10) || 35);
+    const scheduleDay = String((document.getElementById('courseScheduleDay') || {}).value || '').trim();
+    const startTime = String((document.getElementById('courseStartTime') || {}).value || '').trim();
+    const endTime = String((document.getElementById('courseEndTime') || {}).value || '').trim();
     if (!name) return showToast('Completa nombre del curso', 'error');
     if (!levelId || !gradeIds.length) return showToast('Selecciona nivel y al menos un grado', 'error');
+    if ((startTime && !endTime) || (!startTime && endTime)) return showToast('Si defines horario, completa hora inicio y fin', 'error');
     let saved = null;
-    if (shouldUseBackend()) {
-        try {
-            const payload = { name, description };
-            // Docente opcional: solo se envía si viene seleccionado.
-            if (teacherId !== null && Number.isFinite(teacherId)) payload.teacherId = teacherId;
-            saved = await api('/api/courses', { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
-        } catch (e) {
-            showToast('No se pudo crear en servidor, se guardará localmente', 'info');
+    try {
+        const payload = { name, description };
+        // Docente opcional: solo se envía si viene seleccionado.
+        if (teacherId !== null && Number.isFinite(teacherId)) payload.teacherId = teacherId;
+        if (startTime && endTime) {
+            payload.defaultScheduleDay = scheduleDay;
+            payload.defaultStartTime = startTime;
+            payload.defaultEndTime = endTime;
         }
-    }
-
-    if (!saved) {
-        const selectedTeacher = (state.teachers || []).find(t => String(t.id) === String(teacherId || '')) || null;
-        saved = {
-            id: Date.now(),
-            name,
-            description,
-            courseCode: generateLocalCourseCode(name),
-            teacher: selectedTeacher
-        };
+        saved = await api('/api/courses', { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
+    } catch (e) {
+        showToast('No se pudo crear en servidor', 'error');
+        return;
     }
 
     state.courses.push(saved);
@@ -1158,19 +1202,22 @@ async function createCourse() {
     setCourseGradeIds(String(saved.id), gradeIds);
     state.courseCapacity[String(saved.id)] = capacity;
     saveLevelsState();
-    saveStorage(STORAGE_KEYS.localCourses, state.courses || []);
     renderCoursesSection();
     renderOverview();
     document.getElementById('courseName').value = '';
     document.getElementById('courseDescription').value = '';
     document.getElementById('courseTeacher').value = '';
     document.getElementById('courseLevel').value = '';
+    document.getElementById('courseScheduleDay').value = '';
+    document.getElementById('courseStartTime').value = '';
+    document.getElementById('courseEndTime').value = '';
     modalState.courseCreate.gradeIds = [];
-    modalState.courseCreate.draft = { name: '', description: '', teacherId: '', levelId: '', capacity: '35', gradeIds: [] };
+    modalState.courseCreate.draft = { name: '', description: '', teacherId: '', levelId: '', capacity: '35', gradeIds: [], scheduleDay: '', startTime: '', endTime: '' };
     saveStorage(STORAGE_KEYS.courseCreateDraft, modalState.courseCreate.draft);
     renderCourseGradeOptions();
     const capacityEl = document.getElementById('courseCapacity');
     if (capacityEl) capacityEl.value = '35';
+    if (saved && saved.scheduleWarning) showToast(saved.scheduleWarning, 'info');
     showToast(saved && saved.courseCode ? ('Curso creado. Código: ' + saved.courseCode) : 'Curso creado', 'success');
 }
 
@@ -1224,30 +1271,13 @@ async function createTestTeachers() {
             state.teachers.push(teacher);
             created += 1;
         } catch (e) {
-            // fallback local para no bloquear pruebas del panel
-            const localUser = {
-                id: Date.now() + i,
-                name: sample.name,
-                email,
-                role: { id: teacherRole.id, name: teacherRole.name }
-            };
-            const localTeacher = {
-                id: Date.now() + i + 1000,
-                user: { id: localUser.id, name: localUser.name },
-                specialization: sample.specialization
-            };
-            state.users.push(localUser);
-            state.teachers.push(localTeacher);
-            created += 1;
+            showToast('No se pudo crear docente en backend: ' + (e && e.message ? e.message : 'error desconocido'), 'error');
         }
         existingEmails.add(email);
     }
 
     renderCoursesSection();
     renderOverview();
-    saveStorage(STORAGE_KEYS.localUsers, state.users || []);
-    saveStorage(STORAGE_KEYS.localTeachers, state.teachers || []);
-    saveStorage(STORAGE_KEYS.localRoles, state.roles || []);
     showToast(`Docentes de prueba creados: ${created}${skipped ? ` | Omitidos: ${skipped}` : ''} (clave: ${defaultPassword})`, 'success');
 }
 
@@ -1256,7 +1286,49 @@ function getAvailableTeachers() {
     if (current.length) return current;
     const inferred = inferTeachersFromUsers(state.users);
     if (inferred.length) return inferred;
-    return cloneDemoTeachers();
+    return [];
+}
+
+function findTeacherOptionByValue(teacherValue) {
+    const id = String(teacherValue || '').trim();
+    if (!id) return null;
+    return getAvailableTeachers().find(t => String((t && t.id) || '') === id) || null;
+}
+
+async function resolveTeacherIdForCourseCreation(teacherValue) {
+    const selected = findTeacherOptionByValue(teacherValue);
+    if (!selected) return null;
+    if (!selected.inferred) {
+        const teacherId = parseInt(selected.id, 10);
+        return Number.isFinite(teacherId) ? teacherId : null;
+    }
+
+    const userId = parseInt((selected.user || {}).id || selected.id, 10);
+    if (!Number.isFinite(userId)) {
+        throw new Error('Selecciona un docente válido para asignar al curso');
+    }
+
+    try {
+        const created = await api('/api/teachers', {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify({ userId, specialization: selected.specialization || 'Por definir' })
+        });
+        const idx = asArray(state.teachers).findIndex(t => String((t && t.id) || '') === String(selected.id));
+        if (idx >= 0) state.teachers[idx] = created;
+        else state.teachers.push(created);
+        return parseInt(created.id, 10);
+    } catch (e) {
+        const teachers = await api('/api/teachers').catch(() => []);
+        const existing = asArray(teachers).find(t => String((((t || {}).user || {}).id) || '') === String(userId));
+        if (existing) {
+            const idx = asArray(state.teachers).findIndex(t => String((t && t.id) || '') === String(selected.id));
+            if (idx >= 0) state.teachers[idx] = existing;
+            else state.teachers.push(existing);
+            return parseInt(existing.id, 10);
+        }
+        throw new Error('El usuario seleccionado no tiene perfil docente en backend');
+    }
 }
 
 function saveLevelsState() {
@@ -1516,11 +1588,11 @@ async function createRole() {
             body: JSON.stringify({ name })
         });
     } catch (e) {
-        created = { id: Date.now(), name };
+        showToast('No se pudo crear el rol en servidor', 'error');
+        return;
     }
 
     state.roles.push(created);
-    saveStorage(STORAGE_KEYS.localRoles, state.roles || []);
     if (roleNameEl) roleNameEl.value = '';
     renderRolesSection();
     showToast('Rol creado', 'success');
@@ -1620,11 +1692,7 @@ async function persistAdminUserRoleStatus(user, roleId, status) {
             })
         });
     } catch (e) {
-        return {
-            ...user,
-            role: { id: role.id, name: role.name },
-            status
-        };
+        throw e;
     }
 }
 
@@ -1650,7 +1718,6 @@ async function assignRoleToSelectedAdminUsers() {
         }
     }
 
-    saveStorage(STORAGE_KEYS.localUsers, state.users || []);
     if (updated) {
         showToast('Rol asignado a ' + updated + ' usuario(s)', 'success');
         renderRolesSection();
@@ -1721,23 +1788,11 @@ async function createAdminUser() {
             body: JSON.stringify({ name, email, password, roleId: role.id, status, documentId, phone })
         });
     } catch (e) {
-        if (asArray(state.users).some(u => String((u.email || '')).toLowerCase() === email)) {
-            return showToast('Ya existe un usuario con ese correo', 'error');
-        }
-        created = {
-            id: Date.now(),
-            name,
-            email,
-            documentId,
-            phone,
-            role: { id: role.id, name: role.name },
-            status,
-            createdAt: new Date().toISOString()
-        };
+        showToast('No se pudo crear el usuario en servidor', 'error');
+        return;
     }
 
     upsertUserInState(created);
-    saveStorage(STORAGE_KEYS.localUsers, state.users || []);
     clearAdminUserForm();
     state.ui.adminUsersPage = 1;
     renderRolesSection();
@@ -1762,7 +1817,6 @@ async function saveAdminUserRow(userId) {
     }
 
     upsertUserInState(saved);
-    saveStorage(STORAGE_KEYS.localUsers, state.users || []);
     renderRolesSection();
     showToast('Usuario actualizado', 'success');
 }
@@ -1776,13 +1830,13 @@ async function deleteAdminUser(userId) {
     try {
         await api('/api/users/' + id, { method: 'DELETE', headers: headers(false) });
     } catch (e) {
-        // fallback local
+        showToast('No se pudo eliminar el usuario en servidor', 'error');
+        return;
     }
 
     state.users = asArray(state.users).filter(u => String((u || {}).id || '') !== id);
     delete state.userPerms[id];
-    saveStorage(STORAGE_KEYS.localUsers, state.users || []);
-    saveStorage(STORAGE_KEYS.userPerms, state.userPerms || {});
+    delete state.userPortalAccess[id];
     renderRolesSection();
     showToast('Usuario eliminado', 'success');
 }
@@ -1864,6 +1918,29 @@ function getUserPerms() {
     return userId ? ((state.userPerms[userId] || []).map(String)) : [];
 }
 
+function getPermissionKeys() {
+    const keys = asArray(state.permissionCatalog).map(p => String((p || {}).key || '')).filter(Boolean);
+    return keys.length ? keys : PERMISSIONS;
+}
+
+function getPermissionLabel(key) {
+    const fromCatalog = asArray(state.permissionCatalog).find(p => String((p || {}).key || '') === String(key || ''));
+    if (fromCatalog && fromCatalog.label) return fromCatalog.label;
+    return PERMISSION_LABELS[key] || key;
+}
+
+async function fetchUsersForPermissionSelector(query) {
+    const q = String(query || '').trim();
+    try {
+        const path = q ? ('/api/users?q=' + encodeURIComponent(q) + '&limit=80') : '/api/users?limit=80';
+        const result = await api(path);
+        state.users = asArray(result);
+    } catch (e) {
+        showToast('No se pudo consultar usuarios por correo en servidor', 'error');
+    }
+    renderRolesSection();
+}
+
 function toggleRolePerm(permission, checked) {
     const roleId = String((document.getElementById('permRole') || {}).value || '');
     if (!roleId) return;
@@ -1890,13 +1967,14 @@ function renderPermissionChecklist(containerId, selectedPerms, mode) {
     const pageKey = isRoleMode ? 'permRoleChecklistPage' : 'permUserChecklistPage';
     const sizeKey = isRoleMode ? 'permRoleChecklistPageSize' : 'permUserChecklistPageSize';
     const pagerId = isRoleMode ? 'permissionsChecklistPager' : 'userPermissionsChecklistPager';
-    const paged = paginateItems(PERMISSIONS, state.ui[pageKey], state.ui[sizeKey] || 10);
+    const permissionKeys = getPermissionKeys();
+    const paged = paginateItems(permissionKeys, state.ui[pageKey], state.ui[sizeKey] || 10);
     state.ui[pageKey] = paged.page;
     const onChangeFn = isRoleMode ? 'toggleRolePerm' : 'toggleUserPerm';
     host.innerHTML = paged.items.map(p => `
         <label class="card-check" style="border:1px solid rgba(11,31,58,0.08);border-radius:8px;margin-bottom:6px">
             <input type="checkbox" value="${escapeHtml(p)}" ${selected.has(p) ? 'checked' : ''} onchange="${onChangeFn}('${escapeJsSingle(p)}', this.checked)">
-            <span>${escapeHtml(PERMISSION_LABELS[p] || p)}</span>
+            <span>${escapeHtml(getPermissionLabel(p))}</span>
         </label>
     `).join('');
 
@@ -1932,24 +2010,92 @@ function permUserChecklistNextPage() {
     renderRolesSection();
 }
 
-function saveRolePerms() {
+async function saveRolePerms() {
     const roleId = String((document.getElementById('permRole') || {}).value || '');
     if (!roleId) return showToast('Selecciona un rol', 'error');
-    saveStorage(STORAGE_KEYS.rolePerms, state.rolePerms);
+    try {
+        const saved = await api('/api/admin/access/roles/' + encodeURIComponent(roleId) + '/permissions', {
+            method: 'PUT',
+            headers: headers(),
+            body: JSON.stringify({ permissions: asArray(state.rolePerms[roleId]) })
+        });
+        state.rolePerms[roleId] = asArray(saved).map(String);
+    } catch (e) {
+        return showToast('No se pudo guardar permisos del rol en servidor', 'error');
+    }
     showToast('Permisos de rol guardados', 'success');
 }
 
-function saveUserPerms() {
+async function saveUserPerms() {
     const userId = String((document.getElementById('permUser') || {}).value || '');
     if (!userId) return showToast('Selecciona un usuario', 'error');
-    saveStorage(STORAGE_KEYS.userPerms, state.userPerms);
+    try {
+        const saved = await api('/api/admin/access/users/' + encodeURIComponent(userId) + '/permissions', {
+            method: 'PUT',
+            headers: headers(),
+            body: JSON.stringify({ permissions: asArray(state.userPerms[userId]) })
+        });
+        state.userPerms[userId] = asArray(saved).map(String);
+    } catch (e) {
+        return showToast('No se pudo guardar permisos del usuario en servidor', 'error');
+    }
     showToast('Permisos de usuario guardados', 'success');
+}
+
+function getPortalAccessForSelectedUser() {
+    const userId = String((document.getElementById('permUser') || {}).value || '');
+    if (!userId) return { admin: false, teacher: false, student: false };
+    const current = asObject(state.userPortalAccess[userId]);
+    return {
+        admin: !!current.admin,
+        teacher: !!current.teacher,
+        student: !!current.student
+    };
+}
+
+function toggleUserPortalAccess(portalKey, checked) {
+    const userId = String((document.getElementById('permUser') || {}).value || '');
+    if (!userId) return;
+    const current = getPortalAccessForSelectedUser();
+    if (portalKey === 'portal.admin') current.admin = !!checked;
+    if (portalKey === 'portal.teacher') current.teacher = !!checked;
+    if (portalKey === 'portal.student') current.student = !!checked;
+    state.userPortalAccess[userId] = current;
+}
+
+function renderUserPortalAccessChecklist() {
+    const host = document.getElementById('userPortalAccessChecklist');
+    if (!host) return;
+    const selected = getPortalAccessForSelectedUser();
+    host.innerHTML = PORTAL_PERMISSIONS.map(p => {
+        const checked = (p === 'portal.admin' && selected.admin) || (p === 'portal.teacher' && selected.teacher) || (p === 'portal.student' && selected.student);
+        return `<label class="card-check" style="border:1px solid rgba(11,31,58,0.08);border-radius:8px;margin-bottom:6px">
+            <input type="checkbox" value="${escapeHtml(p)}" ${checked ? 'checked' : ''} onchange="toggleUserPortalAccess('${escapeJsSingle(p)}', this.checked)">
+            <span>${escapeHtml(getPermissionLabel(p))}</span>
+        </label>`;
+    }).join('');
+}
+
+async function saveUserPortalAccess() {
+    const userId = String((document.getElementById('permUser') || {}).value || '');
+    if (!userId) return showToast('Selecciona un usuario', 'error');
+    const payload = getPortalAccessForSelectedUser();
+    try {
+        const saved = await api('/api/admin/access/users/' + encodeURIComponent(userId) + '/portals', {
+            method: 'PUT',
+            headers: headers(),
+            body: JSON.stringify(payload)
+        });
+        state.userPortalAccess[userId] = asObject(saved);
+    } catch (e) {
+        return showToast('No se pudo guardar accesos de portal en servidor', 'error');
+    }
+    showToast('Accesos a portales actualizados', 'success');
 }
 
 function deleteRole(roleId) {
     state.roles = (state.roles || []).filter(r => String(r.id) !== String(roleId));
     delete state.rolePerms[String(roleId)];
-    saveStorage(STORAGE_KEYS.rolePerms, state.rolePerms);
     renderRolesSection();
 }
 
@@ -1979,6 +2125,7 @@ function renderRolesSection() {
 
     renderPermissionChecklist('permissionsChecklist', getRolePerms(), 'roleperm');
     renderPermissionChecklist('userPermissionsChecklist', getUserPerms(), 'userperm');
+    renderUserPortalAccessChecklist();
     renderAdminUsersSection();
 }
 
@@ -3649,9 +3796,11 @@ function getSearchParam(name) {
 }
 
 function getActiveUser() {
-    const userEmail = (localStorage.getItem('educat_email') || sessionStorage.getItem('educat_email') || '').toLowerCase();
-    if (!userEmail) return null;
-    return asArray(state.users).find(u => String((u && u.email) || '').toLowerCase() === userEmail) || null;
+    if (activeSessionUser && activeSessionUser.id !== undefined && activeSessionUser.id !== null) {
+        const byId = asArray(state.users).find(u => String((u && u.id) || '') === String(activeSessionUser.id));
+        return byId || activeSessionUser;
+    }
+    return null;
 }
 
 function getActiveUserRoleName() {
@@ -3660,10 +3809,10 @@ function getActiveUserRoleName() {
 
 function getSurveyDeviceKey() {
     const keyName = 'educat_survey_device_key';
-    let key = String(localStorage.getItem(keyName) || '').trim();
+    let key = String(storageService.getItem(keyName) || '').trim();
     if (!key) {
         key = 'dv-' + Date.now() + '-' + Math.floor(Math.random() * 1000000);
-        localStorage.setItem(keyName, key);
+        storageService.setItem(keyName, key);
     }
     return key;
 }
@@ -4699,8 +4848,7 @@ function renderPublicFormPage(type) {
     const title = String(custom.title || 'Formulario personalizable');
     const questions = asArray(custom.questions || []);
     const audience = custom.audience || { mode: 'registered', roles: [] };
-    const userEmail = (localStorage.getItem('educat_email') || sessionStorage.getItem('educat_email') || '').toLowerCase();
-    const activeUser = asArray(state.users).find(u => String(u.email || '').toLowerCase() === userEmail) || null;
+    const activeUser = getActiveUser();
     if (audience.mode === 'registered' && !activeUser) {
         document.body.innerHTML = '<div style="max-width:720px;margin:50px auto;padding:0 16px"><div class="card"><div class="card-body"><div class="alert alert-error">Debes iniciar sesión con un usuario registrado para responder este formulario.</div></div></div></div>';
         return;
@@ -4775,27 +4923,8 @@ function getSurveyLiveSignature(survey) {
 function bindStorageListeners() {
     if (storageListenersBound) return;
     storageListenersBound = true;
-    window.addEventListener('storage', ev => {
-        if (ev.key === STORAGE_KEYS.surveys) {
-            state.surveys = asArray(readStorage(STORAGE_KEYS.surveys, state.surveys));
-            const activePublicSurvey = getSearchParam('publicSurvey');
-            if (activePublicSurvey) renderPublicSurveyPage(activePublicSurvey);
-            else renderSurveyBoards();
-        }
-        if (ev.key === STORAGE_KEYS.formResponses) {
-            state.formResponses = asArray(readStorage(STORAGE_KEYS.formResponses, state.formResponses));
-            renderFormResponsesBoard();
-        }
-        if (ev.key === STORAGE_KEYS.formShares) {
-            state.formShares = asObject(readStorage(STORAGE_KEYS.formShares, state.formShares));
-        }
-        if (ev.key === STORAGE_KEYS.enrollmentRequests) {
-            renderEnrollmentReviewSection();
-        }
-            if (ev.key === STORAGE_KEYS.enrollmentFormConfig) {
-                state.ui.enrollmentFormBuilderDraft = asArray(readStorage(STORAGE_KEYS.enrollmentFormConfig, [])).map(cloneEnrollmentField);
-                renderEnrollmentFormBuilderSection();
-            }
+    window.addEventListener('storage', () => {
+        // backend-only: no sincronización por storage del navegador.
     });
 }
 
@@ -5960,7 +6089,6 @@ function importStudentsBatch() {
     cleanupStudentAcademicLinks();
     cleanupAssistantSelections();
     saveLevelsState();
-    saveStorage(STORAGE_KEYS.localStudents, state.students || []);
     renderCoursesSection();
     renderImportSection();
     renderOverview();
@@ -6595,20 +6723,14 @@ async function applyStudentCourseAssignments() {
                 });
                 state.enrollments.push(saved);
             } catch (e) {
-                // fallback local si el backend no responde
-                state.enrollments.push({
-                    id: Date.now() + created,
-                    student: (state.students || []).find(s => String(s.id) === sid) || { id: sid },
-                    course: (state.courses || []).find(c => String(c.id) === cid) || { id: cid },
-                    enrollmentDate: new Date().toISOString()
-                });
+                showToast('No se pudo crear asignación en backend: ' + (e && e.message ? e.message : 'error desconocido'), 'error');
+                continue;
             }
             created += 1;
         }
     }
 
     closeModal();
-    saveStorage(STORAGE_KEYS.localEnrollments, state.enrollments || []);
     renderCoursesSection();
     renderOverview();
     showToast(`Asignaciones creadas: ${created}. Omitidas: ${skipped}.`, 'success');
@@ -6655,7 +6777,6 @@ function confirmDeleteAllUsers() {
     state.studentLevels = {};
     state.studentGrades = {};
     cleanupAssistantSelections();
-    saveStorage(STORAGE_KEYS.localStudents, []);
     saveLevelsState();
     closeModal();
     renderOverview();
@@ -6702,10 +6823,10 @@ function bindEvents() {
     });
 
     bindClick('logoutBtn', () => {
-        localStorage.removeItem('educat_auth');
-        sessionStorage.removeItem('educat_auth');
-        sessionStorage.removeItem(ADMIN_NAV_SESSION_KEY);
-        window.location.href = '/login';
+        sessionService.removeItem(ADMIN_NAV_SESSION_KEY);
+        fetch(API + '/api/auth/logout', { method: 'POST', credentials: 'include' }).finally(() => {
+            window.location.href = '/login';
+        });
     });
 
     bindClick('btnCreateCourse', createCourse);
@@ -6832,9 +6953,11 @@ function bindEvents() {
         state.ui.permUserChecklistPage = 1;
         const perms = callIfFn('getUserPerms') || [];
         callIfFn('renderPermissionChecklist', 'userPermissionsChecklist', perms, 'userperm');
+        callIfFn('renderUserPortalAccessChecklist');
     });
     bindClickIfFn('btnSavePerms', 'saveRolePerms');
     bindClickIfFn('btnSaveUserPerms', 'saveUserPerms');
+    bindClickIfFn('btnSaveUserPortals', 'saveUserPortalAccess');
 
     bindClickIfFn('btnCreateAdminUser', 'createAdminUser');
     const adminUsersSearch = document.getElementById('adminUsersSearch');
@@ -6949,6 +7072,13 @@ function hideInitialBootLoader() {
 
 async function init() {
     try {
+        const me = await api('/api/auth/me').catch(() => null);
+        if (!me || !me.id) {
+            window.location.href = '/login?role=staff&redirect=/admin-dashboard';
+            return;
+        }
+        activeSessionUser = me;
+        await hydrateStorageFromBackend();
         const publicForm = getSearchParam('publicForm');
         const publicSurvey = getSearchParam('publicSurvey');
         bindEvents();
@@ -6962,9 +7092,7 @@ async function init() {
         document.getElementById('currentDate').textContent = new Date().toLocaleDateString('es-CO', {
             weekday: 'long', day: '2-digit', month: 'long', year: 'numeric'
         });
-        const userEmail = localStorage.getItem('educat_email') || sessionStorage.getItem('educat_email') || '';
-        const found = state.users.find(u => (u.email || '').toLowerCase() === userEmail.toLowerCase());
-        if (found) document.getElementById('sidebarUserName').textContent = found.name;
+        document.getElementById('sidebarUserName').textContent = me.name || 'Administrador';
 
         await loadData();
         bindStorageListeners();
@@ -6987,7 +7115,7 @@ async function init() {
             }, 2500);
         }
 
-        const activeUser = state.users.find(u => (u.email || '').toLowerCase() === userEmail.toLowerCase());
+        const activeUser = state.users.find(u => String(u.id || '') === String(me.id || ''));
         if (activeUser) document.getElementById('sidebarUserName').textContent = activeUser.name;
     } finally {
         hideInitialBootLoader();
