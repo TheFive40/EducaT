@@ -10,5 +10,11 @@ public interface EvaluationSubmissionService {
     EvaluationSubmissionResponse findById(Integer id);
     Page<EvaluationSubmissionResponse> findByFilters(Integer studentId, Integer courseId, String evaluationType, Boolean submitted, Pageable pageable);
     void delete(Integer id);
+    
+    // New methods for role-based filtering
+    Page<EvaluationSubmissionResponse> findMySubmissions(Integer userId, Integer courseId, String evaluationType, Boolean submitted, Pageable pageable);
+    Page<EvaluationSubmissionResponse> findTeacherSubmissions(Integer teacherId, Integer courseId, Integer studentId, String evaluationType, Boolean submitted, Pageable pageable);
+    EvaluationSubmissionResponse gradeSubmission(Integer submissionId, Integer teacherId, Double grade, String feedback);
+    Integer getStudentIdByUserId(Integer userId);
 }
 

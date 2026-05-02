@@ -49,6 +49,11 @@ public class ActivityServiceImpl implements ActivityService {
         activity.setTitle(request.getTitle());
         activity.setDescription(request.getDescription());
         activity.setDueDate(request.getDueDate());
+        activity.setDueTime(request.getDueTime());
+        activity.setAllowLateSubmission(request.getAllowLateSubmission());
+        activity.setVisibleFrom(request.getVisibleFrom());
+        activity.setAttachmentsJson(activityMapper.writeList(request.getAttachments()));
+        activity.setMaterialsJson(activityMapper.writeList(request.getMaterials()));
         return activityMapper.toResponse(activityRepository.save(activity));
     }
     @Override

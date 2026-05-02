@@ -41,8 +41,7 @@ function buildRuntimeStore() {
 
 const storageService = buildRuntimeStore();
 const sessionService = buildRuntimeStore();
-const APP_STATE_PREFIX = 'educat_';
-let appStateHydrated = false;
+
 const STORAGE_KEYS = {
     guides: 'educat_admin_instructivos',
     forms: 'educat_admin_eval_forms',
@@ -404,18 +403,6 @@ function readStorage(key, fallback) {
     }
 }
 
-function persistStorageValueInBackend(key, serializedValue) {
-    const storageKey = String(key || '').trim();
-    if (!storageKey || storageKey.indexOf(APP_STATE_PREFIX) !== 0) return;
-    api('/api/app-state/' + encodeURIComponent(storageKey), {
-        method: 'PUT',
-        headers: headers(),
-        body: JSON.stringify({ value: String(serializedValue || '') })
-    }).catch(() => {
-        // Si falla la persistencia remota, el estado local sigue disponible en memoria.
-    });
-}
-
 function saveStorage(key, value) {
     let serialized = 'null';
     try {
@@ -424,23 +411,9 @@ function saveStorage(key, value) {
         serialized = 'null';
     }
     storageService.setItem(key, serialized);
-    persistStorageValueInBackend(key, serialized);
 }
 
-async function hydrateStorageFromBackend() {
-    if (appStateHydrated) return;
-    try {
-        const entries = await api('/api/app-state?prefix=' + encodeURIComponent(APP_STATE_PREFIX), {
-            headers: headers(false)
-        }).catch(() => ({}));
-        Object.keys(entries || {}).forEach(k => {
-            const value = entries[k];
-            if (typeof value === 'string') storageService.setItem(k, value);
-        });
-    } finally {
-        appStateHydrated = true;
-    }
-}
+
 
 function readSessionJson(key, fallback) {
     try {
@@ -578,8 +551,24 @@ function closeModal() {
     document.getElementById('modalBackdrop').classList.remove('show');
 }
 
+function openConfirmModal(title, message, onConfirm, confirmLabel) {
+    openModal(title || 'Confirmar', `
+        <div style="font-size:13.5px;color:var(--text-body);line-height:1.7;margin-bottom:14px">${message || ''}</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+            <button class="btn btn-danger" onclick="runConfirmModalAction()">${confirmLabel || 'Confirmar'}</button>
+        </div>`);
+    window.__educatConfirmAction = typeof onConfirm === 'function' ? onConfirm : null;
+}
+
+function runConfirmModalAction() {
+    const action = window.__educatConfirmAction;
+    window.__educatConfirmAction = null;
+    closeModal();
+    if (typeof action === 'function') action();
+}
+
 async function loadData() {
-    await hydrateStorageFromBackend();
     const calls = [
         api('/api/users').catch(() => []),
         api('/api/teachers').catch(() => []),
@@ -603,17 +592,44 @@ async function loadData() {
     state.userPerms = asObject((accessConfig || {}).userPerms);
     state.userPortalAccess = asObject((accessConfig || {}).userPortalAccess);
 
-    state.guides = asArray(readStorage(STORAGE_KEYS.guides, []));
-    state.forms = asObject(readStorage(STORAGE_KEYS.forms, { eval: [], autoeval: [] }));
-    state.formsMeta = asObject(readStorage(STORAGE_KEYS.formsMeta, { eval: { title: 'Evaluacion docente' }, autoeval: { title: 'Autoevaluacion' } }));
+    state.guides = asArray(await api('/api/guides').catch(() => [])).map(g => ({
+        ...g,
+        textSections: g.sectionsJson ? JSON.parse(g.sectionsJson) : [],
+        id: String(g.id || '')
+    }));
+    const evalForms = asArray(await api('/api/evaluation-forms/type/eval').catch(() => []));
+    const autoevalForms = asArray(await api('/api/evaluation-forms/type/autoeval').catch(() => []));
+    state.forms = {
+        eval: evalForms.length && evalForms[0].questionsJson ? JSON.parse(evalForms[0].questionsJson) : [],
+        autoeval: autoevalForms.length && autoevalForms[0].questionsJson ? JSON.parse(autoevalForms[0].questionsJson) : []
+    };
+    state.formsMeta = {
+        eval: { title: (evalForms[0] && evalForms[0].title) || 'Evaluacion docente', id: (evalForms[0] && evalForms[0].id) || null },
+        autoeval: { title: (autoevalForms[0] && autoevalForms[0].title) || 'Autoevaluacion', id: (autoevalForms[0] && autoevalForms[0].id) || null }
+    };
     state.customForms = asArray(readStorage(STORAGE_KEYS.customForms, []));
     state.formResponses = asArray(readStorage(STORAGE_KEYS.formResponses, []));
     state.formShares = asObject(readStorage(STORAGE_KEYS.formShares, {}));
-    state.surveys = asArray(readStorage(STORAGE_KEYS.surveys, []));
-    // Permisos y accesos se gestionan por backend.
-    state.gradePolicy = { ...DEFAULT_POLICY, ...readStorage(STORAGE_KEYS.gradePolicy, {}) };
-    state.academicLevels = asArray(readStorage(STORAGE_KEYS.academicLevels, []));
-    state.academicGrades = asArray(readStorage(STORAGE_KEYS.academicGrades, []));
+    state.surveys = asArray(await api('/api/surveys').catch(() => [])).map(s => {
+        try {
+            return {
+                ...s,
+                options: s.optionsJson ? JSON.parse(s.optionsJson) : [],
+                roles: s.rolesJson ? JSON.parse(s.rolesJson) : [],
+                questionMedia: s.questionMediaJson ? JSON.parse(s.questionMediaJson) : null,
+                voteLedger: s.voteLedgerJson ? JSON.parse(s.voteLedgerJson) : {},
+                startsAt: s.startsAt || '',
+                endsAt: s.endsAt || '',
+                createdAt: s.createdAt || ''
+            };
+        } catch (e) {
+            return { ...s, options: [], roles: [], questionMedia: null, voteLedger: {}, startsAt: '', endsAt: '', createdAt: '' };
+        }
+    });
+    const gradePolicyRes = await api('/api/config/grade-policy').catch(() => null);
+    state.gradePolicy = gradePolicyRes && gradePolicyRes.value ? { ...DEFAULT_POLICY, ...JSON.parse(gradePolicyRes.value) } : { ...DEFAULT_POLICY };
+    state.academicLevels = asArray(await api('/api/academic-levels').catch(() => [])).map(l => ({ ...l, id: String(l.id || '') }));
+    state.academicGrades = asArray(await api('/api/academic-grades').catch(() => [])).map(g => ({ ...g, id: String(g.id || ''), levelId: String(g.levelId || '') }));
     state.courseLevels = asObject(readStorage(STORAGE_KEYS.courseLevels, {}));
     state.courseGrades = asObject(readStorage(STORAGE_KEYS.courseGrades, {}));
     state.courseCapacity = asObject(readStorage(STORAGE_KEYS.courseCapacity, {}));
@@ -621,7 +637,10 @@ async function loadData() {
     state.teacherGrades = asObject(readStorage(STORAGE_KEYS.teacherGrades, {}));
     state.studentLevels = asObject(readStorage(STORAGE_KEYS.studentLevels, {}));
     state.studentGrades = asObject(readStorage(STORAGE_KEYS.studentGrades, {}));
-    state.assignmentRules = asArray(readStorage(STORAGE_KEYS.assignmentRules, []));
+    const assignmentRulesRes = await api('/api/config/assignment-rules').catch(() => null);
+    state.assignmentRules = assignmentRulesRes && assignmentRulesRes.value ? asArray(JSON.parse(assignmentRulesRes.value)) : [];
+    const enrollmentConfigRes = await api('/api/config/enrollment-form-config').catch(() => null);
+    state.ui.enrollmentFormConfigLoaded = enrollmentConfigRes && enrollmentConfigRes.value ? asArray(JSON.parse(enrollmentConfigRes.value)).map(cloneEnrollmentField) : [];
 
     state.users = asArray(state.users);
     state.teachers = asArray(state.teachers);
@@ -799,25 +818,35 @@ function normalize(value) {
     return String(value || '').trim();
 }
 
-function ensureAcademicLevelByName(levelName) {
+async function ensureAcademicLevelByName(levelName) {
     const raw = String(levelName || '').trim();
     if (!raw) return null;
     const existing = (state.academicLevels || []).find(l => normalizeText(l.name) === normalizeText(raw));
     if (existing) return existing;
-    const created = { id: 'lvl-' + Date.now() + '-' + Math.floor(Math.random() * 10000), name: raw, description: '' };
-    state.academicLevels.push(created);
-    return created;
+    try {
+        const created = await api('/api/academic-levels', { method: 'POST', headers: headers(), body: JSON.stringify({ name: raw, description: '' }) });
+        const item = { id: String(created.id), name: created.name, description: created.description };
+        state.academicLevels.push(item);
+        return item;
+    } catch (e) {
+        return null;
+    }
 }
 
-function ensureAcademicGradeByName(levelId, gradeName) {
+async function ensureAcademicGradeByName(levelId, gradeName) {
     const lid = String(levelId || '');
     const raw = String(gradeName || '').trim();
     if (!lid || !raw) return null;
     const existing = (state.academicGrades || []).find(g => String(g.levelId) === lid && normalizeText(g.name) === normalizeText(raw));
     if (existing) return existing;
-    const created = { id: 'gr-' + Date.now() + '-' + Math.floor(Math.random() * 10000), levelId: lid, name: raw };
-    state.academicGrades.push(created);
-    return created;
+    try {
+        const created = await api('/api/academic-grades', { method: 'POST', headers: headers(), body: JSON.stringify({ levelId: parseInt(lid, 10), name: raw }) });
+        const item = { id: String(created.id), levelId: String(created.levelId), name: created.name };
+        state.academicGrades.push(item);
+        return item;
+    } catch (e) {
+        return null;
+    }
 }
 
 function slug3(value) {
@@ -1332,17 +1361,8 @@ async function resolveTeacherIdForCourseCreation(teacherValue) {
     }
 }
 
-function saveLevelsState() {
-    saveStorage(STORAGE_KEYS.academicLevels, state.academicLevels || []);
-    saveStorage(STORAGE_KEYS.academicGrades, state.academicGrades || []);
-    saveStorage(STORAGE_KEYS.courseLevels, state.courseLevels || {});
-    saveStorage(STORAGE_KEYS.courseGrades, state.courseGrades || {});
-    saveStorage(STORAGE_KEYS.courseCapacity, state.courseCapacity || {});
-    saveStorage(STORAGE_KEYS.teacherLevels, state.teacherLevels || {});
-    saveStorage(STORAGE_KEYS.teacherGrades, state.teacherGrades || {});
-    saveStorage(STORAGE_KEYS.studentLevels, state.studentLevels || {});
-    saveStorage(STORAGE_KEYS.studentGrades, state.studentGrades || {});
-    saveStorage(STORAGE_KEYS.assignmentRules, state.assignmentRules || []);
+async function saveLevelsState() {
+    await api('/api/config/assignment-rules', { method: 'PUT', headers: headers(), body: JSON.stringify(state.assignmentRules) }).catch(() => {});
 }
 
 function setCourseGradeIds(courseId, gradeIds) {
@@ -1455,17 +1475,22 @@ function toggleAssignTeacherGradeMenu() {
     host.classList.toggle('open', modalState.teacherAssign.menuOpen);
 }
 
-function createAcademicLevel() {
+async function createAcademicLevel() {
     const nameEl = document.getElementById('levelName');
     const descEl = document.getElementById('levelDescription');
     const name = String((nameEl || {}).value || '').trim();
     const description = String((descEl || {}).value || '').trim();
     if (!name) return showToast('Ingresa el nombre del nivel', 'error');
-
     const exists = (state.academicLevels || []).some(l => String(l.name || '').toLowerCase() === name.toLowerCase());
     if (exists) return showToast('Ese nivel ya existe', 'error');
 
-    state.academicLevels.push({ id: 'lvl-' + Date.now(), name, description });
+    try {
+        const created = await api('/api/academic-levels', { method: 'POST', headers: headers(), body: JSON.stringify({ name, description }) });
+        state.academicLevels.push({ id: String(created.id), name: created.name, description: created.description });
+    } catch (e) {
+        showToast('Error al guardar nivel', 'error');
+        return;
+    }
     if (nameEl) nameEl.value = '';
     if (descEl) descEl.value = '';
     saveLevelsState();
@@ -1473,7 +1498,7 @@ function createAcademicLevel() {
     showToast('Nivel creado', 'success');
 }
 
-function createAcademicGrade() {
+async function createAcademicGrade() {
     const levelId = String((document.getElementById('gradeLevel') || {}).value || '').trim();
     const gradeNameEl = document.getElementById('gradeName');
     const raw = String((gradeNameEl || {}).value || '').trim();
@@ -1494,16 +1519,21 @@ function createAcademicGrade() {
 
     let created = 0;
     let skipped = 0;
-    parsed.forEach((name, idx) => {
+    for (const name of parsed) {
         const key = String(name || '').toLowerCase();
         if (!key || existing.has(key)) {
             skipped += 1;
-            return;
+            continue;
         }
-        state.academicGrades.push({ id: 'gr-' + Date.now() + '-' + idx, levelId, name });
-        existing.add(key);
-        created += 1;
-    });
+        try {
+            const res = await api('/api/academic-grades', { method: 'POST', headers: headers(), body: JSON.stringify({ levelId: parseInt(levelId, 10), name }) });
+            state.academicGrades.push({ id: String(res.id), levelId: String(res.levelId), name: res.name });
+            existing.add(key);
+            created += 1;
+        } catch (e) {
+            skipped += 1;
+        }
+    }
 
     if (!created) return showToast('No se crearon grados (todos duplicados o inválidos)', 'error');
     if (gradeNameEl) gradeNameEl.value = '';
@@ -1822,24 +1852,21 @@ async function saveAdminUserRow(userId) {
     showToast('Usuario actualizado', 'success');
 }
 
-async function deleteAdminUser(userId) {
+function deleteAdminUser(userId) {
     const id = String(userId || '');
     const user = asArray(state.users).find(u => String((u || {}).id || '') === id);
     if (!user) return;
-    if (!window.confirm('¿Eliminar usuario ' + String(user.name || user.email || '') + '?')) return;
-
-    try {
-        await api('/api/users/' + id, { method: 'DELETE', headers: headers(false) });
-    } catch (e) {
-        showToast('No se pudo eliminar el usuario en servidor', 'error');
-        return;
-    }
-
-    state.users = asArray(state.users).filter(u => String((u || {}).id || '') !== id);
-    delete state.userPerms[id];
-    delete state.userPortalAccess[id];
-    renderRolesSection();
-    showToast('Usuario eliminado', 'success');
+    openConfirmModal('Eliminar usuario', '¿Eliminar usuario ' + String(user.name || user.email || '') + '?', async () => {
+        try {
+            await api('/api/users/' + id, { method: 'DELETE', headers: headers(false) });
+            state.users = asArray(state.users).filter(u => String((u || {}).id || '') !== id);
+            delete state.userPortalAccess[id];
+            renderUsersSection();
+            showToast('Usuario eliminado', 'success');
+        } catch (e) {
+            showToast('No se pudo eliminar el usuario en servidor', 'error');
+        }
+    }, 'Eliminar');
 }
 
 function renderAdminUsersSection() {
@@ -2528,7 +2555,7 @@ function cloneEnrollmentField(field) {
 function getEnrollmentFormConfigDraft() {
     const draft = asArray(state.ui.enrollmentFormBuilderDraft).map(cloneEnrollmentField);
     if (draft.length) return draft;
-    const stored = asArray(readStorage(STORAGE_KEYS.enrollmentFormConfig, [])).map(cloneEnrollmentField);
+    const stored = asArray(state.ui.enrollmentFormConfigLoaded).map(cloneEnrollmentField);
     const baseline = stored.length ? stored : DEFAULT_ENROLLMENT_FORM_FIELDS.map(cloneEnrollmentField);
     state.ui.enrollmentFormBuilderDraft = baseline;
     return baseline;
@@ -2554,7 +2581,7 @@ function normalizeEnrollmentFormDraft(fields) {
 function saveEnrollmentFormBuilderDraft() {
     const normalized = normalizeEnrollmentFormDraft(getEnrollmentFormConfigDraft());
     state.ui.enrollmentFormBuilderDraft = normalized;
-    saveStorage(STORAGE_KEYS.enrollmentFormConfig, normalized);
+    api('/api/config/enrollment-form-config', { method: 'PUT', headers: headers(), body: JSON.stringify(normalized) }).catch(() => {});
 }
 
 function addEnrollmentFormField(type) {
@@ -3783,7 +3810,7 @@ function openGuideForm(guideId) {
     renderGuideAttachmentDraftList();
 }
 
-function saveGuideFromModal(guideId) {
+async function saveGuideFromModal(guideId) {
     const title = String((document.getElementById('guideTitle') || {}).value || '').trim();
     const detail = String((document.getElementById('guideDetail') || {}).value || '').trim();
     const pdfUrlInput = String((document.getElementById('guidePdfUrl') || {}).value || '').trim();
@@ -3792,7 +3819,6 @@ function saveGuideFromModal(guideId) {
     const attachments = normalizeGuideAttachments(modalState.guideAttachments);
     if (!title) return showToast('Título requerido', 'error');
     const payload = {
-        id: guideId || ('guide-' + Date.now()),
         title,
         detail,
         pdfUrl,
@@ -3800,22 +3826,32 @@ function saveGuideFromModal(guideId) {
         hasText: !!(richHtml || detail),
         textSections: [],
         richHtml,
-        attachments
+        attachments,
+        sectionsJson: JSON.stringify([])
     };
-    if (guideId) {
-        state.guides = (state.guides || []).map(g => String(g.id) === String(guideId) ? { ...g, ...payload } : g);
-    } else {
-        state.guides.unshift(payload);
+    try {
+        if (guideId && !isNaN(parseInt(guideId, 10))) {
+            await api('/api/guides/' + parseInt(guideId, 10), { method: 'PUT', headers: headers(), body: JSON.stringify(payload) });
+            state.guides = (state.guides || []).map(g => String(g.id) === String(guideId) ? { ...g, ...payload, id: String(guideId) } : g);
+        } else {
+            const created = await api('/api/guides', { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
+            state.guides.unshift({ ...payload, id: String(created.id), textSections: JSON.parse(created.sectionsJson || '[]') });
+        }
+    } catch (e) {
+        showToast('Error al guardar instructivo', 'error');
+        return;
     }
-    saveStorage(STORAGE_KEYS.guides, state.guides || []);
     closeModal();
     renderGuidesSection();
     showToast('Instructivo guardado', 'success');
 }
 
-function deleteGuide(guideId) {
+async function deleteGuide(guideId) {
+    const id = parseInt(guideId, 10);
+    if (!isNaN(id)) {
+        try { await api('/api/guides/' + id, { method: 'DELETE', headers: headers() }); } catch (e) {}
+    }
     state.guides = (state.guides || []).filter(g => String(g.id) !== String(guideId));
-    saveStorage(STORAGE_KEYS.guides, state.guides || []);
     renderGuidesSection();
     showToast('Instructivo eliminado', 'success');
 }
@@ -4558,7 +4594,7 @@ function formBuilderNextPage() {
     renderFormBuilderQuestions();
 }
 
-function saveFormBuilder() {
+async function saveFormBuilder() {
     ensureFormDraft();
     const type = getBuilderType();
     const titleInput = document.getElementById('formTitleInput');
@@ -4567,9 +4603,20 @@ function saveFormBuilder() {
     if (!sanitized.length) return showToast('Agrega al menos una pregunta valida', 'error');
     if (isBaseFormKey(type)) {
         state.forms[type] = sanitized;
-        state.formsMeta[type] = { title };
-        saveStorage(STORAGE_KEYS.forms, state.forms);
-        saveStorage(STORAGE_KEYS.formsMeta, state.formsMeta);
+        state.formsMeta[type] = { ...(state.formsMeta[type] || {}), title };
+        const formId = state.formsMeta[type] && state.formsMeta[type].id;
+        const payload = { type, title, questionsJson: JSON.stringify(sanitized) };
+        try {
+            if (formId && !isNaN(parseInt(formId, 10))) {
+                await api('/api/evaluation-forms/' + parseInt(formId, 10), { method: 'PUT', headers: headers(), body: JSON.stringify(payload) });
+            } else {
+                const created = await api('/api/evaluation-forms', { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
+                state.formsMeta[type] = { ...(state.formsMeta[type] || {}), title, id: created.id };
+            }
+        } catch (e) {
+            showToast('Error al guardar formulario', 'error');
+            return;
+        }
     } else {
         const custom = getCustomFormByKey(type);
         if (!custom) return showToast('Formulario personalizado no encontrado', 'error');
@@ -4961,8 +5008,19 @@ function startPublicSurveyLiveSync(surveyId) {
     if (!sid) return;
     if (publicSurveyLiveTimer) clearInterval(publicSurveyLiveTimer);
     let lastSignature = getSurveyLiveSignature(asArray(state.surveys).find(s => String(s.id) === sid));
-    publicSurveyLiveTimer = setInterval(() => {
-        state.surveys = asArray(readStorage(STORAGE_KEYS.surveys, state.surveys));
+    publicSurveyLiveTimer = setInterval(async () => {
+        try {
+            state.surveys = asArray(await api('/api/surveys').catch(() => [])).map(s => ({
+                ...s,
+                options: s.optionsJson ? JSON.parse(s.optionsJson) : [],
+                roles: s.rolesJson ? JSON.parse(s.rolesJson) : [],
+                questionMedia: s.questionMediaJson ? JSON.parse(s.questionMediaJson) : null,
+                voteLedger: s.voteLedgerJson ? JSON.parse(s.voteLedgerJson) : {},
+                startsAt: s.startsAt || '',
+                endsAt: s.endsAt || '',
+                createdAt: s.createdAt || ''
+            }));
+        } catch (e) {}
         const survey = asArray(state.surveys).find(s => String(s.id) === sid);
         const currentSignature = getSurveyLiveSignature(survey);
         if (currentSignature !== lastSignature) {
@@ -5264,7 +5322,7 @@ function previewSurveyDraft() {
     `);
 }
 
-function createSurvey() {
+async function createSurvey() {
     const question = String((document.getElementById('surveyQuestion') || {}).value || '').trim();
     const startsAt = String((document.getElementById('surveyStartsAt') || {}).value || '').trim();
     const endsAt = String((document.getElementById('surveyEndsAt') || {}).value || '').trim();
@@ -5285,25 +5343,42 @@ function createSurvey() {
     if (startMs === null && startsAt) return showToast('Fecha/hora de inicio inválida', 'error');
     if (endMs === null && endsAt) return showToast('Fecha/hora de finalización inválida', 'error');
     if (startMs !== null && endMs !== null && endMs <= startMs) return showToast('La finalización debe ser posterior al inicio', 'error');
-    state.surveys.unshift({
-        id: 'srv-' + Date.now(),
+    const payload = {
         question,
-        roles,
-        authRequired,
-        voteLedger: {},
-        status: 'active',
-        createdAt: new Date().toISOString(),
+        optionsJson: JSON.stringify(options.map((opt, idx) => ({ ...opt, id: opt.id || ('opt-' + Date.now() + '-' + idx) }))),
+        rolesJson: JSON.stringify(roles),
         startsAt,
         endsAt,
-        questionMedia,
-        options: options.map((opt, idx) => ({
-            id: 'opt-' + Date.now() + '-' + idx,
-            text: opt.text,
-            votes: 0,
-            media: normalizeSurveyQuestionMedia(opt.media)
-        }))
-    });
-    saveStorage(STORAGE_KEYS.surveys, state.surveys);
+        authRequired,
+        questionMediaJson: JSON.stringify(questionMedia),
+        status: 'active'
+    };
+    try {
+        const created = await api('/api/surveys', { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
+        state.surveys.unshift({
+            id: String(created.id),
+            question: created.question,
+            roles: JSON.parse(created.rolesJson || '[]'),
+            authRequired: created.authRequired,
+            voteLedger: JSON.parse(created.voteLedgerJson || '{}'),
+            status: created.status || 'active',
+            createdAt: created.createdAt || new Date().toISOString(),
+            startsAt: created.startsAt || '',
+            endsAt: created.endsAt || '',
+            questionMedia: JSON.parse(created.questionMediaJson || 'null'),
+            options: JSON.parse(created.optionsJson || '[]').map(opt => ({
+                id: opt.id || ('opt-' + Date.now()),
+                text: String(opt.text || '').trim(),
+                votes: Math.max(0, parseInt(opt.votes || '0', 10) || 0),
+                media: normalizeSurveyQuestionMedia(opt.media)
+            })).filter(opt => opt.text),
+            closedAt: '',
+            closedManually: false
+        });
+    } catch (e) {
+        showToast('Error al guardar encuesta', 'error');
+        return;
+    }
     document.getElementById('surveyQuestion').value = '';
     const startsAtEl = document.getElementById('surveyStartsAt');
     const endsAtEl = document.getElementById('surveyEndsAt');
@@ -5359,7 +5434,7 @@ function setSurveyVoteOption(surveyId, optionId) {
     modalState.surveyVoteSelections[sid] = String(optionId || '');
 }
 
-function registerVoteForSurvey(survey, roleName, optionId) {
+async function registerVoteForSurvey(survey, roleName, optionId) {
     if (!survey) return { ok: false, message: 'Encuesta no encontrada' };
     if (!isSurveyOpenForVoting(survey)) return { ok: false, message: 'La encuesta no está habilitada para votar en este momento' };
     const activeUser = getActiveUser();
@@ -5384,15 +5459,29 @@ function registerVoteForSurvey(survey, roleName, optionId) {
         optionId: optionValue,
         at: new Date().toISOString()
     };
-    saveStorage(STORAGE_KEYS.surveys, state.surveys);
+    const id = parseInt(survey.id, 10);
+    if (!isNaN(id)) {
+        try {
+            await api('/api/surveys/' + id, { method: 'PUT', headers: headers(), body: JSON.stringify({
+                question: survey.question,
+                optionsJson: JSON.stringify(survey.options || []),
+                rolesJson: JSON.stringify(survey.roles || []),
+                startsAt: survey.startsAt || null,
+                endsAt: survey.endsAt || null,
+                authRequired: survey.authRequired !== false,
+                questionMediaJson: JSON.stringify(survey.questionMedia || null),
+                status: survey.status || 'active'
+            }) });
+        } catch (e) {}
+    }
     return { ok: true };
 }
 
-function submitSurveyVote(surveyId) {
+async function submitSurveyVote(surveyId) {
     const survey = (state.surveys || []).find(s => String(s.id) === String(surveyId));
     const optionId = String(modalState.surveyVoteSelections[String(surveyId)] || '');
     const roleName = getActiveUserRoleName();
-    const result = registerVoteForSurvey(survey, roleName, optionId);
+    const result = await registerVoteForSurvey(survey, roleName, optionId);
     if (!result.ok) return showToast(result.message, 'error');
     modalState.surveyVoteSelections[String(surveyId)] = optionId;
     renderSurveyBoards();
@@ -5400,19 +5489,41 @@ function submitSurveyVote(surveyId) {
 }
 
 function closeSurvey(surveyId) {
-    if (!window.confirm('¿Deseas finalizar manualmente esta encuesta ahora?')) return;
-    state.surveys = asArray(state.surveys).map(s => String(s.id) === String(surveyId)
-        ? { ...s, status: 'closed', closedAt: new Date().toISOString(), closedManually: true }
-        : s);
-    saveStorage(STORAGE_KEYS.surveys, state.surveys);
-    renderSurveyBoards();
-    showToast('Encuesta finalizada manualmente', 'success');
+    openConfirmModal('Finalizar encuesta', '¿Deseas finalizar manualmente esta encuesta ahora?', async () => {
+        const survey = asArray(state.surveys).find(s => String(s.id) === String(surveyId));
+        const id = parseInt(surveyId, 10);
+        if (survey && !isNaN(id)) {
+            try {
+                await api('/api/surveys/' + id, { method: 'PUT', headers: headers(), body: JSON.stringify({
+                    question: survey.question,
+                    optionsJson: JSON.stringify(survey.options || []),
+                    rolesJson: JSON.stringify(survey.roles || []),
+                    startsAt: survey.startsAt || null,
+                    endsAt: survey.endsAt || null,
+                    authRequired: survey.authRequired !== false,
+                    questionMediaJson: JSON.stringify(survey.questionMedia || null),
+                    status: 'closed'
+                }) });
+            } catch (e) {
+                showToast('Error al cerrar encuesta', 'error');
+                return;
+            }
+        }
+        state.surveys = asArray(state.surveys).map(s => String(s.id) === String(surveyId)
+            ? { ...s, status: 'closed', closedAt: new Date().toISOString(), closedManually: true }
+            : s);
+        renderSurveyBoards();
+        showToast('Encuesta finalizada', 'success');
+    }, 'Finalizar');
 }
 
-function deleteSurvey(surveyId) {
+async function deleteSurvey(surveyId) {
+    const id = parseInt(surveyId, 10);
+    if (!isNaN(id)) {
+        try { await api('/api/surveys/' + id, { method: 'DELETE', headers: headers() }); } catch (e) {}
+    }
     state.surveys = asArray(state.surveys).filter(s => String(s.id) !== String(surveyId));
     delete modalState.surveyVoteSelections[String(surveyId)];
-    saveStorage(STORAGE_KEYS.surveys, state.surveys);
     renderSurveyBoards();
     showToast('Encuesta eliminada del historial', 'success');
 }
@@ -6067,7 +6178,7 @@ function previewImport() {
         : '<div class="muted">No hay filas para previsualizar.</div>';
 }
 
-function importStudentsBatch() {
+async function importStudentsBatch() {
     if (!importState.mappedRows.length) {
         previewImport();
     }
@@ -6078,7 +6189,8 @@ function importStudentsBatch() {
     let updated = 0;
     let createdLevels = 0;
     let createdGrades = 0;
-    validRows.forEach((row, idx) => {
+    for (let idx = 0; idx < validRows.length; idx++) {
+        const row = validRows[idx];
         if (!row.studentCode) {
             row.studentCode = formatStudentCode(getNextStudentCodeSeed() + idx);
         }
@@ -6099,9 +6211,9 @@ function importStudentsBatch() {
         const studentRef = exists || (state.students || []).find(s => String(s.studentCode || '').toLowerCase() === String(row.studentCode || '').toLowerCase());
         const levelBefore = (state.academicLevels || []).length;
         const gradeBefore = (state.academicGrades || []).length;
-        const level = row.level ? ensureAcademicLevelByName(row.level) : null;
+        const level = row.level ? await ensureAcademicLevelByName(row.level) : null;
         if ((state.academicLevels || []).length > levelBefore) createdLevels += 1;
-        const grade = (level && row.grade) ? ensureAcademicGradeByName(level.id, row.grade) : null;
+        const grade = (level && row.grade) ? await ensureAcademicGradeByName(level.id, row.grade) : null;
         if ((state.academicGrades || []).length > gradeBefore) createdGrades += 1;
 
         if (studentRef) {
@@ -6112,7 +6224,7 @@ function importStudentsBatch() {
                 else if (row.level && !row.grade) delete state.studentGrades[sid];
             }
         }
-    });
+    }
 
     cleanupStudentAcademicLinks();
     cleanupAssistantSelections();
@@ -6187,7 +6299,7 @@ function saveGradePolicy() {
     const examMaxPercent = Math.max(0, Math.min(100, parseInt((document.getElementById('examMaxPercent') || {}).value || '100', 10) || 100));
     const scheduleSelectionMode = String((document.getElementById('scheduleSelectionMode') || {}).value || 'free') === 'admin' ? 'admin' : 'free';
     state.gradePolicy = { selectedMethod, allowTeacherCustom, forcedModel, examMinPercent, examMaxPercent, scheduleSelectionMode };
-    saveStorage(STORAGE_KEYS.gradePolicy, state.gradePolicy);
+    api('/api/config/grade-policy', { method: 'PUT', headers: headers(), body: JSON.stringify(state.gradePolicy) }).catch(() => {});
     renderOverview();
     showToast('Política de calificación guardada', 'success');
 }
@@ -6419,7 +6531,11 @@ function saveNewGradeForLevel(levelId) {
     showToast(`Grados agregados: ${created}`, 'success');
 }
 
-function deleteAcademicGrade(gradeId) {
+async function deleteAcademicGrade(gradeId) {
+    const id = parseInt(gradeId, 10);
+    if (!isNaN(id)) {
+        try { await api('/api/academic-grades/' + id, { method: 'DELETE', headers: headers() }); } catch (e) {}
+    }
     state.academicGrades = (state.academicGrades || []).filter(g => String(g.id) !== String(gradeId));
     Object.keys(state.courseGrades || {}).forEach(cid => {
         if (String(state.courseGrades[cid]) === String(gradeId)) delete state.courseGrades[cid];
@@ -6439,8 +6555,12 @@ function deleteAcademicGrade(gradeId) {
     renderCoursesSection();
 }
 
-function deleteAcademicLevel(levelId) {
+async function deleteAcademicLevel(levelId) {
     const id = String(levelId);
+    const numericId = parseInt(levelId, 10);
+    if (!isNaN(numericId)) {
+        try { await api('/api/academic-levels/' + numericId, { method: 'DELETE', headers: headers() }); } catch (e) {}
+    }
     const removedGrades = new Set((state.academicGrades || []).filter(g => String(g.levelId) === id).map(g => String(g.id)));
     state.academicLevels = (state.academicLevels || []).filter(l => String(l.id) !== id);
     state.academicGrades = (state.academicGrades || []).filter(g => String(g.levelId) !== id);
@@ -7158,7 +7278,6 @@ async function init() {
             return;
         }
         activeSessionUser = me;
-        await hydrateStorageFromBackend();
         const publicForm = getSearchParam('publicForm');
         const publicSurvey = getSearchParam('publicSurvey');
         bindEvents();
@@ -7189,8 +7308,19 @@ async function init() {
         navigateTo(readAdminNavigationState(), { skipPersist: false });
         applyBuilderFullscreenModeIfNeeded();
         if (!surveyLiveTimer) {
-            surveyLiveTimer = setInterval(() => {
-                state.surveys = asArray(readStorage(STORAGE_KEYS.surveys, state.surveys));
+            surveyLiveTimer = setInterval(async () => {
+                try {
+                    state.surveys = asArray(await api('/api/surveys').catch(() => [])).map(s => ({
+                        ...s,
+                        options: s.optionsJson ? JSON.parse(s.optionsJson) : [],
+                        roles: s.rolesJson ? JSON.parse(s.rolesJson) : [],
+                        questionMedia: s.questionMediaJson ? JSON.parse(s.questionMediaJson) : null,
+                        voteLedger: s.voteLedgerJson ? JSON.parse(s.voteLedgerJson) : {},
+                        startsAt: s.startsAt || '',
+                        endsAt: s.endsAt || '',
+                        createdAt: s.createdAt || ''
+                    }));
+                } catch (e) {}
                 renderSurveyBoards();
             }, 2500);
         }

@@ -31,5 +31,15 @@ public class EvaluationSubmission {
 
     @Column(name = "submitted_at")
     private LocalDateTime submittedAt;
+    
+    // Grading fields
+    @Column(name = "grade")
+    private Double grade;
+    
+    @Column(name = "feedback", columnDefinition = "TEXT")
+    private String feedback;
+    
+    @Column(name = "graded_at")
+    private LocalDateTime gradedAt;
 }
 

@@ -43,6 +43,9 @@ public class GradeServiceImpl implements GradeService {
         Grade grade = gradeMapper.toEntity(request);
         grade.setStudent(student);
         grade.setCourse(course);
+        grade.setActivityId(request.getActivityId());
+        grade.setSourceUnitId(request.getSourceUnitId());
+        grade.setSource(request.getSource());
         return gradeMapper.toResponse(gradeRepository.save(grade));
     }
     @Override
@@ -51,6 +54,9 @@ public class GradeServiceImpl implements GradeService {
                 .orElseThrow(() -> new EntityNotFoundException("Grade not found: " + id));
         grade.setGrade(request.getGrade());
         grade.setDescription(request.getDescription());
+        grade.setActivityId(request.getActivityId());
+        grade.setSourceUnitId(request.getSourceUnitId());
+        grade.setSource(request.getSource());
         return gradeMapper.toResponse(gradeRepository.save(grade));
     }
     @Override

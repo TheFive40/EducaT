@@ -118,6 +118,73 @@ public class EvaluationSubmissionServiceImpl implements EvaluationSubmissionServ
         evaluationSubmissionRepository.deleteById(id);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public Page<EvaluationSubmissionResponse> findMySubmissions(Integer userId, Integer courseId, String evaluationType, Boolean submitted, Pageable pageable) {
+        // Get student for this user
+        Student student = studentRepository.findByUserId(userId)
+                .orElseThrow(() -> new EntityNotFoundException("Student not found for user: " + userId));
+        
+        return findByFilters(student.getId(), courseId, evaluationType, submitted, pageable);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<EvaluationSubmissionResponse> findTeacherSubmissions(Integer teacherId, Integer courseId, Integer studentId, String evaluationType, Boolean submitted, Pageable pageable) {
+        Specification<EvaluationSubmission> spec = (root, query, cb) -> {
+            // Filter by course if specified
+            if (courseId != null) {
+                return cb.equal(root.get("course").get("id"), courseId);
+            }
+            return cb.conjunction();
+        };
+
+        // Additional filters
+        if (studentId != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("student").get("id"), studentId));
+        }
+        if (evaluationType != null && !evaluationType.isBlank()) {
+            String normalized = normalizeEvaluationType(evaluationType);
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("evaluationType"), normalized));
+        }
+        if (submitted != null) {
+            if (submitted) {
+                spec = spec.and((root, query, cb) -> cb.or(
+                        cb.isTrue(root.get("submitted")),
+                        cb.and(cb.isNull(root.get("submitted")), cb.isNotNull(root.get("submittedAt")))
+                ));
+            } else {
+                spec = spec.and((root, query, cb) -> cb.or(
+                        cb.isFalse(root.get("submitted")),
+                        cb.and(cb.isNull(root.get("submitted")), cb.isNull(root.get("submittedAt")))
+                ));
+            }
+        }
+
+        return evaluationSubmissionRepository.findAll(spec, pageable).map(this::toResponse);
+    }
+
+    @Override
+    public EvaluationSubmissionResponse gradeSubmission(Integer submissionId, Integer teacherId, Double grade, String feedback) {
+        EvaluationSubmission submission = evaluationSubmissionRepository.findById(submissionId)
+                .orElseThrow(() -> new EntityNotFoundException("Evaluation submission not found: " + submissionId));
+        
+        // TODO: Validate that teacher owns the course
+        submission.setGrade(grade);
+        submission.setFeedback(feedback);
+        submission.setGradedAt(LocalDateTime.now());
+        
+        return toResponse(evaluationSubmissionRepository.save(submission));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Integer getStudentIdByUserId(Integer userId) {
+        return studentRepository.findByUserId(userId)
+                .map(Student::getId)
+                .orElseThrow(() -> new EntityNotFoundException("Student not found for user: " + userId));
+    }
+
     private String normalizeEvaluationType(String evaluationType) {
         String normalized = evaluationType == null ? "" : evaluationType.trim().toUpperCase(Locale.ROOT);
         if (!VALID_EVALUATION_TYPES.contains(normalized)) {
@@ -139,6 +206,9 @@ public class EvaluationSubmissionServiceImpl implements EvaluationSubmissionServ
                 .answers(readMap(submission.getAnswersJson()))
                 .submitted(submitted)
                 .submittedAt(submission.getSubmittedAt())
+                .grade(submission.getGrade())
+                .feedback(submission.getFeedback())
+                .gradedAt(submission.getGradedAt())
                 .build();
     }
 

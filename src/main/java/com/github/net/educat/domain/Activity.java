@@ -19,4 +19,14 @@ public class Activity {
     private String description;
     @Column(name = "due_date")
     private LocalDate dueDate;
+    @Column(name = "due_time")
+    private String dueTime;
+    @Column(name = "allow_late_submission")
+    private Boolean allowLateSubmission;
+    @Column(name = "visible_from")
+    private String visibleFrom;
+    @Column(name = "attachments_json", columnDefinition = "TEXT")
+    private String attachmentsJson;
+    @Column(name = "materials_json", columnDefinition = "TEXT")
+    private String materialsJson;
 }

@@ -10,6 +10,9 @@ public class GradeRequest {
     private Integer studentId;
     @NotNull
     private Integer courseId;
+    private Integer activityId;
+    private Integer sourceUnitId;
+    private String source;
     @NotNull @DecimalMin("0.0") @DecimalMax("10.0")
     private BigDecimal grade;
     private String description;

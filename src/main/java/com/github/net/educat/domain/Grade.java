@@ -16,6 +16,12 @@ public class Grade {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "course_id", nullable = false)
     private Course course;
+    @Column(name = "activity_id")
+    private Integer activityId;
+    @Column(name = "source_unit_id")
+    private Integer sourceUnitId;
+    @Column(length = 30)
+    private String source;
     @Column(precision = 5, scale = 2)
     private BigDecimal grade;
     private String description;

@@ -9,6 +9,7 @@ import com.github.net.educat.dto.request.CourseRequest;
 import com.github.net.educat.dto.response.CourseJoinByCodeResponse;
 import com.github.net.educat.dto.response.CourseResponse;
 import com.github.net.educat.mapper.CourseMapper;
+import com.github.net.educat.mapper.StudentMapper;
 import com.github.net.educat.repository.CourseRepository;
 import com.github.net.educat.repository.EnrollmentRepository;
 import com.github.net.educat.repository.ScheduleRepository;
@@ -38,6 +39,7 @@ public class CourseServiceImpl implements CourseService {
     private final EnrollmentRepository enrollmentRepository;
     private final ScheduleRepository scheduleRepository;
     private final CourseMapper courseMapper;
+    private final StudentMapper studentMapper;
 
     @Override
     public List<CourseResponse> findAll() {
@@ -195,6 +197,39 @@ public class CourseServiceImpl implements CourseService {
                 .status("ROLE_NOT_SUPPORTED")
                 .message("Rol no soportado para unión por código")
                 .build();
+    }
+
+    @Override
+    public List<CourseResponse> findByCurrentUser(Integer userId) {
+        // Get teacher associated with this user
+        var teacher = teacherRepository.findByUserId(userId);
+        // Get student associated with this user
+        var student = studentRepository.findByUserId(userId);
+        
+        List<CourseResponse> courses = new java.util.ArrayList<>();
+        
+        // If user is a teacher, get courses they teach
+        if (teacher.isPresent()) {
+            courses.addAll(courseRepository.findByTeacherId(teacher.get().getId()).stream()
+                    .map(this::ensureCodeAndMap).toList());
+        }
+        
+        // If user is a student, get enrolled courses
+        if (student.isPresent()) {
+            courses.addAll(enrollmentRepository.findByStudentId(student.get().getId()).stream()
+                    .map(e -> ensureCodeAndMap(e.getCourse())).toList());
+        }
+        
+        return courses;
+    }
+
+    @Override
+    public List<Object> getStudentsInCourse(Integer courseId) {
+        return enrollmentRepository.findByCourseId(courseId).stream()
+                .map(e -> e.getStudent())
+                .map(studentMapper::toResponse)
+                .map(s -> (Object) s)
+                .toList();
     }
 
     private CourseResponse ensureCodeAndMap(Course course) {

@@ -14,5 +14,8 @@ public class EvaluationSubmissionResponse {
     private Map<String, Object> answers;
     private Boolean submitted;
     private LocalDateTime submittedAt;
+    private Double grade;
+    private String feedback;
+    private LocalDateTime gradedAt;
 }
 

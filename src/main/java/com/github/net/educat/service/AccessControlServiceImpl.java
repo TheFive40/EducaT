@@ -1,14 +1,20 @@
 package com.github.net.educat.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.net.educat.application.AccessControlService;
-import com.github.net.educat.application.AppStateService;
+import com.github.net.educat.domain.Role;
+import com.github.net.educat.domain.RolePermission;
 import com.github.net.educat.domain.User;
+import com.github.net.educat.domain.UserPermission;
+import com.github.net.educat.domain.UserPortalAccess;
 import com.github.net.educat.dto.response.AccessConfigResponse;
 import com.github.net.educat.dto.response.EffectiveAccessResponse;
 import com.github.net.educat.dto.response.PermissionItemResponse;
 import com.github.net.educat.dto.response.PortalAccessResponse;
+import com.github.net.educat.repository.RolePermissionRepository;
+import com.github.net.educat.repository.RoleRepository;
+import com.github.net.educat.repository.UserPermissionRepository;
+import com.github.net.educat.repository.UserPortalAccessRepository;
+import com.github.net.educat.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,10 +31,6 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class AccessControlServiceImpl implements AccessControlService {
-    private static final String ROLE_PERMS_KEY = "educat_admin_role_permissions";
-    private static final String USER_PERMS_KEY = "educat_admin_user_permissions";
-    private static final String USER_PORTAL_ACCESS_KEY = "educat_admin_user_portal_access";
-
     private static final String P_ADMIN = "portal.admin";
     private static final String P_TEACHER = "portal.teacher";
     private static final String P_STUDENT = "portal.student";
@@ -47,6 +49,7 @@ public class AccessControlServiceImpl implements AccessControlService {
         labels.put("roles.permisos", "Roles - Gestionar permisos");
         labels.put("certificados.emitir", "Certificados - Emitir");
         labels.put("certificados.eliminar", "Certificados - Eliminar");
+        labels.put("instructivos.crear", "Instructivos - Crear");
         labels.put("instructivos.editar", "Instructivos - Editar");
         labels.put("formularios.editar", "Formularios - Editar");
         labels.put("formularios.reportes", "Formularios - Reportes");
@@ -70,53 +73,71 @@ public class AccessControlServiceImpl implements AccessControlService {
         PERMISSION_LABELS = Collections.unmodifiableMap(labels);
     }
 
-    private final AppStateService appStateService;
-    private final ObjectMapper objectMapper;
+    private final RolePermissionRepository rolePermissionRepository;
+    private final UserPermissionRepository userPermissionRepository;
+    private final UserPortalAccessRepository userPortalAccessRepository;
+    private final RoleRepository roleRepository;
+    private final UserRepository userRepository;
 
     @Override
     @Transactional(readOnly = true)
     public AccessConfigResponse getAccessConfig() {
         return AccessConfigResponse.builder()
                 .permissions(buildPermissionCatalog())
-                .rolePerms(readPermissionsById(ROLE_PERMS_KEY))
-                .userPerms(readPermissionsById(USER_PERMS_KEY))
-                .userPortalAccess(readPortalAccessById())
+                .rolePerms(readRolePermissionsAll())
+                .userPerms(readUserPermissionsAll())
+                .userPortalAccess(readPortalAccessAll())
                 .build();
     }
 
     @Override
     @Transactional
     public List<String> saveRolePermissions(Integer roleId, List<String> permissions) {
-        Map<String, List<String>> all = readPermissionsById(ROLE_PERMS_KEY);
-        String key = String.valueOf(roleId);
-        all.put(key, sanitizePermissions(permissions));
-        writeJson(ROLE_PERMS_KEY, all);
-        return all.get(key);
+        rolePermissionRepository.deleteByRole_Id(roleId);
+        List<String> sanitized = sanitizePermissions(permissions);
+        Role role = roleRepository.findById(roleId)
+                .orElseThrow(() -> new IllegalArgumentException("Role not found: " + roleId));
+        for (String perm : sanitized) {
+            rolePermissionRepository.save(RolePermission.builder()
+                    .role(role)
+                    .permissionKey(perm)
+                    .build());
+        }
+        return sanitized;
     }
 
     @Override
     @Transactional
     public List<String> saveUserPermissions(Integer userId, List<String> permissions) {
-        Map<String, List<String>> all = readPermissionsById(USER_PERMS_KEY);
-        String key = String.valueOf(userId);
-        all.put(key, sanitizePermissions(permissions));
-        writeJson(USER_PERMS_KEY, all);
-        return all.get(key);
+        userPermissionRepository.deleteByUser_Id(userId);
+        List<String> sanitized = sanitizePermissions(permissions);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
+        for (String perm : sanitized) {
+            userPermissionRepository.save(UserPermission.builder()
+                    .user(user)
+                    .permissionKey(perm)
+                    .build());
+        }
+        return sanitized;
     }
 
     @Override
     @Transactional
     public PortalAccessResponse saveUserPortalAccess(Integer userId, PortalAccessResponse access) {
-        Map<String, PortalAccessResponse> all = readPortalAccessById();
-        String key = String.valueOf(userId);
-        PortalAccessResponse saved = PortalAccessResponse.builder()
-                .admin(access != null && access.isAdmin())
-                .teacher(access != null && access.isTeacher())
-                .student(access != null && access.isStudent())
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
+        UserPortalAccess entity = userPortalAccessRepository.findByUser_Id(userId)
+                .orElse(UserPortalAccess.builder().user(user).build());
+        entity.setAdmin(access != null && access.isAdmin());
+        entity.setTeacher(access != null && access.isTeacher());
+        entity.setStudent(access != null && access.isStudent());
+        userPortalAccessRepository.save(entity);
+        return PortalAccessResponse.builder()
+                .admin(entity.getAdmin())
+                .teacher(entity.getTeacher())
+                .student(entity.getStudent())
                 .build();
-        all.put(key, saved);
-        writeJson(USER_PORTAL_ACCESS_KEY, all);
-        return saved;
     }
 
     @Override
@@ -154,26 +175,27 @@ public class AccessControlServiceImpl implements AccessControlService {
 
     private List<String> resolveRolePermissions(User user) {
         if (user == null || user.getRole() == null || user.getRole().getId() == null) return List.of();
-        Map<String, List<String>> byRole = readPermissionsById(ROLE_PERMS_KEY);
-        return byRole.getOrDefault(String.valueOf(user.getRole().getId()), List.of());
+        return rolePermissionRepository.findByRole_Id(user.getRole().getId()).stream()
+                .map(RolePermission::getPermissionKey)
+                .toList();
     }
 
     private List<String> resolveUserPermissions(User user) {
         if (user == null || user.getId() == null) return List.of();
-        Map<String, List<String>> byUser = readPermissionsById(USER_PERMS_KEY);
-        return byUser.getOrDefault(String.valueOf(user.getId()), List.of());
+        return userPermissionRepository.findByUser_Id(user.getId()).stream()
+                .map(UserPermission::getPermissionKey)
+                .toList();
     }
 
     private PortalAccessResponse resolveEffectivePortals(User user) {
         PortalAccessResponse byRole = resolveRoleDefaultPortals(user);
         if (user == null || user.getId() == null) return byRole;
-        Map<String, PortalAccessResponse> byUser = readPortalAccessById();
-        PortalAccessResponse direct = byUser.get(String.valueOf(user.getId()));
+        UserPortalAccess direct = userPortalAccessRepository.findByUser_Id(user.getId()).orElse(null);
         if (direct == null) return byRole;
         return PortalAccessResponse.builder()
-                .admin(byRole.isAdmin() || direct.isAdmin())
-                .teacher(byRole.isTeacher() || direct.isTeacher())
-                .student(byRole.isStudent() || direct.isStudent())
+                .admin(byRole.isAdmin() || Boolean.TRUE.equals(direct.getAdmin()))
+                .teacher(byRole.isTeacher() || Boolean.TRUE.equals(direct.getTeacher()))
+                .student(byRole.isStudent() || Boolean.TRUE.equals(direct.getStudent()))
                 .build();
     }
 
@@ -196,40 +218,37 @@ public class AccessControlServiceImpl implements AccessControlService {
                 .toList();
     }
 
-    private Map<String, List<String>> readPermissionsById(String key) {
-        Map<String, List<String>> raw = readJson(key, new TypeReference<>() {});
+    private Map<String, List<String>> readRolePermissionsAll() {
         Map<String, List<String>> result = new LinkedHashMap<>();
-        raw.forEach((id, values) -> result.put(String.valueOf(id), sanitizePermissions(values)));
+        List<RolePermission> all = rolePermissionRepository.findAll();
+        all.forEach(rp -> {
+            String key = String.valueOf(rp.getRole().getId());
+            result.computeIfAbsent(key, k -> new ArrayList<>()).add(rp.getPermissionKey());
+        });
         return result;
     }
 
-    private Map<String, PortalAccessResponse> readPortalAccessById() {
-        Map<String, PortalAccessResponse> raw = readJson(USER_PORTAL_ACCESS_KEY, new TypeReference<>() {});
+    private Map<String, List<String>> readUserPermissionsAll() {
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        List<UserPermission> all = userPermissionRepository.findAll();
+        all.forEach(up -> {
+            String key = String.valueOf(up.getUser().getId());
+            result.computeIfAbsent(key, k -> new ArrayList<>()).add(up.getPermissionKey());
+        });
+        return result;
+    }
+
+    private Map<String, PortalAccessResponse> readPortalAccessAll() {
         Map<String, PortalAccessResponse> result = new LinkedHashMap<>();
-        raw.forEach((id, value) -> result.put(String.valueOf(id), PortalAccessResponse.builder()
-                .admin(value != null && value.isAdmin())
-                .teacher(value != null && value.isTeacher())
-                .student(value != null && value.isStudent())
-                .build()));
+        List<UserPortalAccess> all = userPortalAccessRepository.findAll();
+        all.forEach(upa -> {
+            String key = String.valueOf(upa.getUser().getId());
+            result.put(key, PortalAccessResponse.builder()
+                    .admin(upa.getAdmin() != null && upa.getAdmin())
+                    .teacher(upa.getTeacher() != null && upa.getTeacher())
+                    .student(upa.getStudent() != null && upa.getStudent())
+                    .build());
+        });
         return result;
-    }
-
-    private <T> Map<String, T> readJson(String key, TypeReference<Map<String, T>> typeReference) {
-        String raw = appStateService.findByKey(key);
-        if (raw == null || raw.isBlank()) return new LinkedHashMap<>();
-        try {
-            Map<String, T> parsed = objectMapper.readValue(raw, typeReference);
-            return parsed == null ? new LinkedHashMap<>() : new LinkedHashMap<>(parsed);
-        } catch (Exception e) {
-            return new LinkedHashMap<>();
-        }
-    }
-
-    private void writeJson(String key, Object value) {
-        try {
-            appStateService.upsert(key, objectMapper.writeValueAsString(value));
-        } catch (Exception e) {
-            throw new IllegalStateException("No fue posible persistir configuración de accesos", e);
-        }
     }
 }

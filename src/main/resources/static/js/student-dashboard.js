@@ -10,6 +10,27 @@ const actSubmissionFiles = {};
 const studentOpenCardsByUnit = {};
 let studentConfirmAction = null;
 let currentEffectivePermissions = [];
+let evalMemory = {};
+let evalSentMemory = {};
+let wellnessStateCache = null;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EXAM TAKER STATE
+═══════════════════════════════════════════════════════════════════════════ */
+let examTakerState = {
+    attemptId: null,
+    exam: null,
+    questions: [],
+    currentIndex: 0,
+    answers: {},
+    timerInterval: null,
+    timeLeftSeconds: 0,
+    startedAt: null
+};
+let studentExamAttempts = [];
+const activitySubmissionCache = {};
+const runtimeUnitsByCourse = Object.create(null);
+function safeJsonParse(str, fallback) { try { return JSON.parse(str); } catch (e) { return fallback; } }
 
 function buildRuntimeStore() {
     const data = Object.create(null);
@@ -57,14 +78,6 @@ const sessionService = (() => {
     }
     return buildRuntimeStore();
 })();
-const APP_STATE_PREFIX = 'educat_';
-let appStateHydrated = false;
-let appStateSyncInitialized = false;
-let appStateHydrating = false;
-const rawStorageGetItem = storageService.getItem.bind(storageService);
-const rawStorageSetItem = storageService.setItem.bind(storageService);
-const rawStorageRemoveItem = storageService.removeItem.bind(storageService);
-
 const STUDENT_NAV_STATE_KEY = 'educat_student_nav_state_session';
 const ADMIN_DELEGATED_STUDENT_ENROLLMENTS_PREFIX = 'educat_admin_delegate_student_enrollments_';
 let isRestoringStudentNavState = false;
@@ -250,7 +263,7 @@ function setupStudentScrollPersistence() {
     window.addEventListener('beforeunload', saveCurrentStudentScroll);
 }
 
-function restoreStudentNavigationState() {
+async function restoreStudentNavigationState() {
     const nav = readStudentNavState();
     if (!nav) return;
     const section = String(nav.section || 'overview');
@@ -263,7 +276,7 @@ function restoreStudentNavigationState() {
     try {
         currentSection = section;
         if (view === 'course' && courseId) {
-            openCourseView(courseId, { skipPersist: true, unitIdx });
+            await openCourseView(courseId, { skipPersist: true, unitIdx });
             const key = buildCourseUnitScrollKey(courseId, unitIdx);
             const savedTop = parseInt(((nav.courseScrollByKey || {})[key]) || 0, 10) || 0;
             restoreScrollForElement('unitContentArea', savedTop);
@@ -326,13 +339,6 @@ function refreshAdminFormsFromStorage() {
     const forms = loadAdminFormsOrDefault();
     EVAL_QUESTIONS = Array.isArray(forms.eval) ? forms.eval : DEFAULT_EVAL_QUESTIONS;
     AUTOEVAL_QUESTIONS = Array.isArray(forms.autoeval) ? forms.autoeval : DEFAULT_AUTOEVAL_QUESTIONS;
-}
-
-async function hydrateStudentFormsFromBackend() {
-    const appState = await tryFetch('/api/app-state/educat_admin_eval_forms');
-    const raw = appState && typeof appState.value === 'string' ? appState.value : '';
-    if (raw) rawStorageSetItem('educat_admin_eval_forms', raw);
-    refreshAdminFormsFromStorage();
 }
 
 let EVAL_QUESTIONS = DEFAULT_EVAL_QUESTIONS;
@@ -538,63 +544,6 @@ async function postJson(url, payload) {
     try { data = txt ? JSON.parse(txt) : null; } catch (e) { data = null; }
     if (!res.ok) throw new Error((data && data.message) || txt || ('HTTP ' + res.status));
     return data;
-}
-
-function isAppStateStorageKey(key) {
-    const storageKey = String(key || '').trim();
-    return !!storageKey && storageKey.indexOf(APP_STATE_PREFIX) === 0;
-}
-
-function persistStorageValueInBackend(key, value) {
-    if (!isAppStateStorageKey(key)) return;
-    apiFetch('/api/app-state/' + encodeURIComponent(String(key)), {
-        method: 'PUT',
-        body: JSON.stringify({ value: String(value == null ? '' : value) })
-    }).catch(() => {
-        // Mantener valor local si falla la sincronización remota.
-    });
-}
-
-function deleteStorageValueInBackend(key) {
-    if (!isAppStateStorageKey(key)) return;
-    apiFetch('/api/app-state/' + encodeURIComponent(String(key)), {
-        method: 'DELETE',
-        headers: {}
-    }).catch(() => {
-        // Ignorar error remoto para no bloquear UX local.
-    });
-}
-
-function initStorageBackendSync() {
-    if (appStateSyncInitialized) return;
-    appStateSyncInitialized = true;
-
-    storageService.getItem = function (key) {
-        return rawStorageGetItem(key);
-    };
-    storageService.setItem = function (key, value) {
-        rawStorageSetItem(key, value);
-        if (!appStateHydrating) persistStorageValueInBackend(key, value);
-    };
-    storageService.removeItem = function (key) {
-        rawStorageRemoveItem(key);
-        if (!appStateHydrating) deleteStorageValueInBackend(key);
-    };
-}
-
-async function hydrateStorageFromBackend() {
-    if (appStateHydrated) return;
-    appStateHydrating = true;
-    try {
-        const entries = await tryFetch('/api/app-state?prefix=' + encodeURIComponent(APP_STATE_PREFIX));
-        Object.keys(entries || {}).forEach(k => {
-            const value = entries[k];
-            if (typeof value === 'string') rawStorageSetItem(k, value);
-        });
-    } finally {
-        appStateHydrating = false;
-        appStateHydrated = true;
-    }
 }
 
 function escapeHtml(text) {
@@ -936,43 +885,85 @@ function setDate() {
     document.getElementById('currentDate').textContent = new Date().toLocaleDateString('es-CO', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
 }
 
+async function loadUnits(courseId) {
+    const cid = String(courseId || '');
+    const data = await tryFetch('/api/course-units/course/' + cid);
+    if (Array.isArray(data) && data.length) {
+        runtimeUnitsByCourse[cid] = data.map(u => ({
+            id: u.id,
+            name: u.name || '',
+            welcome: u.welcome || '',
+            description: u.description || '',
+            announcements: safeJsonParse(u.announcementsJson, []),
+            activities: safeJsonParse(u.activityIdsJson, []),
+            exams: safeJsonParse(u.examIdsJson, []),
+            resources: safeJsonParse(u.resourcesJson, []),
+            forums: safeJsonParse(u.forumsJson, []),
+            glossaryTerms: safeJsonParse(u.glossariesJson, [])
+        }));
+    } else {
+        const def = DEFAULT_UNITS[cid];
+        runtimeUnitsByCourse[cid] = def ? JSON.parse(JSON.stringify(def)) : [];
+    }
+}
 function getUnits(courseId) {
-    const s = storageService.getItem('educat_units_' + courseId);
-    if (s) { try { return JSON.parse(s); } catch (e) {} }
-    const def = DEFAULT_UNITS[courseId];
+    const cid = String(courseId || '');
+    if (runtimeUnitsByCourse[cid]) return runtimeUnitsByCourse[cid];
+    loadUnits(cid);
+    const def = DEFAULT_UNITS[cid];
     return def ? JSON.parse(JSON.stringify(def)) : [];
 }
-function getStoredCourseActivities(courseId) {
-    try { return JSON.parse(storageService.getItem('educat_course_activities_' + courseId) || '[]'); } catch (e) { return []; }
+async function saveUnits(courseId, units) {
+    const cid = String(courseId || '');
+    for (const unit of units) {
+        const payload = {
+            courseId: cid,
+            name: unit.name,
+            welcome: unit.welcome,
+            description: unit.description,
+            announcementsJson: JSON.stringify(unit.announcements || []),
+            activityIdsJson: JSON.stringify(unit.activities || []),
+            examIdsJson: JSON.stringify(unit.exams || []),
+            resourcesJson: JSON.stringify(unit.resources || []),
+            forumsJson: JSON.stringify(unit.forums || []),
+            glossariesJson: JSON.stringify(unit.glossaryTerms || (unit.glossaries || []))
+        };
+        const id = unit.id;
+        if (!id) {
+            try { const created = await postJson('/api/course-units', payload); if (created && created.id) unit.id = created.id; } catch (e) { showToast('Error creando unidad: ' + e.message, 'error'); }
+        } else {
+            try {
+                const res = await apiFetch('/api/course-units/' + id, { method: 'PUT', body: JSON.stringify(payload) });
+                if (!res || !res.ok) {
+                    if (res && res.status === 404) {
+                        const created = await postJson('/api/course-units', payload);
+                        if (created && created.id) unit.id = created.id;
+                    } else {
+                        throw new Error('HTTP ' + (res ? res.status : 'unknown'));
+                    }
+                }
+            } catch (e) {
+                showToast('Error actualizando unidad: ' + e.message, 'error');
+            }
+        }
+    }
+    runtimeUnitsByCourse[cid] = units;
 }
-function getStoredCourseExams(courseId) {
-    try { return JSON.parse(storageService.getItem('educat_course_exams_' + courseId) || '[]'); } catch (e) { return []; }
-}
+function getStoredCourseActivities(courseId) { return []; }
+function getStoredCourseExams(courseId) { return []; }
 function getCourseActivitiesMerged(courseId) {
-    const base = courseActivities.filter(a => a.course && a.course.id === courseId);
-    const stored = getStoredCourseActivities(courseId);
-    if (!stored.length) return base;
-    const map = {};
-    base.forEach(a => { map[String(a.id)] = a; });
-    stored.forEach(a => { map[String(a.id)] = a; });
-    return Object.values(map);
+    return courseActivities.filter(a => a.course && a.course.id === courseId);
 }
 function getCourseExamsMerged(courseId) {
-    const base = courseExams.filter(x => x.course && x.course.id === courseId);
-    const stored = getStoredCourseExams(courseId);
-    if (!stored.length) return base;
-    const map = {};
-    base.forEach(x => { map[String(x.id)] = x; });
-    stored.forEach(x => { map[String(x.id)] = x; });
-    return Object.values(map);
+    return courseExams.filter(x => x.course && x.course.id === courseId);
 }
 function getSubmission(actId) {
     const sid = currentStudent ? currentStudent.id : 1;
-    try { return JSON.parse(storageService.getItem('educat_sub_' + sid + '_' + actId)); } catch (e) { return null; }
+    return activitySubmissionCache[sid + '_' + actId] || null;
 }
 function saveSubmission(actId, data) {
     const sid = currentStudent ? currentStudent.id : 1;
-    storageService.setItem('educat_sub_' + sid + '_' + actId, JSON.stringify(data));
+    activitySubmissionCache[sid + '_' + actId] = data;
 }
 function getActivityById(actId) {
     const all = currentCourse ? getCourseActivitiesMerged(currentCourse.id) : courseActivities;
@@ -1376,30 +1367,15 @@ function openPersonalView(type, options) {
     if      (type === 'grades')     { content.innerHTML = apGradesHtml(courses);            apInitGrades(); }
     else if (type === 'instructivos') {
         content.innerHTML = apInstructivosHtml();
-        hydrateStudentGuidesFromBackend().then(() => {
-            if (currentPersonalType === 'instructivos') {
-                content.innerHTML = apInstructivosHtml();
-            }
-        }).catch(() => {});
     }
     else if (type === 'certificados') { content.innerHTML = apCertificadosHtml(); apRefreshCertificates(); }
     else if (type === 'eval')       {
         content.innerHTML = apEvalHtml(courses, 'eval');
         apInitEval(courses, 'eval');
-        hydrateStudentFormsFromBackend().then(() => {
-            if (currentPersonalType !== 'eval') return;
-            content.innerHTML = apEvalHtml(courses, 'eval');
-            apInitEval(courses, 'eval');
-        }).catch(() => {});
     }
     else if (type === 'autoeval')   {
         content.innerHTML = apEvalHtml(courses, 'autoeval');
         apInitEval(courses, 'autoeval');
-        hydrateStudentFormsFromBackend().then(() => {
-            if (currentPersonalType !== 'autoeval') return;
-            content.innerHTML = apEvalHtml(courses, 'autoeval');
-            apInitEval(courses, 'autoeval');
-        }).catch(() => {});
     }
     else if (type === 'horario')    { content.innerHTML = apHorarioHtml();                   apInitHorario(); }
     else if (type === 'resultados') { content.innerHTML = apResultadosHtml(courses); }
@@ -1576,17 +1552,7 @@ function loadAdminGuidesOrDefault() {
 
 let AP_GUIDES = loadAdminGuidesOrDefault();
 
-async function hydrateStudentGuidesFromBackend() {
-    const appState = await tryFetch('/api/app-state/educat_admin_instructivos');
-    const raw = appState && typeof appState.value === 'string' ? appState.value : '';
-    if (!raw) return;
-    try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) AP_GUIDES = parsed;
-    } catch (e) {
-        // Mantener fallback local si el valor remoto viene corrupto.
-    }
-}
+
 
 function apGetGuideById(guideId) {
     return AP_GUIDES.find(g => g.id === guideId) || null;
@@ -1855,8 +1821,8 @@ function apDownloadCertificate(certId) {
 
 // ── 2 & 3. Evaluación Docente / Autoevaluación ───────────────────
 function apEvalKey(prefix, courseId) { return 'educat_'+prefix+'_'+(currentStudent?currentStudent.id:1)+'_'+courseId; }
-function apGetEval(prefix, courseId) { try { return JSON.parse(storageService.getItem(apEvalKey(prefix,courseId)))||{}; } catch(e){ return {}; } }
-function apSaveEval(prefix, courseId, data) { storageService.setItem(apEvalKey(prefix,courseId), JSON.stringify(data)); }
+function apGetEval(prefix, courseId) { return evalMemory[apEvalKey(prefix,courseId)] || {}; }
+function apSaveEval(prefix, courseId, data) { evalMemory[apEvalKey(prefix,courseId)] = data; }
 function apEvalTypeFromPrefix(prefix) { return prefix === 'autoeval' ? 'AUTOEVAL' : 'EVAL'; }
 
 async function apSyncEvalFromBackend(courses, prefix) {
@@ -1871,9 +1837,9 @@ async function apSyncEvalFromBackend(courses, prefix) {
             if (!courseId) return;
             const answers = (item && item.answers && typeof item.answers === 'object') ? item.answers : {};
             apSaveEval(prefix, courseId, answers);
-            const sentKey = apEvalKey(prefix, courseId) + '_sent';
-            if (item && item.submitted) storageService.setItem(sentKey, '1');
-            else storageService.removeItem(sentKey);
+            const sentKey = apEvalKey(prefix, courseId);
+            if (item && item.submitted) evalSentMemory[sentKey] = true;
+            else delete evalSentMemory[sentKey];
         });
 
         if (currentPersonalType !== prefix) return;
@@ -1895,14 +1861,14 @@ function apEvalHtml(courses, prefix) {
     const questions = prefix==='autoeval' ? AUTOEVAL_QUESTIONS : EVAL_QUESTIONS;
     const info = prefix==='autoeval' ? 'Reflexiona honestamente sobre tu desempeño en cada asignatura.' : 'Evalúa a cada docente. Tu opinión es completamente confidencial.';
     const tabs = courses.map((c,i) => {
-        const sent = !!storageService.getItem(apEvalKey(prefix,c.id)+'_sent');
+        const sent = !!evalSentMemory[apEvalKey(prefix,c.id)];
         return `<button class="eval-tab ${i===0?'active':''}" onclick="apSwitchEval(${i},'${prefix}')" id="${prefix}-tab-${i}">${sent?'<svg width="12" height="12" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>':''} ${c.name.length>18?c.name.slice(0,17)+'…':c.name}</button>`;
     }).join('');
     const panels = courses.map((c,i) => {
         const teacher  = c.teacher&&c.teacher.user?c.teacher.user.name:'Docente';
         const spec     = c.teacher?c.teacher.specialization||'':'';
         const initials = teacher.split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase();
-        const sent     = !!storageService.getItem(apEvalKey(prefix,c.id)+'_sent');
+        const sent     = !!evalSentMemory[apEvalKey(prefix,c.id)];
         const bannerName = prefix==='autoeval' ? 'Autoevaluación' : teacher;
         const bannerSub  = prefix==='autoeval' ? c.name : (spec+' · '+c.name);
         return `<div class="eval-form-panel ${i===0?'active':''}" id="${prefix}-panel-${i}" data-course="${c.id}" data-prefix="${prefix}">
@@ -1952,7 +1918,7 @@ function apBuildQs(prefix, courseId, questions, disabled) {
 }
 
 function apToggleEvalMulti(prefix, courseId, qId, option, el) {
-    if (storageService.getItem(apEvalKey(prefix,courseId)+'_sent')) return;
+    if (evalSentMemory[apEvalKey(prefix,courseId)]) return;
     const data = apGetEval(prefix, courseId);
     const arr = Array.isArray(data[qId]) ? [...data[qId]] : [];
     const idx = arr.indexOf(option);
@@ -1962,7 +1928,7 @@ function apToggleEvalMulti(prefix, courseId, qId, option, el) {
 }
 
 function apSetEval(prefix, courseId, qId, value, el, type) {
-    if (storageService.getItem(apEvalKey(prefix,courseId)+'_sent')) return;
+    if (evalSentMemory[apEvalKey(prefix,courseId)]) return;
     const data = apGetEval(prefix, courseId);
     data[qId] = value;
     apSaveEval(prefix, courseId, data);
@@ -2019,23 +1985,22 @@ async function apSubmitEval(prefix, panelIdx, courseId) {
         answers: data,
         submitted: true
     };
-    let savedInBackend = false;
     try {
         const saved = await postJson('/api/student/evaluation-submissions', payload);
         if (saved && saved.answers && typeof saved.answers === 'object') apSaveEval(prefix, courseId, saved.answers);
-        savedInBackend = true;
     } catch (e) {
-        apSaveEval(prefix, courseId, data);
+        showToast('No se pudo enviar la evaluación. Inténtalo de nuevo.', 'error');
+        return;
     }
 
-    storageService.setItem(apEvalKey(prefix,courseId)+'_sent','1');
+    evalSentMemory[apEvalKey(prefix, courseId)] = true;
     const btn=document.getElementById(prefix+'-btn-'+panelIdx), msg=document.getElementById(prefix+'-msg-'+panelIdx);
     if(btn) btn.style.display='none';
     if(msg) msg.style.display='flex';
     document.querySelectorAll('#'+prefix+'-panel-'+panelIdx+' button,#'+prefix+'-panel-'+panelIdx+' textarea').forEach(el=>el.disabled=true);
     const tab=document.getElementById(prefix+'-tab-'+panelIdx);
     if(tab&&!tab.querySelector('svg')) tab.insertAdjacentHTML('afterbegin','<svg width="12" height="12" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> ');
-    showToast(savedInBackend ? 'Evaluación enviada. ¡Gracias!' : 'Evaluación guardada localmente (sin conexión backend)','success');
+    showToast('Evaluación enviada. ¡Gracias!', 'success');
 }
 
 // ── 4. Escogencia de Horario ─────────────────────────────────────
@@ -2219,9 +2184,10 @@ function apGetWellnessState() {
         psychAppointments: [], sportRegistrations: [], workshopRegistrations: [], medicalAppointments: [], scholarshipRequests: [],
         activeSection: '', feedState: {}, postReactions: {}, postComments: {}
     };
-    try { return { ...base, ...(JSON.parse(storageService.getItem(apWellnessKey()) || '{}')) }; } catch (e) { return base; }
+    if (wellnessStateCache && typeof wellnessStateCache === 'object') return { ...base, ...wellnessStateCache };
+    return base;
 }
-function apSaveWellnessState(state) { storageService.setItem(apWellnessKey(), JSON.stringify(state)); }
+function apSaveWellnessState(state) { wellnessStateCache = state; }
 function apWellnessModuleType(section) {
     const map = {
         psychology: 'PSYCHOLOGY',
@@ -2506,16 +2472,17 @@ async function apSaveWellbeingPostFromModal(section, type, postId) {
     }
 }
 
-async function apDeleteWellbeingPost(section, postId) {
-    if (!window.confirm('¿Eliminar esta publicación de bienestar?')) return;
-    try {
-        await apWellbeingAdminRequest('DELETE', '/api/admin/wellbeing/publications/' + encodeURIComponent(String(postId)));
-        await apLoadWellnessContentFromBackend();
-        apRenderWellnessSection(section);
-        showToast('Publicación eliminada', 'success');
-    } catch (e) {
-        showToast((e && e.message) ? e.message : 'No se pudo eliminar la publicación', 'error');
-    }
+function apDeleteWellbeingPost(section, postId) {
+    openStudentConfirmModal('Eliminar publicación', '¿Eliminar esta publicación de bienestar?', 'Eliminar', async () => {
+        try {
+            await apWellbeingAdminRequest('DELETE', '/api/admin/wellbeing/publications/' + encodeURIComponent(String(postId)));
+            await apLoadWellnessContentFromBackend();
+            apRenderWellnessSection(section);
+            showToast('Publicación eliminada', 'success');
+        } catch (e) {
+            showToast((e && e.message) ? e.message : 'No se pudo eliminar la publicación', 'error');
+        }
+    });
 }
 
 function apWellnessCardsHtml() {
@@ -2939,7 +2906,37 @@ async function saveProfile() {
     showToast('Perfil actualizado','success');
 }
 
-function openCourseView(courseId, options) {
+async function loadStudentSubmissions(courseId) {
+    const sid = currentStudent ? currentStudent.id : null;
+    if (!sid || !courseId) return;
+    const data = await tryFetch('/api/activity-submissions/student/' + sid);
+    if (!Array.isArray(data)) return;
+    for (const sub of data) {
+        const actId = sub.activity ? sub.activity.id : null;
+        if (!actId) continue;
+        activitySubmissionCache[sid + '_' + actId] = {
+            submitted: true,
+            submittedAt: sub.submittedAt,
+            comment: sub.comment || '',
+            files: Array.isArray(sub.files) ? sub.files : [],
+            graded: sub.grade != null,
+            grade: sub.grade != null ? parseFloat(sub.grade) : undefined,
+            feedback: sub.feedback || '',
+            gradedAt: sub.gradedAt,
+            isLate: !!sub.isLate,
+            id: sub.id
+        };
+    }
+}
+
+async function loadStudentExamAttempts(courseId) {
+    const sid = currentStudent ? currentStudent.id : null;
+    if (!sid) { studentExamAttempts = []; return; }
+    const data = await tryFetch('/api/exam-attempts/student/' + sid);
+    studentExamAttempts = Array.isArray(data) ? data : [];
+}
+
+async function openCourseView(courseId, options) {
     saveCurrentStudentScroll();
     const allCourses = enrollments.map(e=>e.course).filter(Boolean);
     currentCourse = allCourses.find(c => c.id === courseId) || null;
@@ -2952,6 +2949,9 @@ function openCourseView(courseId, options) {
     document.getElementById('pageSubtitle').style.display = 'none';
     document.getElementById('topbarBreadcrumb').style.display = 'flex';
     document.getElementById('breadcrumbCourseName').textContent = currentCourse.name || 'Curso';
+    await loadUnits(courseId);
+    await loadStudentSubmissions(courseId);
+    await loadStudentExamAttempts(courseId);
     renderUnitTabs();
     renderUnit(currentUnitIdx, { skipPersist: !!(options && options.skipPersist) });
     if (!options || !options.skipPersist) {
@@ -3038,7 +3038,8 @@ function deleteSubmission(actId) {
         '¿Seguro que deseas eliminar esta entrega? Esta acción no se puede deshacer.',
         'Eliminar',
         () => {
-            storageService.removeItem('educat_sub_' + (currentStudent ? currentStudent.id : 1) + '_' + actId);
+            const sid = currentStudent ? currentStudent.id : 1;
+            delete activitySubmissionCache[sid + '_' + actId];
             showToast('Entrega eliminada');
             renderUnit(currentUnitIdx);
         }
@@ -3103,7 +3104,20 @@ async function submitActivity(actId) {
     const files=actSubmissionFiles[actId]||[], existing=getSubmission(actId);
     let finalFiles=await mapSubmissionFiles(files);
     if(!finalFiles.length&&existing&&existing.files) finalFiles=existing.files;
-    saveSubmission(actId,{submitted:true,submittedAt:new Date().toISOString(),comment,files:finalFiles,graded:false,editing:false,isLate:lateNow});
+    const sid = currentStudent ? currentStudent.id : null;
+    if (!sid) { showToast('No se pudo identificar al estudiante', 'error'); return; }
+    const payload = { activityId: actId, studentId: sid, comment, files: finalFiles, isLate: lateNow };
+    try {
+        const saved = await postJson('/api/activity-submissions', payload);
+        if (saved) {
+            saveSubmission(actId, { submitted: true, submittedAt: saved.submittedAt || new Date().toISOString(), comment, files: finalFiles, graded: saved.grade != null, grade: saved.grade, feedback: saved.feedback, editing: false, isLate: lateNow });
+        } else {
+            saveSubmission(actId, { submitted: true, submittedAt: new Date().toISOString(), comment, files: finalFiles, graded: false, editing: false, isLate: lateNow });
+        }
+    } catch (e) {
+        showToast('Error enviando entrega al servidor', 'error');
+        return;
+    }
     delete actSubmissionFiles[actId];
     showToast('Actividad entregada correctamente','success'); renderUnit(currentUnitIdx);
 }
@@ -3133,7 +3147,7 @@ function renderUnit(idx, options) {
     const ILINK=`<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>`;
     const annHtml = announcements.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Anuncios del Docente</span><span class="badge badge-gold">${announcements.length}</span></div><div class="card-body" style="padding:0">${announcements.map((a,i)=>{ const isObj=typeof a==='object'&&a!==null; const title=isObj?(a.title||'Anuncio'):String(a).slice(0,80); const content=isObj?(a.content||a.title||''):String(a); const dateStr=isObj&&a.date?new Date(a.date+'T00:00:00').toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'}):''; const attachments=isObj&&Array.isArray(a.attachments)?a.attachments:[]; const cid=`ann-${currentCourse.id}-${idx}-${i}`; return `<div class="announcement-card ${isStudentCardOpen(cid)?'open':''}" id="${cid}"><div class="announcement-card-header" onclick="toggleCard('${cid}')"><div class="announcement-card-icon">${IBELL}</div><div class="announcement-card-meta"><div class="announcement-card-title">${title}</div>${dateStr?`<div class="announcement-card-date">${dateStr}</div>`:''}<div class="announcement-card-preview">${content}</div></div><button class="announcement-toggle-btn" onclick="event.stopPropagation();toggleCard('${cid}')">${IC}</button></div><div class="announcement-card-body"><div class="announcement-full-text">${content}</div>${attachments.length?`<div class="announcement-section-label" style="margin-top:16px">Archivos adjuntos</div><div class="attachment-list">${attachments.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Descargar</a></div>`).join('')}</div>`:''}</div></div>`; }).join('')}</div></div>` : '';
     const actsHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Talleres y Actividades</span><span class="badge badge-navy">${acts.length}</span></div><div class="card-body" style="${acts.length?'padding:0':''}">${acts.length?acts.map((a,i)=>{ const sub=getSubmission(a.id); const cid=`act-${a.id}-${currentCourse.id}`; const isGraded=sub&&sub.graded; const isSubmitted=sub&&sub.submitted&&!sub.editing; const isLate=sub&&isSubmissionLate(a,sub); const keepOpen=isStudentCardOpen(cid)||!!(sub&&sub.editing); const statusBadge=isGraded?`<span class="badge badge-gold">Calificado: ${sub.grade}/10</span>`:isSubmitted?`<span class="badge badge-success">Enviado</span>`:`<span class="badge badge-navy">Pendiente</span>`; const dl=getActivityDeadline(a); const dueDateStr=dl?dl.toLocaleString('es-CO',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'}):''; const remaining=dl?formatRemaining(dl):''; return `<div class="activity-card ${keepOpen?'open':''}" id="${cid}"><div class="activity-card-header" onclick="toggleCard('${cid}')"><div class="activity-num">${i+1}</div><div class="activity-header-meta"><div class="activity-title">${a.title}</div><div class="activity-due-row">${dueDateStr?`<span class="activity-due">${ICAL} Entrega: ${dueDateStr}</span>`:''} ${remaining?`<span class="badge badge-warning">${remaining}</span>`:''} <span class="badge ${a.allowLateSubmission===false?'badge-navy':'badge-warning'}">${a.allowLateSubmission===false?'Sin retraso':'Permite retraso'}</span> ${statusBadge} ${isLate?'<span class="badge badge-warning">Tardia</span>':''}</div></div><button class="activity-toggle-btn" onclick="event.stopPropagation();toggleCard('${cid}')">${IC}</button></div><div class="activity-card-body"><div class="activity-description">${a.description||''}</div>${a.attachments&&a.attachments.length?`<div class="announcement-section-label" style="margin-top:16px">Material del docente</div><div class="attachment-list">${a.attachments.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Descargar</a></div>`).join('')}</div>`:''} ${a.materials&&a.materials.length?`<div class="announcement-section-label" style="margin-top:16px">Bibliografía y apoyo</div><div class="attachment-list">${a.materials.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Abrir</a></div>`).join('')}</div>`:''} ${renderSubmissionSection(a,sub)}</div></div>`; }).join(''):'<div style="color:var(--text-muted);font-size:13px;padding:4px 0">Sin talleres asignados para esta unidad.</div>'}</div></div>`;
-    const examsHtml = exams.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Evaluaciones</span><span class="badge badge-error">${exams.length}</span></div><div class="card-body" style="padding:0">${exams.map((x,i)=>{ const cid=`exam-${x.id}-${currentCourse.id}`; const examDateStr=x.examDate?new Date(x.examDate+'T00:00:00').toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):''; return `<div class="exam-card" id="${cid}"><div class="exam-card-header" onclick="toggleCard('${cid}')"><div class="exam-num">${i+1}</div><div class="exam-header-meta"><div class="exam-title">${x.title}</div>${examDateStr?`<div class="exam-date">${ICAL} ${examDateStr}</div>`:''}</div></div>${x.description?`<div class="exam-card-body"><p style="font-size:14px;color:var(--text-body);line-height:1.75">${x.description}</p></div>`:''}</div>`; }).join('')}</div></div>` : '';
+    const examsHtml = exams.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Evaluaciones</span><span class="badge badge-error">${exams.length}</span></div><div class="card-body" style="padding:0">${exams.map((x,i)=>{ const cid=`exam-${x.id}-${currentCourse.id}`; const examDateStr=x.examDate?new Date(x.examDate+'T00:00:00').toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):''; const cfg = safeJsonParse(x.configJson, {}); const hasAccessKey = !!(cfg.accessKey); const attempts = (studentExamAttempts||[]).filter(a=>a.examId===x.id).sort((a,b)=>new Date(b.startedAt||0)-new Date(a.startedAt||0)); const lastAttempt = attempts[0]; const isFinished = lastAttempt && (lastAttempt.status==='submitted'||lastAttempt.status==='graded'); const scoreDisplay = isFinished ? (cfg.showScoreOnFinish ? (lastAttempt.score!=null?`<span class="badge badge-gold">Nota: ${parseFloat(lastAttempt.score).toFixed(1)}</span>`:'<span class="badge badge-navy">Nota: No disponible</span>') : '<span class="badge badge-navy">Nota: No disponible</span>') : ''; const btnText = isFinished ? 'Ver resultado' : (hasAccessKey?'🔒 Ingresar clave':'Iniciar evaluación'); const btnClass = isFinished ? 'btn btn-sm btn-outline' : 'btn btn-sm btn-teal'; const closeDateStr = x.closeAt ? new Date(x.closeAt).toLocaleString('es-CO',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; const attemptsHtml = attempts.length ? `<div style="margin-top:14px;border-top:1px solid rgba(11,31,58,0.08);padding-top:12px"><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:1px;margin-bottom:10px">Historial de intentos</div><div style="display:flex;flex-direction:column;gap:8px">${attempts.map((att, ai) => { const attNum = attempts.length - ai; const attScore = (att.status==='submitted'||att.status==='graded') ? (cfg.showScoreOnFinish ? (att.score!=null?`<span style="color:var(--teal);font-weight:700">${parseFloat(att.score).toFixed(1)}</span>`:'<span style="color:var(--text-muted)">No disponible</span>') : '<span style="color:var(--text-muted)">No disponible</span>') : '<span style="color:var(--text-muted)">—</span>'; const attDate = att.submittedAt ? new Date(att.submittedAt).toLocaleString('es-CO',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : (att.startedAt?new Date(att.startedAt).toLocaleString('es-CO',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):''); const attStatus = att.status==='submitted'||att.status==='graded' ? '<span class="badge badge-success">Finalizado</span>' : '<span class="badge badge-warning">En progreso</span>'; return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid rgba(11,31,58,0.08);border-radius:8px;background:rgba(11,31,58,0.02)"><div><div style="font-size:13px;font-weight:600;color:var(--navy)">Intento ${attNum}</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">${attDate}</div></div><div style="display:flex;align-items:center;gap:8px">${attStatus}<div style="font-size:13px;font-weight:700">${attScore}</div></div></div>`; }).join('')}</div></div>` : ''; return `<div class="exam-card" id="${cid}"><div class="exam-card-header" onclick="toggleCard('${cid}')"><div class="exam-num">${i+1}</div><div class="exam-header-meta"><div class="exam-title">${x.title}</div>${examDateStr?`<div class="exam-date">${ICAL} ${examDateStr}</div>`:''}${closeDateStr?`<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Cierre: ${closeDateStr}</div>`:''}${isFinished?`<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${lastAttempt.submittedAt?'Finalizado el '+new Date(lastAttempt.submittedAt).toLocaleString('es-CO'):'Finalizado'}</div>`:''}</div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${scoreDisplay}<button class="${btnClass}" onclick="event.stopPropagation();startStudentExam(${x.id})">${btnText}</button></div></div><div class="exam-card-body">${x.description?`<p style="font-size:14px;color:var(--text-body);line-height:1.75;margin-bottom:12px">${x.description}</p>`:''}${attemptsHtml}</div></div>`; }).join('')}</div></div>` : '';
     const resourcesHtml = resources.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Bibliografía y Recursos</span><span class="badge badge-success">${resources.length}</span></div><div class="card-body">${resources.map(r=>`<a class="resource-card-item" href="${r.url||'#'}" target="_blank"><div class="resource-icon ${r.type||'doc'}"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${r.type==='video'?IVID:r.type==='link'?ILINK:'<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>'}</svg></div><span class="resource-name">${r.name}</span><span class="resource-type">${(r.type||'doc').toUpperCase()}</span></a>`).join('')}</div></div>` : '';
     const forumsHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Foros</span><span class="badge badge-teal">${forums.length}</span></div><div class="card-body">${forums.length ? forums.map((forum,fi)=>{ const recent=(forum.messages||[]).slice(-3).reverse(); return `<div class="forum-card" style="margin-bottom:12px"><div class="forum-card-header"><div class="forum-card-icon"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div><div class="forum-card-meta"><div class="forum-card-title">${forum.title}</div><div class="forum-card-desc">${forum.description||'Sin descripcion.'}</div></div></div><div class="forum-card-stats"><span class="forum-stat">${(forum.messages||[]).length} publicacion(es)</span></div><div class="forum-threads-body">${recent.length?recent.map(m=>`<div class="forum-thread-item"><div class="forum-thread-title">${m.authorName}</div><div class="forum-thread-meta"><span>${new Date(m.createdAt).toLocaleString('es-CO')}</span></div><div style="font-size:12.8px;color:var(--text-body);margin-top:6px">${m.text}</div></div>`).join(''):'<div style="font-size:12px;color:var(--text-muted)">Sin mensajes aun.</div>'}</div><div style="padding:0 20px 16px"><button class="btn btn-sm btn-teal" onclick="openStudentForumDetail(${idx},${fi})">Abrir foro completo</button></div></div>`; }).join(''):'<div style="font-size:13px;color:var(--text-muted)">No hay foros disponibles en esta unidad.</div>'}</div></div>`;
     const glossaryHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Glosarios</span><span class="badge badge-teal">${glossaries.length}</span></div><div class="card-body">${glossaries.map((g,gi)=>{ const terms=g.terms||[]; const initials=[...new Set(terms.map(t=>(t.term||'').charAt(0).toUpperCase()).filter(Boolean))].sort(); return `<div class="forum-card" style="margin-bottom:12px"><div class="forum-card-header"><div class="forum-card-meta"><div class="forum-card-title">${g.title||'Glosario'}</div><div class="forum-card-desc">${terms.length} término(s)</div></div></div><div style="padding:0 20px 8px;display:flex;gap:6px;flex-wrap:wrap">${initials.length?initials.map(i=>`<span class="badge badge-navy">${i}</span>`).join(''):'<span style="font-size:12px;color:var(--text-muted)">Sin iniciales.</span>'}</div><div class="forum-threads-body">${terms.slice(-4).reverse().map(t=>`<div class="forum-thread-item"><div class="forum-thread-title">${t.term}</div><div style="font-size:12.8px;color:var(--text-body);line-height:1.6;margin-top:6px">${t.definition}</div></div>`).join('') || '<div style="font-size:12.5px;color:var(--text-muted)">Sin términos aún.</div>'}</div><div style="padding:0 20px 16px;display:flex;gap:8px"><button class="btn btn-sm btn-outline" onclick="addStudentGlossaryTerm(${idx},${gi})">Sugerir termino</button><button class="btn btn-sm btn-teal" onclick="openStudentGlossaryDetail(${idx},${gi},'ALL',1)">Ver completo</button></div></div>`; }).join('')}</div></div>`;
@@ -3172,7 +3186,7 @@ function postStudentForumMessage(unitIdx, forumIdx) {
         text,
         createdAt: new Date().toISOString()
     });
-    storageService.setItem('educat_units_' + currentCourse.id, JSON.stringify(units));
+    saveUnits(currentCourse.id, units);
     openStudentForumDetail(unitIdx, forumIdx, 1);
 }
 
@@ -3287,7 +3301,7 @@ function saveStudentGlossaryTerm(unitIdx, glossaryIdx) {
         studentId: currentStudent ? currentStudent.id : null,
         authorName: (currentUser && currentUser.name) || 'Estudiante'
     });
-    storageService.setItem('educat_units_' + currentCourse.id, JSON.stringify(units));
+    saveUnits(currentCourse.id, units);
     closeModal();
     renderUnit(unitIdx);
     showToast('Termino agregado al glosario', 'success');
@@ -3422,8 +3436,6 @@ async function init() {
     try {
         authHeader = '';
         setDate();
-        initStorageBackendSync();
-        await hydrateStorageFromBackend();
         refreshAdminFormsFromStorage();
         const me = await tryFetch('/api/auth/me');
         if (!me || !me.id) {
@@ -3457,7 +3469,6 @@ async function init() {
             // Usuario con acceso delegado al portal estudiantil (ej. admin).
             currentStudent = { id: 0, studentCode: 'ACCESO-ADMIN' };
         }
-        await hydrateStudentGuidesFromBackend();
         await apLoadWellnessContentFromBackend().catch(() => {});
         document.getElementById('sidebarUserName').textContent    = currentUser.name;
         document.getElementById('sidebarStudentCode').textContent = currentStudent.studentCode;
@@ -3483,6 +3494,375 @@ const btnJoinCourseCodeStudent = document.getElementById('btnJoinCourseCodeStude
 if (btnJoinCourseCodeStudent) btnJoinCourseCodeStudent.addEventListener('click', openStudentJoinCourseModal);
 const btnReloadStudentCourses = document.getElementById('btnReloadStudentCourses');
 if (btnReloadStudentCourses) btnReloadStudentCourses.addEventListener('click', forceReloadStudentCourses);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EXAM TAKER FUNCTIONS
+═══════════════════════════════════════════════════════════════════════════ */
+function openExamAccessKeyModal(examId, cfg) {
+    document.getElementById('modalTitle').textContent = 'Clave de acceso';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="form-group"><label class="form-label">Esta evaluación requiere una clave de acceso para iniciar</label><input type="password" class="form-input" id="examAccessKeyInput" placeholder="Ingresa la clave"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+            <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+            <button class="btn btn-teal" onclick="confirmExamAccessKey(${examId})">Iniciar evaluación</button>
+        </div>`;
+    srtSetModalSize('lg');
+    document.getElementById('modalBackdrop').classList.add('show');
+    setTimeout(() => { const el = document.getElementById('examAccessKeyInput'); if (el) el.focus(); }, 100);
+}
+
+async function confirmExamAccessKey(examId) {
+    const exam = courseExams.find(e => String(e.id) === String(examId));
+    if (!exam) { showToast('Evaluación no encontrada', 'error'); return; }
+    const cfg = safeJsonParse(exam.configJson, {});
+    const input = document.getElementById('examAccessKeyInput');
+    const key = input ? input.value.trim() : '';
+    if (key !== cfg.accessKey) { showToast('Clave incorrecta', 'error'); return; }
+    closeModal();
+    await doStartStudentExam(exam);
+}
+
+async function startStudentExam(examId) {
+    const exam = courseExams.find(e => String(e.id) === String(examId));
+    if (!exam) { showToast('Evaluación no encontrada', 'error'); return; }
+    const attempts = (studentExamAttempts || []).filter(a => a.examId === exam.id).sort((a, b) => new Date(b.startedAt || 0) - new Date(a.startedAt || 0));
+    const lastAttempt = attempts[0];
+    if (lastAttempt && (lastAttempt.status === 'submitted' || lastAttempt.status === 'graded')) {
+        examTakerState = {
+            attemptId: lastAttempt.id,
+            exam: exam,
+            questions: (exam.questions || []).sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0)),
+            currentIndex: 0,
+            answers: {},
+            timerInterval: null,
+            timeLeftSeconds: 0,
+            startedAt: new Date(lastAttempt.startedAt || Date.now())
+        };
+        showStudentExamResults(lastAttempt);
+        return;
+    }
+    const cfg = safeJsonParse(exam.configJson, {});
+    if (cfg.accessKey) {
+        openExamAccessKeyModal(examId, cfg);
+        return;
+    }
+    await doStartStudentExam(exam);
+}
+
+async function doStartStudentExam(exam) {
+    const cfg = safeJsonParse(exam.configJson, {});
+    const studentId = currentStudent ? currentStudent.id : 0;
+    if (!studentId) { showToast('No se pudo identificar al estudiante', 'error'); return; }
+    let attempt = null;
+    try {
+        const res = await apiFetch('/api/exam-attempts/start?examId=' + exam.id + '&studentId=' + studentId);
+        if (res && res.ok) {
+            attempt = await res.json();
+        } else if (res) {
+            const errBody = await res.json().catch(() => ({}));
+            const msg = errBody.message || ('Error ' + res.status);
+            showToast(msg, 'error');
+            return;
+        } else {
+            showToast('No hay conexión con el servidor', 'error');
+            return;
+        }
+    } catch (e) {
+        console.error('start attempt error', e);
+        showToast('Error de red al iniciar la evaluación', 'error');
+        return;
+    }
+    if (!attempt || !attempt.id) {
+        showToast('Respuesta inesperada del servidor', 'error');
+        return;
+    }
+    examTakerState = {
+        attemptId: attempt.id,
+        exam,
+        questions: (exam.questions || []).sort((a,b)=>(a.orderIndex||0)-(b.orderIndex||0)),
+        currentIndex: 0,
+        answers: {},
+        timerInterval: null,
+        timeLeftSeconds: (cfg.totalTimeMinutes || 0) * 60,
+        startedAt: new Date()
+    };
+    renderStudentExamTaker();
+}
+
+function renderStudentExamTaker() {
+    const st = examTakerState;
+    const total = st.questions.length;
+    const cfg = safeJsonParse(st.exam.configJson, {});
+    const allowBack = cfg.allowBacktrack !== false;
+    const answeredCount = Object.keys(st.answers).length;
+    const timerHtml = st.timeLeftSeconds > 0
+        ? `<div style="position:fixed;top:12px;right:12px;z-index:9999;background:var(--navy);color:#fff;padding:8px 14px;border-radius:8px;font-size:14px;font-weight:700;box-shadow:0 4px 12px rgba(0,0,0,0.15)" id="examTimer">⏱ ${formatExamTime(st.timeLeftSeconds)}</div>`
+        : '';
+
+    function sidebarItem(q, idx) {
+        const isCurrent = idx === st.currentIndex;
+        const isAnswered = st.answers[q.id] !== undefined;
+        const isClickable = allowBack || idx === st.currentIndex;
+        const statusIcon = isAnswered
+            ? `<svg width="14" height="14" fill="none" stroke="var(--teal)" stroke-width="3" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`
+            : `<svg width="14" height="14" fill="none" stroke="rgba(11,31,58,0.25)" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>`;
+        const activeStyle = isCurrent ? 'background:rgba(0,150,136,0.08);border-color:var(--teal);color:var(--navy);font-weight:700;' : 'border-color:transparent;color:var(--text-muted);';
+        const clickableStyle = isClickable ? 'cursor:pointer;' : 'cursor:default;opacity:0.45;';
+        const onClick = isClickable ? `onclick="goToExamQuestion(${idx})"` : '';
+        return `<div ${onClick} style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;border:1px solid transparent;transition:all .15s;font-size:13px;${activeStyle}${clickableStyle}">
+            <span style="width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:${isAnswered?'rgba(0,150,136,0.12)':'rgba(11,31,58,0.04)'};flex-shrink:0">${statusIcon}</span>
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Pregunta ${idx + 1}</span>
+        </div>`;
+    }
+
+    const sidebarPageSize = 10;
+    const sidebarTotalPages = Math.max(1, Math.ceil(total / sidebarPageSize));
+    const sidebarCurrentPage = Math.floor(st.currentIndex / sidebarPageSize);
+    const sidebarStart = sidebarCurrentPage * sidebarPageSize;
+    const sidebarEnd = Math.min(sidebarStart + sidebarPageSize, total);
+    const sidebarItems = st.questions.slice(sidebarStart, sidebarEnd).map((q, i) => sidebarItem(q, sidebarStart + i)).join('');
+    const sidebarPageInfo = `${sidebarStart + 1}-${sidebarEnd} de ${total}`;
+    const sidebarHtml = `<div style="width:260px;flex-shrink:0;background:#fff;border-radius:12px;border:1px solid rgba(11,31,58,0.08);padding:16px;display:flex;flex-direction:column;box-shadow:0 1px 3px rgba(11,31,58,0.04);position:sticky;top:20px;align-self:flex-start;max-height:calc(100vh - 140px)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:1.2px">Navegación</div>
+            <div style="font-size:11px;color:var(--text-muted);font-weight:500">${sidebarPageInfo}</div>
+        </div>
+        <div style="flex:1;overflow-y:auto">
+            ${sidebarItems}
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid rgba(11,31,58,0.08)">
+            <button class="btn btn-sm btn-outline" ${sidebarCurrentPage===0?'disabled':''} onclick="goToExamQuestion(${Math.max(0, sidebarStart - sidebarPageSize)})">← Ant.</button>
+            <span style="font-size:11px;color:var(--text-muted);font-weight:500">Pág. ${sidebarCurrentPage + 1} / ${sidebarTotalPages}</span>
+            <button class="btn btn-sm btn-outline" ${sidebarCurrentPage>=sidebarTotalPages-1?'disabled':''} onclick="goToExamQuestion(${Math.min(total - 1, sidebarEnd)})">Sig. →</button>
+        </div>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(11,31,58,0.08)">
+            <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:6px"><span>Respondidas</span><span style="font-weight:600;color:var(--navy)">${answeredCount} / ${total}</span></div>
+            <div style="height:4px;background:rgba(11,31,58,0.06);border-radius:2px"><div style="height:100%;background:var(--teal);border-radius:2px;width:${total?((answeredCount/total)*100):0}%"></div></div>
+        </div>
+    </div>`;
+
+    const q = st.questions[st.currentIndex];
+    let contentHtml = '';
+    if (q) {
+        let inputHtml = '';
+        if (q.questionType === 'single_choice') {
+            const opts = safeJsonParse(q.optionsJson, []);
+            inputHtml = `<div style="display:flex;flex-direction:column;gap:10px">${opts.map((opt) => `<label style="display:flex;align-items:center;gap:10px;padding:12px 14px;border:1.5px solid ${st.answers[q.id]===opt.id?'var(--teal)':'rgba(11,31,58,0.10)'};border-radius:10px;cursor:pointer;background:${st.answers[q.id]===opt.id?'rgba(0,150,136,0.06)':'#fff'};transition:all .15s" onmouseenter="this.style.borderColor='var(--teal)';this.style.background='rgba(0,150,136,0.04)'" onmouseleave="this.style.borderColor='${st.answers[q.id]===opt.id?'var(--teal)':'rgba(11,31,58,0.10)'}';this.style.background='${st.answers[q.id]===opt.id?'rgba(0,150,136,0.06)':'#fff'}'"><input type="radio" name="q_${q.id}" value="${opt.id}" ${st.answers[q.id]===opt.id?'checked':''} onchange="answerExamQuestion('${q.id}','${opt.id}')" style="width:18px;height:18px;accent-color:var(--teal);flex-shrink:0"><span style="font-size:14px;line-height:1.5;color:var(--text-body)">${opt.text || opt.id}</span></label>`).join('')}</div>`;
+        } else if (q.questionType === 'multiple_choice') {
+            const opts = safeJsonParse(q.optionsJson, []);
+            const selected = Array.isArray(st.answers[q.id]) ? st.answers[q.id] : [];
+            inputHtml = `<div style="display:flex;flex-direction:column;gap:10px">${opts.map((opt) => `<label style="display:flex;align-items:center;gap:10px;padding:12px 14px;border:1.5px solid ${selected.includes(opt.id)?'var(--teal)':'rgba(11,31,58,0.10)'};border-radius:10px;cursor:pointer;background:${selected.includes(opt.id)?'rgba(0,150,136,0.06)':'#fff'};transition:all .15s" onmouseenter="this.style.borderColor='var(--teal)';this.style.background='rgba(0,150,136,0.04)'" onmouseleave="this.style.borderColor='${selected.includes(opt.id)?'var(--teal)':'rgba(11,31,58,0.10)'}';this.style.background='${selected.includes(opt.id)?'rgba(0,150,136,0.06)':'#fff'}'"><input type="checkbox" value="${opt.id}" ${selected.includes(opt.id)?'checked':''} onchange="toggleMultiAnswer('${q.id}','${opt.id}',this.checked)" style="width:18px;height:18px;accent-color:var(--teal);flex-shrink:0"><span style="font-size:14px;line-height:1.5;color:var(--text-body)">${opt.text || opt.id}</span></label>`).join('')}</div>`;
+        } else if (q.questionType === 'true_false') {
+            const val = st.answers[q.id];
+            const tfOpts = [{id:true,label:'Verdadero'},{id:false,label:'Falso'}];
+            inputHtml = `<div style="display:flex;flex-direction:column;gap:10px">${tfOpts.map((opt) => `<label style="display:flex;align-items:center;gap:10px;padding:12px 14px;border:1.5px solid ${val===opt.id?'var(--teal)':'rgba(11,31,58,0.10)'};border-radius:10px;cursor:pointer;background:${val===opt.id?'rgba(0,150,136,0.06)':'#fff'};transition:all .15s" onmouseenter="this.style.borderColor='var(--teal)';this.style.background='rgba(0,150,136,0.04)'" onmouseleave="this.style.borderColor='${val===opt.id?'var(--teal)':'rgba(11,31,58,0.10)'}';this.style.background='${val===opt.id?'rgba(0,150,136,0.06)':'#fff'}'"><input type="radio" name="q_${q.id}" value="${opt.id}" ${val===opt.id?'checked':''} onchange="answerExamQuestion('${q.id}',${opt.id})" style="width:18px;height:18px;accent-color:var(--teal);flex-shrink:0"><span style="font-size:14px;line-height:1.5;color:var(--text-body);font-weight:500">${opt.label}</span></label>`).join('')}</div>`;
+        } else if (q.questionType === 'open_text') {
+            inputHtml = `<textarea class="form-input" rows="8" placeholder="Escribe tu respuesta aquí..." oninput="answerExamQuestion('${q.id}',this.value)" style="font-size:14px;line-height:1.6">${st.answers[q.id] || ''}</textarea>`;
+        } else if (q.questionType === 'file_upload') {
+            const currentFile = st.answers[q.id];
+            inputHtml = `<div style="border:2px dashed rgba(11,31,58,0.12);border-radius:10px;padding:24px;text-align:center;background:rgba(11,31,58,0.02)">
+                <input type="file" id="examFile_${q.id}" style="display:none" onchange="answerExamFile('${q.id}',this)">
+                <button class="btn btn-outline" onclick="document.getElementById('examFile_${q.id}').click()">${currentFile && currentFile.name ? '📎 Cambiar archivo' : '📎 Subir archivo'}</button>
+                ${currentFile && currentFile.name ? `<div style="margin-top:10px;font-size:13px;color:var(--text-body)">Seleccionado: <strong>${currentFile.name}</strong></div>` : ''}
+            </div>`;
+        }
+        const globalProgress = total ? ((st.currentIndex + 1) / total) * 100 : 0;
+        contentHtml = `<div style="flex:1;background:#fff;border-radius:12px;border:1px solid rgba(11,31,58,0.08);padding:28px 32px;display:flex;flex-direction:column;box-shadow:0 1px 3px rgba(11,31,58,0.04);overflow-y:auto">
+            <div style="margin-bottom:20px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <span style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted)">Pregunta ${st.currentIndex + 1} de ${total}</span>
+                    <span style="font-size:12px;color:var(--text-muted)">${answeredCount} de ${total} respondidas</span>
+                </div>
+                <div style="height:6px;background:rgba(11,31,58,0.06);border-radius:3px;overflow:hidden">
+                    <div style="height:100%;background:linear-gradient(90deg,var(--teal),#4db6ac);border-radius:3px;width:${globalProgress}%;transition:width .3s"></div>
+                </div>
+            </div>
+            <div style="font-size:17px;font-weight:700;margin-bottom:20px;line-height:1.65;color:var(--navy)">${q.questionText || 'Sin texto'}</div>
+            <div style="flex:1">${inputHtml}</div>
+            <div style="margin-top:24px;padding-top:16px;border-top:1px solid rgba(11,31,58,0.08);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+                <button class="btn btn-outline" ${st.currentIndex===0 || !allowBack?'disabled':''} onclick="navExamQuestion(-1)">← Anterior</button>
+                <div style="display:flex;gap:10px;flex-wrap:wrap">
+                    ${st.currentIndex < total - 1 ? `<button class="btn btn-teal" onclick="navExamQuestion(1)">Siguiente →</button>` : `<button class="btn btn-teal" onclick="submitStudentExam()">Finalizar evaluación</button>`}
+                </div>
+            </div>
+        </div>`;
+    } else {
+        contentHtml = `<div style="flex:1;background:#fff;border-radius:12px;border:1px solid rgba(11,31,58,0.08);padding:40px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;box-shadow:0 1px 3px rgba(11,31,58,0.04)">
+            <div style="font-size:18px;font-weight:700;color:var(--navy);margin-bottom:10px">Este examen no tiene preguntas configuradas</div>
+            <div style="font-size:13px;color:var(--text-muted);margin-bottom:20px">Contacta a tu docente para más información.</div>
+            <button class="btn btn-teal" onclick="renderUnit(currentUnitIdx,{skipPersist:true})">Volver a la unidad</button>
+        </div>`;
+    }
+
+    const host = document.getElementById('unitContentArea');
+    if (host) {
+        host.innerHTML = timerHtml + `<div style="display:flex;gap:16px;align-items:flex-start">${sidebarHtml}${contentHtml}</div>`;
+    } else {
+        document.getElementById('mainContent').innerHTML = timerHtml + `<div style="display:flex;gap:16px;align-items:flex-start">${sidebarHtml}${contentHtml}</div>`;
+    }
+
+    if (st.timeLeftSeconds > 0 && !st.timerInterval) {
+        st.timerInterval = setInterval(() => {
+            st.timeLeftSeconds--;
+            const el = document.getElementById('examTimer');
+            if (el) el.textContent = '⏱ ' + formatExamTime(st.timeLeftSeconds);
+            if (st.timeLeftSeconds <= 0) { clearInterval(st.timerInterval); st.timerInterval = null; submitStudentExam(true); }
+        }, 1000);
+    }
+}
+
+function formatExamTime(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+function answerExamQuestion(qid, value) {
+    examTakerState.answers[qid] = value;
+}
+
+function toggleMultiAnswer(qid, optId, checked) {
+    const arr = Array.isArray(examTakerState.answers[qid]) ? examTakerState.answers[qid] : [];
+    if (checked) { if (!arr.includes(optId)) arr.push(optId); }
+    else { const i = arr.indexOf(optId); if (i >= 0) arr.splice(i, 1); }
+    examTakerState.answers[qid] = arr;
+}
+
+function answerExamFile(qid, input) {
+    const file = input.files && input.files[0] ? input.files[0] : null;
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => { examTakerState.answers[qid] = { name: file.name, type: file.type, dataUrl: e.target.result }; };
+    reader.readAsDataURL(file);
+}
+
+function navExamQuestion(delta) {
+    const st = examTakerState;
+    const cfg = safeJsonParse(st.exam.configJson, {});
+    const allowBack = cfg.allowBacktrack !== false;
+    const newIdx = st.currentIndex + delta;
+    if (newIdx < 0 || newIdx >= st.questions.length) return;
+    if (delta < 0 && !allowBack) return;
+    st.currentIndex = newIdx;
+    renderStudentExamTaker();
+}
+
+function goToExamQuestion(index) {
+    const st = examTakerState;
+    const cfg = safeJsonParse(st.exam.configJson, {});
+    const allowBack = cfg.allowBacktrack !== false;
+    if (index < 0 || index >= st.questions.length) return;
+    if (!allowBack && index !== st.currentIndex) return;
+    st.currentIndex = index;
+    renderStudentExamTaker();
+}
+
+function openExamFinishModal() {
+    const st = examTakerState;
+    const answered = Object.keys(st.answers).length;
+    const total = st.questions.length;
+    document.getElementById('modalTitle').textContent = 'Finalizar evaluación';
+    document.getElementById('modalBody').innerHTML = `
+        <div style="text-align:center;padding:10px 0">
+            <div style="font-size:42px;margin-bottom:14px">⚠️</div>
+            <div style="font-size:16px;font-weight:700;margin-bottom:8px;color:var(--navy)">¿Estás seguro de finalizar?</div>
+            <div style="font-size:13px;color:var(--text-muted);margin-bottom:24px;max-width:360px;margin-left:auto;margin-right:auto;line-height:1.6">Has respondido <strong style="color:var(--navy)">${answered}</strong> de <strong style="color:var(--navy)">${total}</strong> preguntas. Una vez enviado no podrás modificar tus respuestas.</div>
+            <div style="display:flex;gap:10px;justify-content:center">
+                <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+                <button class="btn btn-teal" onclick="closeModal();performStudentExamSubmit();">Confirmar y enviar</button>
+            </div>
+        </div>`;
+    srtSetModalSize('lg');
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+
+async function submitStudentExam(auto = false) {
+    if (auto) {
+        await performStudentExamSubmit();
+    } else {
+        openExamFinishModal();
+    }
+}
+
+async function performStudentExamSubmit() {
+    const st = examTakerState;
+    if (st.timerInterval) { clearInterval(st.timerInterval); st.timerInterval = null; }
+    const cleanAnswers = {};
+    for (const q of st.questions) {
+        const ans = st.answers[q.id];
+        if (ans === undefined || ans === null || ans === '') continue;
+        if (typeof ans === 'object' && ans.dataUrl) {
+            cleanAnswers[q.id] = { name: ans.name, type: ans.type };
+        } else {
+            cleanAnswers[q.id] = ans;
+        }
+    }
+    try {
+        const result = await postJson('/api/exam-attempts/' + st.attemptId + '/submit', {
+            examId: st.exam.id,
+            studentId: currentStudent ? currentStudent.id : 0,
+            answersJson: JSON.stringify(cleanAnswers)
+        });
+        showStudentExamResults(result);
+    } catch (e) {
+        console.error('submit exam error', e);
+        showToast('Error enviando evaluación', 'error');
+    }
+}
+
+function showStudentExamResults(result) {
+    const st = examTakerState;
+    const cfg = safeJsonParse(st.exam.configJson, {});
+    const showScore = cfg.showScoreOnFinish;
+    const showCorrect = cfg.showCorrectAnswers;
+    const hasScore = result && result.score !== undefined && result.score !== null;
+    const scoreValue = hasScore ? parseFloat(result.score).toFixed(1) : null;
+    const scoreDisplay = showScore
+        ? (hasScore ? `<div style="font-size:52px;font-weight:800;color:var(--teal);line-height:1">${scoreValue}</div><div style="font-size:13px;color:var(--text-muted);margin-top:4px">Tu calificación</div>` : `<div style="font-size:52px;font-weight:800;color:var(--text-muted);line-height:1">—</div><div style="font-size:13px;color:var(--text-muted);margin-top:4px">Tu calificación</div>`)
+        : `<div style="font-size:20px;font-weight:700;color:var(--navy)">No disponible</div><div style="font-size:13px;color:var(--text-muted);margin-top:4px">La nota será publicada por tu docente</div>`;
+
+    let detailsHtml = '';
+    if (showCorrect && result && result.answersJson) {
+        const results = safeJsonParse(result.answersJson, {});
+        const questions = results.questions || {};
+        detailsHtml = `<div style="margin-top:20px">${st.questions.map(q => {
+            const r = questions[q.id] || {};
+            const isCorrect = !!r.correct;
+            return `<div style="padding:12px;border:1px solid rgba(11,31,58,0.08);border-radius:10px;margin-bottom:8px;background:#fff">
+                <div style="font-size:13px;font-weight:600;margin-bottom:6px;color:var(--navy)">${q.questionText ? q.questionText.replace(/<[^>]*>/g, '').slice(0, 100) : 'Pregunta ' + q.id}</div>
+                <div style="display:flex;gap:6px;align-items:center"><span class="badge ${isCorrect?'badge-success':'badge-error'}">${isCorrect?'Correcta':'Incorrecta'}</span><span style="font-size:12px;color:var(--text-muted)">${r.earned != null ? r.earned + '/' + r.possible : ''}</span></div>
+                ${q.feedback && !isCorrect ? `<div style="font-size:12px;color:var(--text-body);margin-top:6px;background:rgba(11,31,58,0.03);padding:8px 10px;border-radius:6px">💡 ${q.feedback}</div>` : ''}
+            </div>`;
+        }).join('')}</div>`;
+    }
+
+    const html = `<div style="max-width:640px;margin:0 auto;padding:20px">
+        <div class="card" style="border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(11,31,58,0.06)">
+            <div style="background:linear-gradient(135deg,var(--navy),#1a3a5c);padding:24px;text-align:center;color:#fff">
+                <div style="font-size:13px;font-weight:600;letter-spacing:1px;text-transform:uppercase;opacity:.8;margin-bottom:8px">Evaluación finalizada</div>
+                <div style="font-size:18px;font-weight:700">${st.exam.title || 'Evaluación'}</div>
+            </div>
+            <div class="card-body" style="padding:28px">
+                <div style="text-align:center;margin-bottom:20px">${scoreDisplay}</div>
+                ${detailsHtml}
+                <div style="text-align:center;margin-top:24px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+                    <button class="btn btn-teal" onclick="returnToCourseAfterExam()">Volver al curso</button>
+                </div>
+            </div>
+        </div>
+    </div>`;
+
+    const host = document.getElementById('unitContentArea');
+    if (host) host.innerHTML = html;
+    else document.getElementById('mainContent').innerHTML = html;
+}
+
+async function returnToCourseAfterExam() {
+    if (currentCourse && currentCourse.id) {
+        await loadStudentExamAttempts(currentCourse.id);
+    }
+    renderUnit(currentUnitIdx, {skipPersist:true});
+}
 
 window.addEventListener('storage', () => {
     // Backend-driven: no refresh por cambios en storage del navegador.

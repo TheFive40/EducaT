@@ -327,7 +327,8 @@
                             <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)">% Aprobación</div>
                         </div>
                     </div>
-                    <div class="card-body" id="calificacionesContainer">
+                    <div id="gradesToolbar" style="display:none;padding:16px 22px 0"></div>
+                    <div class="card-body" id="calificacionesContainer" style="padding-top:8px">
                         <div class="empty-state">
                             <div class="empty-state-title">Selecciona un curso</div>
                             <div class="empty-state-text">Elige un curso para gestionar las calificaciones de sus estudiantes.</div>
@@ -465,7 +466,16 @@
                     </div>
                     <div class="card-body">
                         <div class="alert alert-info" style="margin-bottom:12px">Puedes crear instructivos con editor avanzado y adjuntar PDF. Lo publicado se comparte con profesores.</div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
+                            <input type="text" class="form-input" id="teacherGuideSearch" placeholder="Buscar instructivo..." style="max-width:320px;flex:1">
+                            <select class="form-input" id="teacherGuideAudienceFilter" style="max-width:180px">
+                                <option value="">Todos los públicos</option>
+                                <option value="DOCENTE">Docentes</option>
+                                <option value="ESTUDIANTE">Estudiantes</option>
+                            </select>
+                        </div>
                         <div id="teacherGuidesBoard"></div>
+                        <div id="teacherGuidesPagination" style="display:flex;justify-content:center;gap:6px;margin-top:12px"></div>
                     </div>
                 </div>
             </section>
@@ -553,7 +563,7 @@
 
 <div class="toast-container" id="toastContainer"></div>
 
-<script src="/js/storage-service.js"></script>
+<script src="/js/api-client.js"></script>
 <script src="/js/teacher-dashboard.js?v=20260418-01"></script>
 </body>
 </html>

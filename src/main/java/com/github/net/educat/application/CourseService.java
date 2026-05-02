@@ -15,4 +15,6 @@ public interface CourseService {
     List<CourseResponse> findByTeacherId(Integer teacherId);
     List<CourseResponse> findAvailableForTeacher();
     CourseJoinByCodeResponse joinByCode(CourseJoinByCodeRequest request);
+    List<CourseResponse> findByCurrentUser(Integer userId);
+    List<Object> getStudentsInCourse(Integer courseId);
 }

@@ -15,8 +15,40 @@ let teacherActivities = [];
 let teacherExams = [];
 let teacherSchedules = [];
 let teacherAbsenceReportsCache = [];
+let teacherGuides = [];
 let currentEffectiveAccess = null;
 let currentEffectivePermissions = [];
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EXAM EDITOR STATE
+═══════════════════════════════════════════════════════════════════════════ */
+let examEditorState = {
+    examId: null,
+    unitIdx: null,
+    questions: [],
+    currentQuestionIndex: 0,
+    config: {
+        accessKey: '',
+        totalTimeMinutes: 0,
+        timePerQuestionSeconds: 0,
+        allowBacktrack: true,
+        showScoreOnFinish: true,
+        showCorrectAnswers: false,
+        showCorrectAnswersAfterAll: true,
+        allowRetake: false,
+        passingScore: 6.0,
+        maxScore: 10.0,
+        shuffleQuestions: false,
+        shuffleOptions: false
+    }
+};
+const EXAM_QUESTION_TYPES = [
+    { key: 'single_choice', label: 'Selección única' },
+    { key: 'multiple_choice', label: 'Selección múltiple' },
+    { key: 'true_false', label: 'Verdadero / Falso' },
+    { key: 'open_text', label: 'Pregunta abierta' },
+    { key: 'file_upload', label: 'Subir archivo' }
+];
 
 function buildRuntimeStore() {
     const data = Object.create(null);
@@ -56,23 +88,17 @@ function buildRuntimeStore() {
     };
 }
 const runtimeUnitsByCourse = Object.create(null);
+function safeJsonParse(str, fallback) { try { return JSON.parse(str); } catch (e) { return fallback; } }
 const runtimeSubmissionsByKey = Object.create(null);
 const runtimeUnitPartialByKey = Object.create(null);
 const storageService = buildRuntimeStore();
 const sessionService = buildRuntimeStore();
-const APP_STATE_PREFIX = 'educat_';
-let appStateHydrated = false;
-let appStateSyncInitialized = false;
-let appStateHydrating = false;
-const rawStorageGetItem = storageService.getItem.bind(storageService);
-const rawStorageSetItem = storageService.setItem.bind(storageService);
-const rawStorageRemoveItem = storageService.removeItem.bind(storageService);
 const GRADE_SCALE_MAX = 10;
 const DEFAULT_FORUM_PARTICIPATION_GRADE = 4.0;
 const TEACHER_EVAL_REVIEWS_KEY = 'educat_teacher_eval_report_reviews';
 const ADMIN_DELEGATED_TEACHER_COURSES_PREFIX = 'educat_admin_delegate_teacher_courses_';
 const tableUiState = {
-    grades: { page: 1, pageSize: 8, query: '' },
+    grades: { page: 1, pageSize: 8, query: '', summaryPage: 1, summaryPageSize: 8 },
     students: { page: 1, pageSize: 8 },
     absences: { page: 1, pageSize: 5, query: '', status: 'all' },
     wellbeing: { page: 1, pageSize: 5, query: '', status: 'all', module: 'all' },
@@ -174,7 +200,7 @@ function persistCurrentCourseNavigation() {
     });
 }
 
-function restoreTeacherNavigationState() {
+async function restoreTeacherNavigationState() {
     const nav = readTeacherNavState();
     if (!nav) return;
     isRestoringNavState = true;
@@ -185,7 +211,7 @@ function restoreTeacherNavigationState() {
         const unitIdx = Math.max(0, parseInt(nav.unitIdx || '0', 10) || 0);
 
         if (view === 'submissions') {
-            if (course) openCourseView(course, { skipPersist: true, unitIdx });
+            if (course) await openCourseView(course, { skipPersist: true, unitIdx });
             const activityId = parseInt(nav.activityId || '0', 10) || 0;
             if (activityId && getActivityById(activityId)) {
                 openActivitySubmissions(activityId, course ? course.id : null, nav.submissionsFilter || 'all', { skipPersist: true });
@@ -195,7 +221,7 @@ function restoreTeacherNavigationState() {
         }
 
         if (view === 'course' && course) {
-            openCourseView(course, { skipPersist: true, unitIdx });
+            await openCourseView(course, { skipPersist: true, unitIdx });
             return;
         }
 
@@ -595,6 +621,19 @@ function hasAnyPermission(permissions) {
     return (permissions || []).some(p => granted.includes(String(p || '')));
 }
 
+function canManageCurrentCourse() {
+    if (isCurrentUserAdmin()) return true;
+    if (!currentCourse || !currentTeacher) return false;
+    const courseTeacherId = currentCourse.teacher && currentCourse.teacher.id ? currentCourse.teacher.id : null;
+    if (courseTeacherId && currentTeacher.id === courseTeacherId) return true;
+    // También permitir si el usuario tiene permiso de editar cursos
+    return hasAnyPermission(['cursos.editar']);
+}
+
+function canManageInstructivos() {
+    return isCurrentUserAdmin() || hasAnyPermission(['instructivos.crear', 'instructivos.editar']);
+}
+
 function canReviewWellbeingAction(action) {
     const approve = hasAnyPermission(['bienestar.aprobar-publicacion']);
     const reject = hasAnyPermission(['bienestar.rechazar-publicacion']);
@@ -605,63 +644,6 @@ function canReviewWellbeingAction(action) {
 
 function canModerateEvaluationReports() {
     return canReviewWellbeingAction('APPROVED') || canReviewWellbeingAction('REJECTED');
-}
-
-function isAppStateStorageKey(key) {
-    const storageKey = String(key || '').trim();
-    return !!storageKey && storageKey.indexOf(APP_STATE_PREFIX) === 0;
-}
-
-function persistStorageValueInBackend(key, value) {
-    if (!isAppStateStorageKey(key)) return;
-    apiFetch('/api/app-state/' + encodeURIComponent(String(key)), {
-        method: 'PUT',
-        body: JSON.stringify({ value: String(value == null ? '' : value) })
-    }).catch(() => {
-        // Mantener valor local cuando falle la red/backend.
-    });
-}
-
-function deleteStorageValueInBackend(key) {
-    if (!isAppStateStorageKey(key)) return;
-    apiFetch('/api/app-state/' + encodeURIComponent(String(key)), {
-        method: 'DELETE',
-        headers: {}
-    }).catch(() => {
-        // No bloquear UX por error de sincronización remota.
-    });
-}
-
-function initStorageBackendSync() {
-    if (appStateSyncInitialized) return;
-    appStateSyncInitialized = true;
-
-    storageService.getItem = function (key) {
-        return rawStorageGetItem(key);
-    };
-    storageService.setItem = function (key, value) {
-        rawStorageSetItem(key, value);
-        if (!appStateHydrating) persistStorageValueInBackend(key, value);
-    };
-    storageService.removeItem = function (key) {
-        rawStorageRemoveItem(key);
-        if (!appStateHydrating) deleteStorageValueInBackend(key);
-    };
-}
-
-async function hydrateStorageFromBackend() {
-    if (appStateHydrated) return;
-    appStateHydrating = true;
-    try {
-        const entries = await tryFetch('/api/app-state?prefix=' + encodeURIComponent(APP_STATE_PREFIX));
-        Object.keys(entries || {}).forEach(k => {
-            const value = entries[k];
-            if (typeof value === 'string') rawStorageSetItem(k, value);
-        });
-    } finally {
-        appStateHydrating = false;
-        appStateHydrated = true;
-    }
 }
 
 function showToast(msg, type = '') {
@@ -1233,20 +1215,79 @@ function toRichHtml(value) {
     return htmlEscape(raw).replace(/\n/g, '<br>');
 }
 
-function getUnits(courseId) {
-    const s = storageService.getItem('educat_units_' + courseId);
-    if (s) try { return JSON.parse(s); } catch (e) {}
-    return JSON.parse(JSON.stringify(DEFAULT_UNITS[courseId] || []));
+async function loadUnits(courseId) {
+    const cid = String(courseId || '');
+    const data = await tryFetch('/api/course-units/course/' + cid);
+    if (Array.isArray(data) && data.length) {
+        runtimeUnitsByCourse[cid] = data.map(u => ({
+            id: u.id,
+            name: u.name || '',
+            welcome: u.welcome || '',
+            description: u.description || '',
+            announcements: safeJsonParse(u.announcementsJson, []),
+            activities: safeJsonParse(u.activityIdsJson, []),
+            exams: safeJsonParse(u.examIdsJson, []),
+            resources: safeJsonParse(u.resourcesJson, []),
+            forums: safeJsonParse(u.forumsJson, []),
+            glossaryTerms: safeJsonParse(u.glossariesJson, [])
+        }));
+    } else {
+        const def = DEFAULT_UNITS[cid];
+        runtimeUnitsByCourse[cid] = def ? JSON.parse(JSON.stringify(def)) : [];
+    }
 }
-
-function saveUnits(courseId, units) { storageService.setItem('educat_units_' + courseId, JSON.stringify(units)); }
+function getUnits(courseId) {
+    const cid = String(courseId || '');
+    if (runtimeUnitsByCourse[cid]) return runtimeUnitsByCourse[cid];
+    loadUnits(cid);
+    const def = DEFAULT_UNITS[cid];
+    return def ? JSON.parse(JSON.stringify(def)) : [];
+}
+async function saveUnits(courseId, units) {
+    const cid = String(courseId || '');
+    for (const unit of units) {
+        const payload = {
+            courseId: cid,
+            name: unit.name,
+            welcome: unit.welcome,
+            description: unit.description,
+            announcementsJson: JSON.stringify(unit.announcements || []),
+            activityIdsJson: JSON.stringify(unit.activities || []),
+            examIdsJson: JSON.stringify(unit.exams || []),
+            resourcesJson: JSON.stringify(unit.resources || []),
+            forumsJson: JSON.stringify(unit.forums || []),
+            glossariesJson: JSON.stringify(unit.glossaryTerms || (unit.glossaries || []))
+        };
+        const id = unit.id;
+        const isTemp = typeof id === 'string' && /^u\d+$/.test(id);
+        if (!id || isTemp) {
+            try { const created = await postJson('/api/course-units', payload); if (created && created.id) unit.id = created.id; } catch (e) { showToast('Error creando unidad: ' + e.message, 'error'); }
+        } else {
+            try {
+                const res = await apiFetch('/api/course-units/' + id, { method: 'PUT', body: JSON.stringify(payload) });
+                if (!res || !res.ok) {
+                    if (res && res.status === 404) {
+                        const created = await postJson('/api/course-units', payload);
+                        if (created && created.id) unit.id = created.id;
+                    } else {
+                        throw new Error('HTTP ' + (res ? res.status : 'unknown'));
+                    }
+                }
+            } catch (e) {
+                showToast('Error actualizando unidad: ' + e.message, 'error');
+            }
+        }
+    }
+    runtimeUnitsByCourse[cid] = units;
+}
 
 function setDate() {
     document.getElementById('currentDate').textContent = new Date().toLocaleDateString('es-CO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 }
 
 function getStudentSubmission(studentId, actId) {
-    try { return JSON.parse(storageService.getItem('educat_sub_' + studentId + '_' + actId)); } catch (e) { return null; }
+    const key = studentId + '_' + actId;
+    return runtimeSubmissionsByKey[key] || null;
 }
 
 function clampGrade(value) {
@@ -1343,7 +1384,8 @@ function ensureGlossaryDefaults(glossary) {
 function ensureUnitGlossaries(unit) {
     unit.glossaries = unit.glossaries || [];
     const legacyTerms = Array.isArray(unit.glossaryTerms) ? unit.glossaryTerms : [];
-    if (!unit.glossaries.length) {
+    if (!unit.glossaries.length && legacyTerms.length) {
+        // Solo crea el glosario legacy si hay términos antiguos que migrar
         unit.glossaries.push({
             id: 'gls-' + Date.now(),
             title: 'Glosario general',
@@ -1357,7 +1399,9 @@ function ensureUnitGlossaries(unit) {
             },
             participantGrades: unit.glossaryParticipantGrades || {}
         });
-    } else if (legacyTerms.length) {
+        unit.glossaryTerms = []; // Limpiar para no recrear
+    } else if (legacyTerms.length && unit.glossaries.length) {
+        // Migrar términos antiguos al primer glosario existente
         const base = unit.glossaries[0];
         const existingIds = new Set((base.terms || []).map(t => String(t.id)));
         legacyTerms.forEach(t => {
@@ -1366,6 +1410,7 @@ function ensureUnitGlossaries(unit) {
                 existingIds.add(String(t.id));
             }
         });
+        unit.glossaryTerms = []; // Limpiar para no volver a migrar
     }
     unit.glossaries.forEach(g => ensureGlossaryDefaults(g));
     return unit.glossaries;
@@ -1418,9 +1463,27 @@ function getAdminGradingConfig() {
     }
 }
 
-function upsertTeacherGradeRecord(courseId, student, grade, description, sourceUnitId) {
-    const existing = teacherGrades.find(g => g.course && g.course.id === courseId && g.student && g.student.id === student.id && g.sourceUnitId === sourceUnitId);
+async function upsertTeacherGradeRecord(courseId, student, grade, description, sourceUnitId) {
     const payload = {
+        studentId: student.id,
+        courseId,
+        grade: clampGrade(grade),
+        description,
+        sourceUnitId,
+        source: 'unit-final'
+    };
+    try {
+        const saved = await postJson('/api/grades', payload);
+        if (saved) {
+            const idx = teacherGrades.findIndex(g => g.course && g.course.id === courseId && g.student && g.student.id === student.id && g.sourceUnitId === sourceUnitId);
+            if (idx >= 0) teacherGrades[idx] = saved;
+            else teacherGrades.push(saved);
+            return;
+        }
+    } catch (e) {}
+    const existing = teacherGrades.find(g => g.course && g.course.id === courseId && g.student && g.student.id === student.id && g.sourceUnitId === sourceUnitId);
+    const fallbackPayload = {
+        id: Date.now() + Math.floor(Math.random() * 1000),
         student: { id: student.id, studentCode: student.studentCode, user: { name: student.user.name } },
         course: { id: courseId },
         grade: clampGrade(grade),
@@ -1428,47 +1491,29 @@ function upsertTeacherGradeRecord(courseId, student, grade, description, sourceU
         sourceUnitId,
         source: 'unit-final'
     };
-    if (existing) Object.assign(existing, payload);
-    else teacherGrades.push({ id: Date.now() + Math.floor(Math.random() * 1000), ...payload });
+    if (existing) Object.assign(existing, fallbackPayload);
+    else teacherGrades.push(fallbackPayload);
 }
 
 function getStoredCourseActivities(courseId) {
-    try {
-        return JSON.parse(storageService.getItem('educat_course_activities_' + courseId) || '[]');
-    } catch (e) {
-        return [];
-    }
+    // Backend-only: activities are loaded from /api/activities.
+    return [];
 }
 function saveStoredCourseActivities(courseId, items) {
-    storageService.setItem('educat_course_activities_' + courseId, JSON.stringify(Array.isArray(items) ? items : []));
+    // Persisted via /api/activities — no longer stored locally.
 }
 function getStoredCourseExams(courseId) {
-    try {
-        return JSON.parse(storageService.getItem('educat_course_exams_' + courseId) || '[]');
-    } catch (e) {
-        return [];
-    }
+    // Backend-only: exams are loaded from /api/exams.
+    return [];
 }
 function saveStoredCourseExams(courseId, items) {
-    storageService.setItem('educat_course_exams_' + courseId, JSON.stringify(Array.isArray(items) ? items : []));
+    // Persisted via /api/exams — no longer stored locally.
 }
 function getCourseActivitiesMerged(courseId) {
-    const base = teacherActivities.filter(a => a.course && a.course.id === courseId);
-    const stored = getStoredCourseActivities(courseId);
-    if (!stored.length) return base;
-    const map = {};
-    base.forEach(a => { map[String(a.id)] = a; });
-    stored.forEach(a => { map[String(a.id)] = a; });
-    return Object.values(map);
+    return (teacherActivities || []).filter(a => a.course && a.course.id === courseId);
 }
 function getCourseExamsMerged(courseId) {
-    const base = teacherExams.filter(x => x.course && x.course.id === courseId);
-    const stored = getStoredCourseExams(courseId);
-    if (!stored.length) return base;
-    const map = {};
-    base.forEach(x => { map[String(x.id)] = x; });
-    stored.forEach(x => { map[String(x.id)] = x; });
-    return Object.values(map);
+    return (teacherExams || []).filter(x => x.course && x.course.id === courseId);
 }
 function getAllActivitiesMerged() {
     const ids = (teacherCourses || []).map(c => c.id);
@@ -1500,9 +1545,41 @@ function isSubmissionLate(act, sub) {
     return new Date(sub.submittedAt) > deadline;
 }
 
-function saveStudentGrade(studentId, actId, grade, feedback) {
-    const existing = getStudentSubmission(studentId, actId) || {};
-    storageService.setItem('educat_sub_' + studentId + '_' + actId, JSON.stringify({ ...existing, graded: true, grade: clampGrade(grade), feedback, gradedAt: new Date().toISOString() }));
+async function saveStudentGrade(studentId, actId, grade, feedback) {
+    const act = getActivityById(actId);
+    const courseId = act && act.course ? act.course.id : (currentCourse ? currentCourse.id : null);
+    const payload = {
+        studentId,
+        courseId,
+        activityId: actId || null,
+        grade: clampGrade(grade),
+        description: feedback || ''
+    };
+    try {
+        const saved = await postJson('/api/grades', payload);
+        if (saved) teacherGrades.push(saved);
+    } catch (e) {
+        teacherGrades.push({
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            student: teacherStudents.find(s => s.id === studentId) || { id: studentId },
+            course: { id: courseId },
+            activityId: actId || null,
+            grade: clampGrade(grade),
+            description: feedback || ''
+        });
+    }
+    const key = studentId + '_' + actId;
+    const existing = runtimeSubmissionsByKey[key] || {};
+    runtimeSubmissionsByKey[key] = { ...existing, graded: true, grade: clampGrade(grade), feedback: feedback || '', gradedAt: new Date().toISOString() };
+    // Also grade the activity submission if it exists in backend
+    if (existing.id) {
+        try {
+            await apiFetch('/api/activity-submissions/' + existing.id + '/grade', {
+                method: 'PUT',
+                body: JSON.stringify({ grade: clampGrade(grade), feedback: feedback || '' })
+            });
+        } catch (e) {}
+    }
 }
 
 function normalizeFileSource(src) {
@@ -1991,7 +2068,7 @@ async function claimAndOpenCourseAsTeacher(courseCode) {
         await loadOverview();
         await loadCursos();
         showToast(resp.message || 'Curso tomado correctamente', 'success');
-        if (resp.course) openCourseView(resp.course);
+        if (resp.course) await openCourseView(resp.course);
     } catch (e) {
         showToast('No fue posible tomar el curso', 'error');
     }
@@ -2010,18 +2087,20 @@ function loadEntregas() {
         statusFilter.insertAdjacentHTML('beforeend', '<option value="late">Entregas tardias</option>');
     }
     coursesSel.innerHTML = '<option value="">Todos los cursos</option>' + courses.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-    coursesSel.onchange = () => {
+    coursesSel.onchange = async () => {
         const cId = parseInt(coursesSel.value) || 0;
         const acts = cId ? teacherActivities.filter(a => a.course && a.course.id === cId) : teacherActivities;
         actSel.innerHTML = '<option value="">Todas las actividades</option>' + acts.map(a => `<option value="${a.id}">${a.title}</option>`).join('');
-        renderEntregasList();
+        await renderEntregasList();
     };
-    actSel.onchange = renderEntregasList;
-    document.getElementById('subStatusFilter').onchange = renderEntregasList;
+    actSel.onchange = () => renderEntregasList();
+    document.getElementById('subStatusFilter').onchange = () => renderEntregasList();
     renderEntregasList();
 }
 
-function renderEntregasList() {
+const _loadedActivitySubmissions = new Set();
+
+async function renderEntregasList() {
     const cId = parseInt(document.getElementById('subCourseFilter').value) || 0;
     const aId = parseInt(document.getElementById('subActivityFilter').value) || 0;
     const status = document.getElementById('subStatusFilter').value;
@@ -2034,6 +2113,8 @@ function renderEntregasList() {
         container.innerHTML = '<div class="empty-state"><div class="empty-state-title">Sin actividades</div><div class="empty-state-text">No hay actividades para los filtros seleccionados.</div></div>';
         return;
     }
+    // Cargar entregas de cada actividad visible
+    await Promise.all(activities.map(act => loadActivitySubmissions(act.id)));
     let html = '';
     activities.forEach(act => {
         const course = (teacherCourses || []).find(c => c.id === (act.course ? act.course.id : 0)) || {};
@@ -2102,14 +2183,39 @@ ${state === 'pending' ? `<div class="submission-grade-inline">
 </div>`;
 }
 
-function quickGrade(actId, studentId) {
+async function quickGrade(actId, studentId) {
     const input = document.getElementById('gi-' + actId + '-' + studentId);
     if (!input) return;
     const val = parseFloat(input.value);
     if (isNaN(val) || val < 0 || val > 10) { showToast('Ingresa una nota válida entre 0 y 10', 'error'); return; }
-    saveStudentGrade(studentId, actId, val, '');
+    await saveStudentGrade(studentId, actId, val, '');
     showToast('Calificación guardada', 'success');
-    renderEntregasList();
+    await renderEntregasList();
+}
+
+async function loadActivitySubmissions(actId) {
+    if (!actId) return;
+    if (_loadedActivitySubmissions.has(actId)) return;
+    _loadedActivitySubmissions.add(actId);
+    const data = await tryFetch('/api/activity-submissions/activity/' + actId);
+    if (!Array.isArray(data)) return;
+    for (const sub of data) {
+        const sid = sub.student ? sub.student.id : null;
+        if (!sid) continue;
+        const key = sid + '_' + actId;
+        runtimeSubmissionsByKey[key] = {
+            submitted: true,
+            submittedAt: sub.submittedAt,
+            comment: sub.comment || '',
+            files: Array.isArray(sub.files) ? sub.files : [],
+            graded: sub.grade != null,
+            grade: sub.grade != null ? parseFloat(sub.grade) : undefined,
+            feedback: sub.feedback || '',
+            gradedAt: sub.gradedAt,
+            isLate: !!sub.isLate,
+            id: sub.id
+        };
+    }
 }
 
 function openActivitySubmissions(actId, courseIdFallback, defaultFilter, options) {
@@ -2137,7 +2243,7 @@ function openActivitySubmissions(actId, courseIdFallback, defaultFilter, options
     document.getElementById('submissionsActivityName').textContent = act.title;
     document.getElementById('submissionsActivityMeta').textContent = `${course.name || '—'}${act.dueDate ? ' · Entrega: ' + new Date(act.dueDate + 'T00:00:00').toLocaleDateString('es-CO') : ''}`;
     document.getElementById('submissionsFilter').value = defaultFilter || 'all';
-    renderSubmissionsList();
+    loadActivitySubmissions(actId).then(renderSubmissionsList);
 
     if (!opts.skipPersist) {
         writeTeacherNavState({
@@ -2297,13 +2403,13 @@ function downloadSubmissionFile(studentId, actId, fileIdx) {
     a.remove();
 }
 
-function saveGradeFromView(actId, studentId) {
+async function saveGradeFromView(actId, studentId) {
     const gradeInput = document.getElementById('si-' + actId + '-' + studentId);
     const feedbackInput = document.getElementById('sf-' + actId + '-' + studentId);
     if (!gradeInput) return;
     const val = parseFloat(gradeInput.value);
     if (isNaN(val) || val < 0 || val > 10) { showToast('Ingresa una nota válida entre 0 y 10', 'error'); return; }
-    saveStudentGrade(studentId, actId, val, feedbackInput ? feedbackInput.value.trim() : '');
+    await saveStudentGrade(studentId, actId, val, feedbackInput ? feedbackInput.value.trim() : '');
     showToast('Calificación guardada', 'success');
     renderSubmissionsList();
 }
@@ -2341,26 +2447,26 @@ function openGradeModal(actId, studentId) {
         </div>`);
 }
 
-function saveGradeModal(actId, studentId) {
+async function saveGradeModal(actId, studentId) {
     const val = parseFloat(document.getElementById('mGradeVal').value);
     const fb = document.getElementById('mGradeFb').value.trim();
     if (isNaN(val) || val < 0 || val > 10) { showToast('Ingresa una nota válida entre 0 y 10', 'error'); return; }
-    saveStudentGrade(studentId, actId, val, fb);
+    await saveStudentGrade(studentId, actId, val, fb);
     closeModal();
     showToast('Calificación guardada', 'success');
     if (document.getElementById('submissionsView').classList.contains('show')) renderSubmissionsList();
-    else renderEntregasList();
+    else await renderEntregasList();
 }
 
-function applyMassGrade() {
+async function applyMassGrade() {
     const val = parseFloat(document.getElementById('mMassGrade').value);
     const fb = document.getElementById('mMassFb').value.trim();
     if (isNaN(val) || val < 0 || val > 10) { showToast('Ingresa una nota válida entre 0 y 10', 'error'); return; }
     let count = 0;
-    teacherStudents.forEach(s => {
+    for (const s of teacherStudents) {
         const sub = getStudentSubmission(s.id, currentSubmissionsActivityId);
-        if (sub && sub.submitted && !sub.graded) { saveStudentGrade(s.id, currentSubmissionsActivityId, val, fb); count++; }
-    });
+        if (sub && sub.submitted && !sub.graded) { await saveStudentGrade(s.id, currentSubmissionsActivityId, val, fb); count++; }
+    }
     closeModal();
     showToast(count + ' entregas calificadas', 'success');
     renderSubmissionsList();
@@ -2374,14 +2480,18 @@ async function loadCalificaciones() {
     document.getElementById('gradesSummaryBar').style.display = 'none';
 }
 
-function renderGrades(courseId) {
+async function renderGrades(courseId) {
     const container = document.getElementById('calificacionesContainer');
+    const toolbar = document.getElementById('gradesToolbar');
     const state = tableUiState.grades;
+    if (courseId && !runtimeUnitsByCourse[String(courseId)]) await loadUnits(courseId);
     if (!courseId) {
+        if (toolbar) toolbar.style.display = 'none';
         container.innerHTML = '<div class="empty-state"><div class="empty-state-title">Selecciona un curso</div></div>';
         document.getElementById('gradesSummaryBar').style.display = 'none';
         return;
     }
+    if (toolbar) toolbar.style.display = '';
     const allCourseGrades = teacherGrades.filter(g => g.course && g.course.id === courseId);
     const query = (state.query || '').trim().toLowerCase();
     let courseGrades = [...allCourseGrades];
@@ -2394,36 +2504,61 @@ function renderGrades(courseId) {
         });
     }
     if (!courseGrades.length) {
-        container.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px"><input class="form-input" id="gradeSearchInput" placeholder="Filtrar por estudiante, código o descripción" style="max-width:360px"></div><div class="empty-state"><div class="empty-state-title">Sin calificaciones registradas</div><div class="empty-state-text">Agrega la primera calificación con el botón "Agregar Nota".</div></div>`;
-        const searchEl = document.getElementById('gradeSearchInput');
-        if (searchEl) {
-            searchEl.value = state.query || '';
-            searchEl.oninput = () => { state.query = searchEl.value; state.page = 1; renderGrades(courseId); };
-        }
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-title">Sin calificaciones registradas</div><div class="empty-state-text">Agrega la primera calificación con el botón "Agregar Nota".</div></div>';
         document.getElementById('gradesSummaryBar').style.display = 'none';
-        return;
+    } else {
+        const vals = allCourseGrades.map(g => parseFloat(g.grade || 0));
+        document.getElementById('gradeAvg').textContent = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
+        document.getElementById('gradeMax').textContent = Math.max(...vals).toFixed(1);
+        document.getElementById('gradeMin').textContent = Math.min(...vals).toFixed(1);
+        document.getElementById('gradeApproval').textContent = Math.round((vals.filter(v => v >= 6).length / vals.length) * 100) + '%';
+        document.getElementById('gradesSummaryBar').style.display = 'flex';
     }
-    const vals = allCourseGrades.map(g => parseFloat(g.grade || 0));
-    document.getElementById('gradeAvg').textContent = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
-    document.getElementById('gradeMax').textContent = Math.max(...vals).toFixed(1);
-    document.getElementById('gradeMin').textContent = Math.min(...vals).toFixed(1);
-    document.getElementById('gradeApproval').textContent = Math.round((vals.filter(v => v >= 6).length / vals.length) * 100) + '%';
-    document.getElementById('gradesSummaryBar').style.display = 'flex';
 
     const totalPages = Math.max(1, Math.ceil(courseGrades.length / state.pageSize));
     const safePage = Math.min(Math.max(1, state.page), totalPages);
     state.page = safePage;
     const chunk = courseGrades.slice((safePage - 1) * state.pageSize, safePage * state.pageSize);
 
-    container.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px"><input class="form-input" id="gradeSearchInput" placeholder="Filtrar por estudiante, código o descripción" style="max-width:360px"><select class="form-input" id="gradePageSize" style="width:auto"><option value="8">8 por página</option><option value="12">12 por página</option><option value="20">20 por página</option></select></div><table><thead><tr><th>Código</th><th>Estudiante</th><th>Calificación</th><th>Barra</th><th>Descripción</th><th>Archivos</th><th>Acciones</th></tr></thead><tbody>` +
+    // Build unit-final summary
+    const units = getUnits(courseId) || [];
+    const unitFinalGrades = teacherGrades.filter(g => g.course && g.course.id === courseId && g.source === 'unit-final');
+    const studentsInSummary = [...new Map(unitFinalGrades.map(g => [g.student.id, g.student])).values()];
+    let summaryHtml = '';
+    if (units.length && studentsInSummary.length) {
+        const unitCols = units.map((u, i) => `<th style="font-size:12px;color:var(--text-muted);font-weight:600;text-align:center">${u.name || 'Unidad ' + (i+1)}</th>`).join('');
+        const sumState = state;
+        const sumTotalPages = Math.max(1, Math.ceil(studentsInSummary.length / sumState.summaryPageSize));
+        const sumSafePage = Math.min(Math.max(1, sumState.summaryPage || 1), sumTotalPages);
+        sumState.summaryPage = sumSafePage;
+        const sumStart = (sumSafePage - 1) * sumState.summaryPageSize;
+        const sumChunk = studentsInSummary.slice(sumStart, sumStart + sumState.summaryPageSize);
+        const rows = sumChunk.map(st => {
+            const unitCells = units.map(u => {
+                const ug = unitFinalGrades.find(g => g.student && g.student.id === st.id && g.sourceUnitId === u.id);
+                return `<td style="font-size:13px;text-align:center">${ug ? parseFloat(ug.grade).toFixed(1) : '<span style="color:var(--text-muted)">No definida</span>'}</td>`;
+            }).join('');
+            const finals = unitFinalGrades.filter(g => g.student && g.student.id === st.id).map(g => parseFloat(g.grade || 0));
+            const courseFinal = finals.length ? (finals.reduce((a,b) => a+b, 0) / finals.length).toFixed(1) : '<span style="color:var(--text-muted)">No definida</span>';
+            return `<tr><td style="font-size:13px"><strong>${st.user.name}</strong></td>${unitCells}<td style="text-align:center"><span class="badge badge-navy">${courseFinal}</span></td></tr>`;
+        }).join('');
+        summaryHtml = `<div style="margin-top:28px"><div style="font-size:14px;font-weight:700;margin-bottom:12px;color:var(--text-dark)">Definitivas por unidad</div><table><thead><tr><th style="text-align:left">Estudiante</th>${unitCols}<th style="text-align:center">Definitiva curso</th></tr></thead><tbody>${rows}</tbody></table><div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;flex-wrap:wrap"><span style="font-size:12px;color:var(--text-muted)">Mostrando ${sumStart + 1}-${Math.min(sumStart + sumState.summaryPageSize, studentsInSummary.length)} de ${studentsInSummary.length}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${sumSafePage===1?'disabled':''} onclick="changeSummaryPage(-1,${courseId})">Anterior</button><button class="btn btn-sm btn-outline" ${sumSafePage===sumTotalPages?'disabled':''} onclick="changeSummaryPage(1,${courseId})">Siguiente</button></div></div></div>`;
+    } else if (units.length) {
+        summaryHtml = `<div style="margin-top:28px"><div style="font-size:14px;font-weight:700;margin-bottom:12px;color:var(--text-dark)">Definitivas por unidad</div><div class="empty-state" style="padding:16px"><div class="empty-state-text">Aún no se han cerrado unidades en este curso.</div></div></div>`;
+    }
+
+    container.innerHTML = `<table><thead><tr><th>Código</th><th>Estudiante</th><th>Actividad</th><th>Calificación</th><th>Barra</th><th>Descripción</th><th>Archivos</th><th>Acciones</th></tr></thead><tbody>` +
         chunk.map(g => {
             const val = parseFloat(g.grade || 0);
             const cl = val >= 7 ? 'badge-success' : val >= 5 ? 'badge-gold' : 'badge-error';
             const bc = val >= 7 ? 'high' : val >= 5 ? 'mid' : 'low';
             const fileStats = getGradeSubmissionStats(g);
+            const linkedAct = g.activityId ? (teacherActivities.find(a => a.id === g.activityId) || null) : null;
+            const actName = linkedAct ? linkedAct.title : (g.activityId ? 'Actividad #' + g.activityId : '—');
             return `<tr>
                 <td style="font-size:12px;color:var(--text-muted)">${g.student && g.student.studentCode ? g.student.studentCode : '—'}</td>
                 <td><strong>${g.student && g.student.user ? g.student.user.name : '—'}</strong></td>
+                <td style="font-size:12px;color:var(--text-muted);max-width:140px">${actName}</td>
                 <td><span class="badge ${cl}">${val.toFixed(1)}</span></td>
                 <td style="min-width:90px"><div class="grade-bar"><div class="grade-fill ${bc}" style="width:${(val / 10) * 100}%"></div></div></td>
                 <td style="font-size:13px;color:var(--text-muted);max-width:160px">${g.description || '—'}</td>
@@ -2438,22 +2573,34 @@ function renderGrades(courseId) {
                     <button class="btn btn-sm btn-danger" onclick="deleteGrade(${g.id},${courseId})">Eliminar</button>
                 </div></td>
             </tr>`;
-        }).join('') + `</tbody></table><div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;flex-wrap:wrap"><span style="font-size:12px;color:var(--text-muted)">Mostrando ${(safePage - 1) * state.pageSize + 1}-${Math.min(safePage * state.pageSize, courseGrades.length)} de ${courseGrades.length}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="changeGradesPage(-1,${courseId})">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="changeGradesPage(1,${courseId})">Siguiente</button></div></div>`;
+        }).join('') + `</tbody></table><div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;flex-wrap:wrap"><span style="font-size:12px;color:var(--text-muted)">Mostrando ${(safePage - 1) * state.pageSize + 1}-${Math.min(safePage * state.pageSize, courseGrades.length)} de ${courseGrades.length}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="changeGradesPage(-1,${courseId})">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="changeGradesPage(1,${courseId})">Siguiente</button></div></div>${summaryHtml}`;
 
-    const searchEl = document.getElementById('gradeSearchInput');
-    const sizeEl = document.getElementById('gradePageSize');
-    if (searchEl) {
-        searchEl.value = state.query || '';
-        searchEl.oninput = () => { state.query = searchEl.value; state.page = 1; renderGrades(courseId); };
-    }
-    if (sizeEl) {
-        sizeEl.value = String(state.pageSize);
-        sizeEl.onchange = () => { state.pageSize = parseInt(sizeEl.value, 10) || 8; state.page = 1; renderGrades(courseId); };
+    // Render/search controls into toolbar (persistent, not destroyed on re-render)
+    if (toolbar) {
+        const hasControls = toolbar.querySelector('#gradeSearchInput');
+        if (!hasControls) {
+            toolbar.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input class="form-input" id="gradeSearchInput" placeholder="Filtrar por estudiante, código o descripción" style="max-width:360px"><select class="form-input" id="gradePageSize" style="width:auto"><option value="8">8 por página</option><option value="12">12 por página</option><option value="20">20 por página</option></select></div>`;
+            const searchEl = document.getElementById('gradeSearchInput');
+            const sizeEl = document.getElementById('gradePageSize');
+            if (searchEl) {
+                searchEl.value = state.query || '';
+                searchEl.addEventListener('input', () => { state.query = searchEl.value; state.page = 1; renderGrades(courseId); });
+            }
+            if (sizeEl) {
+                sizeEl.value = String(state.pageSize);
+                sizeEl.addEventListener('change', () => { state.pageSize = parseInt(sizeEl.value, 10) || 8; state.page = 1; renderGrades(courseId); });
+            }
+        }
     }
 }
 
 function changeGradesPage(delta, courseId) {
     tableUiState.grades.page += delta;
+    renderGrades(courseId);
+}
+
+function changeSummaryPage(delta, courseId) {
+    tableUiState.grades.summaryPage = (tableUiState.grades.summaryPage || 1) + delta;
     renderGrades(courseId);
 }
 
@@ -2477,6 +2624,7 @@ async function saveGradeEdit(gradeId, courseId) {
             body: JSON.stringify({
                 studentId: (g.student || {}).id,
                 courseId: ((g.course || {}).id),
+                activityId: g.activityId || null,
                 grade: val,
                 description: desc
             })
@@ -2580,16 +2728,22 @@ function attendanceStorageKey(courseId, date) {
     return 'educat_att_' + courseId + '_' + date;
 }
 
-function renderAttendance() {
+async function renderAttendance() {
     const courseId = parseInt(document.getElementById('attCourseFilter').value);
     const date = document.getElementById('attDate').value;
     if (!courseId || !date) { showToast('Selecciona curso y fecha', 'error'); return; }
-    const key = attendanceStorageKey(courseId, date);
-    const legacyKey = 'att_' + courseId + '_' + date;
-    attState = JSON.parse(storageService.getItem(key) || storageService.getItem(legacyKey) || '{}');
-    if (!storageService.getItem(key) && storageService.getItem(legacyKey)) {
-        storageService.setItem(key, JSON.stringify(attState));
-    }
+    attState = {};
+    try {
+        const records = await tryFetch('/api/attendance/course/' + courseId);
+        if (Array.isArray(records)) {
+            records.forEach(r => {
+                const recDate = String(r.date || r.attendanceDate || '').slice(0, 10);
+                if (recDate === date && r.studentId !== undefined) {
+                    attState[r.studentId] = r.present !== false;
+                }
+            });
+        }
+    } catch (e) {}
     teacherStudents.forEach(s => { if (attState[s.id] === undefined) attState[s.id] = true; });
     document.getElementById('asistenciaContainer').innerHTML = `
         <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
@@ -2624,28 +2778,61 @@ function renderAttBody(students, courseId, date) {
 function toggleAtt(sid, courseId, date) { attState[sid] = !attState[sid]; renderAttBody(teacherStudents, courseId, date); }
 function markAll(courseId, date, val) { teacherStudents.forEach(s => attState[s.id] = val); renderAttBody(teacherStudents, courseId, date); }
 
-function saveAttendance(courseId, date) {
-    storageService.setItem(attendanceStorageKey(courseId, date), JSON.stringify(attState));
-    showToast('Asistencia guardada correctamente', 'success');
+async function saveAttendance(courseId, date) {
+    try {
+        const records = await tryFetch('/api/attendance/course/' + courseId);
+        const existingMap = {};
+        if (Array.isArray(records)) {
+            records.forEach(r => {
+                const recDate = String(r.date || r.attendanceDate || '').slice(0, 10);
+                if (recDate === date && r.studentId !== undefined) {
+                    existingMap[r.studentId] = r.id;
+                }
+            });
+        }
+        for (const s of teacherStudents) {
+            const present = attState[s.id] !== false;
+            const payload = { courseId, studentId: s.id, date, present };
+            if (existingMap[s.id] !== undefined) {
+                await apiFetch('/api/attendance/' + existingMap[s.id], { method: 'PUT', body: JSON.stringify(payload) });
+            } else {
+                await postJson('/api/attendance', payload);
+            }
+        }
+        showToast('Asistencia guardada correctamente', 'success');
+    } catch (e) {
+        showToast('Error al guardar asistencia', 'error');
+    }
     const sumSel = document.getElementById('attSummaryCourse');
     if (parseInt(sumSel.value) === courseId) renderAttendanceSummary(courseId);
 }
 
-function renderAttendanceSummary(courseId) {
+async function renderAttendanceSummary(courseId) {
     const state = tableUiState.attendanceSummary;
     const container = document.getElementById('asistenciaResumen');
     if (!courseId) { container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin datos</div></div>'; return; }
-    const prefix = 'educat_att_' + courseId + '_';
-    const keys = getStorageKeys().filter(k => k.startsWith(prefix));
-    if (!keys.length) { container.innerHTML = '<div style="color:var(--text-muted);font-size:13px">No hay registros de asistencia guardados para este curso.</div>'; return; }
+    let records = [];
+    try {
+        records = await tryFetch('/api/attendance/course/' + courseId) || [];
+    } catch (e) { records = []; }
+    const sessions = {};
+    if (Array.isArray(records)) {
+        records.forEach(r => {
+            const d = String(r.date || r.attendanceDate || '').slice(0, 10);
+            if (!d) return;
+            if (!sessions[d]) sessions[d] = {};
+            sessions[d][r.studentId] = r.present !== false;
+        });
+    }
+    const dates = Object.keys(sessions);
+    if (!dates.length) { container.innerHTML = '<div style="color:var(--text-muted);font-size:13px">No hay registros de asistencia guardados para este curso.</div>'; return; }
     const totals = {};
     teacherStudents.forEach(s => totals[s.id] = { present: 0, total: 0 });
-    keys.forEach(k => {
-        try {
-            const data = JSON.parse(storageService.getItem(k));
-            if (!data) return;
-            teacherStudents.forEach(s => { if (data[s.id] !== undefined) { totals[s.id].total++; if (data[s.id]) totals[s.id].present++; } });
-        } catch (e) {}
+    dates.forEach(d => {
+        const data = sessions[d];
+        teacherStudents.forEach(s => {
+            if (data[s.id] !== undefined) { totals[s.id].total++; if (data[s.id]) totals[s.id].present++; }
+        });
     });
     const query = (state.query || '').trim().toLowerCase();
     let rows = [...teacherStudents];
@@ -2655,7 +2842,7 @@ function renderAttendanceSummary(courseId) {
     state.page = safePage;
     const chunk = rows.slice((safePage - 1) * state.pageSize, safePage * state.pageSize);
 
-    container.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px"><span style="font-size:12px;color:var(--text-muted)">${keys.length} sesión(es) registrada(s)</span><input class="form-input" id="attSummarySearch" placeholder="Filtrar por estudiante o código" style="max-width:300px"><select class="form-input" id="attSummaryPageSize" style="width:auto"><option value="8">8 por página</option><option value="12">12 por página</option><option value="20">20 por página</option></select></div>
+    container.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px"><span style="font-size:12px;color:var(--text-muted)">${dates.length} sesión(es) registrada(s)</span><input class="form-input" id="attSummarySearch" placeholder="Filtrar por estudiante o código" style="max-width:300px"><select class="form-input" id="attSummaryPageSize" style="width:auto"><option value="8">8 por página</option><option value="12">12 por página</option><option value="20">20 por página</option></select></div>
     <table><thead><tr><th>Código</th><th>Estudiante</th><th>Presentes</th><th>Ausentes</th><th>Porcentaje</th><th>Estado</th></tr></thead><tbody>` +
         chunk.map(s => {
             const t = totals[s.id];
@@ -2772,7 +2959,7 @@ function loadEstudiantes() {
     renderEstudiantes();
 }
 
-function renderEstudiantes() {
+async function renderEstudiantes() {
     const state = tableUiState.students;
     const courseId = parseInt(document.getElementById('studentCourseFilter').value) || 0;
     const query = document.getElementById('studentSearch').value.trim().toLowerCase();
@@ -2783,6 +2970,22 @@ function renderEstudiantes() {
         container.innerHTML = '<div class="empty-state"><div class="empty-state-title">Sin resultados</div><div class="empty-state-text">No se encontraron estudiantes con esos criterios.</div></div>';
         return;
     }
+
+    let attRecords = [];
+    if (courseId) {
+        try { attRecords = await tryFetch('/api/attendance/course/' + courseId) || []; } catch (e) { attRecords = []; }
+    }
+    const sessions = {};
+    if (Array.isArray(attRecords)) {
+        attRecords.forEach(r => {
+            const d = String(r.date || r.attendanceDate || '').slice(0, 10);
+            if (!d) return;
+            if (!sessions[d]) sessions[d] = {};
+            sessions[d][r.studentId] = r.present !== false;
+        });
+    }
+    const dates = Object.keys(sessions);
+
     const totalPages = Math.max(1, Math.ceil(students.length / state.pageSize));
     const safePage = Math.min(Math.max(1, state.page), totalPages);
     state.page = safePage;
@@ -2796,10 +2999,11 @@ function renderEstudiantes() {
             const relActs = teacherActivities.filter(a => !courseId || (a.course && a.course.id === courseId));
             const subCount = relActs.filter(a => { const sub = getStudentSubmission(s.id, a.id); return sub && sub.submitted; }).length;
             let attPct = '—';
-            if (courseId) {
-                const keys = getStorageKeys().filter(k => k.startsWith('educat_att_' + courseId + '_'));
+            if (courseId && dates.length) {
                 let present = 0, total = 0;
-                keys.forEach(k => { try { const d = JSON.parse(storageService.getItem(k)); if (d && d[s.id] !== undefined) { total++; if (d[s.id]) present++; } } catch (e) {} });
+                dates.forEach(d => {
+                    if (sessions[d][s.id] !== undefined) { total++; if (sessions[d][s.id]) present++; }
+                });
                 attPct = total ? Math.round((present / total) * 100) + '%' : '—';
             }
             return `<tr>
@@ -2879,12 +3083,7 @@ function loadPerfil() {
 }
 
 function readTeacherGuides() {
-    try {
-        const raw = JSON.parse(storageService.getItem(TEACHER_GUIDES_KEY) || '[]');
-        return Array.isArray(raw) ? raw : [];
-    } catch (e) {
-        return [];
-    }
+    return teacherGuides;
 }
 
 function guideOwnerUserId(guide) {
@@ -2895,9 +3094,32 @@ function guideOwnerUserId(guide) {
 
 function canManageTeacherGuide(guide) {
     if (isCurrentUserAdmin()) return true;
+    if (hasAnyPermission(['instructivos.editar'])) return true;
     const currentUserId = parseInt((currentUser && currentUser.id) || '0', 10);
     if (!currentUserId) return false;
     return guideOwnerUserId(guide) === currentUserId;
+}
+
+function canDeleteTeacherGuide(guide) {
+    if (isCurrentUserAdmin()) return true;
+    const currentUserId = parseInt((currentUser && currentUser.id) || '0', 10);
+    if (!currentUserId) return false;
+    return guideOwnerUserId(guide) === currentUserId;
+}
+
+function updateTeacherGuideCharCounts() {
+    const titleEl = document.getElementById('tgTitle');
+    const detailEl = document.getElementById('tgDetail');
+    const editor = document.getElementById('teacherGuideEditor');
+    const titleCount = document.getElementById('tgTitleCount');
+    const detailCount = document.getElementById('tgDetailCount');
+    const contentCount = document.getElementById('tgContentCount');
+    if (titleCount && titleEl) titleCount.textContent = String(titleEl.value.length);
+    if (detailCount && detailEl) detailCount.textContent = String(detailEl.value.length);
+    if (contentCount && editor) {
+        const text = (editor.innerText || editor.textContent || '').trim();
+        contentCount.textContent = String(text.length);
+    }
 }
 
 function normalizeGuideAttachments(rawAttachments) {
@@ -2989,7 +3211,7 @@ function teacherGuideAttachmentPreviewHtml(attachment) {
 }
 
 function openTeacherGuideAttachmentPreview(guideId, attachmentId) {
-    const guide = readTeacherGuides().find(g => String(g.id) === String(guideId));
+    const guide = teacherGuides.find(g => String(g.id) === String(guideId));
     if (!guide) return;
     const attachment = normalizeGuideAttachments(guide.attachments).find(a => String(a.id) === String(attachmentId));
     if (!attachment) return;
@@ -2998,12 +3220,34 @@ function openTeacherGuideAttachmentPreview(guideId, attachmentId) {
     openModal('Vista previa: ' + safeName, `${teacherGuideAttachmentPreviewHtml(attachment)}<div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end"><a class="btn btn-outline" href="${safeSrc}" target="_blank" rel="noopener">Abrir</a><a class="btn btn-teal" href="${safeSrc}" download="${safeName}" target="_blank" rel="noopener">Descargar</a></div>`, { size: 'xl' });
 }
 
+function guideRichHtmlToSections(html) {
+    if (!html) return [];
+    const sections = [];
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    const headers = div.querySelectorAll('h2, h3');
+    if (!headers.length) {
+        sections.push({ title: 'Contenido', content: html });
+        return sections;
+    }
+    headers.forEach(h => {
+        let content = '';
+        let el = h.nextElementSibling;
+        while (el && !el.matches('h2, h3')) {
+            content += el.outerHTML;
+            el = el.nextElementSibling;
+        }
+        sections.push({ title: h.textContent || 'Sección', content });
+    });
+    return sections;
+}
+
 function openTeacherGuideReader(guideId) {
-    const guide = readTeacherGuides().find(g => String(g.id) === String(guideId));
+    const guide = teacherGuides.find(g => String(g.id) === String(guideId));
     if (!guide) return;
     const rich = String(guide.richHtml || '').trim();
-    const sections = Array.isArray(guide.textSections) ? guide.textSections : [];
-    const attachments = normalizeGuideAttachments(guide.attachments);
+    const sections = Array.isArray(guide.textSections) ? guide.textSections : safeJsonParse(guide.sectionsJson, []);
+    const attachments = normalizeGuideAttachments(guide.attachments || safeJsonParse(guide.attachmentsJson, []));
     const filesHtml = attachments.length
         ? `<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">${attachments.map(file => {
             const fileName = htmlEscape(file.name || 'archivo');
@@ -3032,52 +3276,78 @@ function openTeacherGuideReader(guideId) {
 }
 
 function saveTeacherGuides(guides) {
-    storageService.setItem(TEACHER_GUIDES_KEY, JSON.stringify(Array.isArray(guides) ? guides : []));
+    // Persisted via /api/guides — no longer stored locally.
 }
 
-async function hydrateTeacherGuidesFromBackend() {
-    const appState = await tryFetch('/api/app-state/' + encodeURIComponent(TEACHER_GUIDES_KEY));
-    const raw = appState && typeof appState.value === 'string' ? appState.value : '';
-    if (!raw) return;
-    try {
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return;
-        storageService.setItem(TEACHER_GUIDES_KEY, JSON.stringify(parsed));
-    } catch (e) {
-        // Mantener fallback local si el valor remoto viene corrupto.
-    }
-}
+let teacherGuidesPage = 1;
+const TEACHER_GUIDES_PAGE_SIZE = 6;
 
-function guideRichHtmlToSections(html) {
-    const clean = sanitizeRichHtml(html || '');
-    const div = document.createElement('div');
-    div.innerHTML = clean;
-    const paragraphs = Array.from(div.querySelectorAll('p')).map(p => stripHtmlToText(p.innerHTML)).filter(Boolean);
-    const bullets = Array.from(div.querySelectorAll('li')).map(li => stripHtmlToText(li.innerHTML)).filter(Boolean);
-    const fallbackText = stripHtmlToText(div.innerText || div.textContent || '');
-    const finalParagraphs = paragraphs.length ? paragraphs : (fallbackText ? [fallbackText] : []);
-    return [{ heading: 'Contenido', paragraphs: finalParagraphs, bullets }];
-}
-
-function loadInstructivos(skipRemoteSync) {
-    if (!skipRemoteSync) {
-        hydrateTeacherGuidesFromBackend().then(() => {
-            const panel = document.getElementById('panel-instructivos');
-            if (panel && panel.classList.contains('active')) loadInstructivos(true);
-        }).catch(() => {});
-    }
+async function loadInstructivos() {
     const host = document.getElementById('teacherGuidesBoard');
     if (!host) return;
-    const guides = readTeacherGuides();
-    const canCreate = isCurrentUserAdmin() || hasAnyPermission(['instructivos.crear', 'instructivos.editar']);
+    let fetchOk = false;
+    try {
+        const search = document.getElementById('teacherGuideSearch')?.value?.trim() || '';
+        const audience = document.getElementById('teacherGuideAudienceFilter')?.value || '';
+        let url = '/api/guides';
+        const params = [];
+        if (search) params.push('search=' + encodeURIComponent(search));
+        if (audience) params.push('audience=' + encodeURIComponent(audience));
+        if (params.length) url += '?' + params.join('&');
+        const data = await tryFetch(url);
+        if (Array.isArray(data)) {
+            if (data.length > 0 || teacherGuides.length === 0) {
+                teacherGuides = data;
+            } else {
+                console.warn('loadInstructivos: servidor devolvió array vacío pero hay instructivos locales. Manteniendo locales.');
+            }
+            fetchOk = true;
+        } else {
+            console.error('loadInstructivos: el servidor no devolvió un array. URL:', url, 'Respuesta:', data);
+            if (!teacherGuides.length) teacherGuides = [];
+        }
+    } catch (e) {
+        console.error('loadInstructivos: error al cargar instructivos', e);
+        if (!teacherGuides.length) teacherGuides = [];
+    }
+    const canCreate = canManageInstructivos();
     const createBtn = document.getElementById('btnNewTeacherGuide');
     if (createBtn) createBtn.style.display = canCreate ? '' : 'none';
-    host.innerHTML = guides.length
-        ? guides.map(g => `<div class="card-check" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+    renderInstructivosList();
+    if (!window._teacherGuideListenersBound) {
+        const searchEl = document.getElementById('teacherGuideSearch');
+        const audEl = document.getElementById('teacherGuideAudienceFilter');
+        if (searchEl) searchEl.addEventListener('input', () => { teacherGuidesPage = 1; loadInstructivos(); });
+        if (audEl) audEl.addEventListener('change', () => { teacherGuidesPage = 1; loadInstructivos(); });
+        window._teacherGuideListenersBound = true;
+    }
+    if (!fetchOk && teacherGuides.length) {
+        showToast('No se pudo sincronizar con el servidor. Mostrando instructivos locales.', 'error');
+    }
+}
+
+function renderInstructivosList() {
+    const host = document.getElementById('teacherGuidesBoard');
+    const pagHost = document.getElementById('teacherGuidesPagination');
+    if (!host) return;
+    const guides = readTeacherGuides();
+    if (!guides.length) {
+        host.innerHTML = '<div class="empty-state"><div class="empty-state-title">Sin instructivos</div><div class="empty-state-text">Crea el primer instructivo para docentes.</div></div>';
+        if (pagHost) pagHost.innerHTML = '';
+        return;
+    }
+    const totalPages = Math.max(1, Math.ceil(guides.length / TEACHER_GUIDES_PAGE_SIZE));
+    const safePage = Math.min(Math.max(1, teacherGuidesPage), totalPages);
+    teacherGuidesPage = safePage;
+    const start = (safePage - 1) * TEACHER_GUIDES_PAGE_SIZE;
+    const pageItems = guides.slice(start, start + TEACHER_GUIDES_PAGE_SIZE);
+    host.innerHTML = pageItems.map(g => {
+        const audienceLabel = (g.audienceJson || '').includes('ESTUDIANTE') ? 'Docentes + Estudiantes' : 'Solo docentes';
+        return `<div class="card-check" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
             <div style="min-width:240px;flex:1">
                 <strong>${htmlEscape(g.title || 'Instructivo')}</strong>
                 <div class="muted" style="margin-top:4px">${htmlEscape(g.detail || '')}</div>
-                <div class="muted" style="margin-top:4px">Formato: ${g.hasPdf ? 'PDF' : 'Texto'}${g.hasPdf && g.hasText ? ' + Texto' : ''}</div>
+                <div class="muted" style="margin-top:4px">Formato: ${g.hasPdf ? 'PDF' : 'Texto'}${g.hasPdf && g.hasText ? ' + Texto' : ''} · <span class="badge badge-navy">${htmlEscape(audienceLabel)}</span></div>
                 <div class="muted" style="margin-top:4px">Propietario: ${htmlEscape(g.ownerName || 'Administración')}</div>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -3086,12 +3356,19 @@ function loadInstructivos(skipRemoteSync) {
                     ? `<button class="btn btn-sm btn-outline" onclick="openTeacherGuideModal('${String(g.id)}')">Editar</button><button class="btn btn-sm btn-outline" onclick="deleteTeacherGuide('${String(g.id)}')">Eliminar</button>`
                     : '<span class="badge badge-navy">Solo lectura</span>'}
             </div>
-        </div>`).join('')
-        : '<div class="empty-state"><div class="empty-state-title">Sin instructivos</div><div class="empty-state-text">Crea el primer instructivo para docentes.</div></div>';
+        </div>`;
+    }).join('');
+    if (pagHost) {
+        const pages = [];
+        for (let i = 1; i <= totalPages; i++) {
+            pages.push(`<button class="btn btn-sm ${i === safePage ? 'btn-teal' : 'btn-outline'}" onclick="teacherGuidesPage=${i};renderInstructivosList();">${i}</button>`);
+        }
+        pagHost.innerHTML = pages.join('');
+    }
 }
 
 function openTeacherGuideModal(guideId) {
-    const guides = readTeacherGuides();
+    const guides = teacherGuides;
     const guide = guides.find(g => String(g.id) === String(guideId)) || {
         id: '', title: '', detail: '', hasPdf: false, hasText: true, pdfUrl: '', richHtml: ''
     };
@@ -3099,15 +3376,22 @@ function openTeacherGuideModal(guideId) {
         showToast('No tienes permiso para editar este instructivo', 'error');
         return;
     }
-    resetTeacherGuideAttachmentDraft(guide.attachments);
+    const guideAttachments = guide.attachments || (guide.attachmentsJson ? safeJsonParse(guide.attachmentsJson, []) : []);
+    resetTeacherGuideAttachmentDraft(guideAttachments);
+    const currentAudience = Array.isArray(guide.audience) ? guide.audience : (guide.audienceJson ? safeJsonParse(guide.audienceJson, ['DOCENTE']) : ['DOCENTE']);
+    const audienceValue = currentAudience.includes('ESTUDIANTE') ? 'all' : 'teacher';
+    const maxTitle = 200;
+    const maxDetail = 500;
+    const maxContent = 50000;
     openModal((guideId ? 'Editar' : 'Nuevo') + ' instructivo', `
-        <div class="form-group"><label class="form-label">Título</label><input class="form-input" id="tgTitle" value="${htmlEscape(guide.title || '')}" placeholder="Ej: Guía de evaluaciones"></div>
-        <div class="form-group"><label class="form-label">Descripción breve</label><input class="form-input" id="tgDetail" value="${htmlEscape(guide.detail || '')}" placeholder="Resumen del instructivo"></div>
-        <div class="form-group"><label class="form-label">Contenido (editor avanzado)</label>${buildRichEditorHtml('teacherGuideEditor', 220)}</div>
+        <div class="form-group"><label class="form-label">Título <span style="font-size:12px;color:var(--text-muted)">(<span id="tgTitleCount">0</span>/${maxTitle})</span></label><input class="form-input" id="tgTitle" maxlength="${maxTitle}" value="${htmlEscape(guide.title || '')}" placeholder="Ej: Guía de evaluaciones"></div>
+        <div class="form-group"><label class="form-label">Descripción breve <span style="font-size:12px;color:var(--text-muted)">(<span id="tgDetailCount">0</span>/${maxDetail})</span></label><input class="form-input" id="tgDetail" maxlength="${maxDetail}" value="${htmlEscape(guide.detail || '')}" placeholder="Resumen del instructivo"></div>
+        <div class="form-group"><label class="form-label">Contenido (editor avanzado) <span style="font-size:12px;color:var(--text-muted)">(<span id="tgContentCount">0</span>/${maxContent}) — opcional</span></label>${buildRichEditorHtml('teacherGuideEditor', 220)}</div>
         <div class="form-row">
             <div class="form-group"><label class="form-label">PDF por URL (opcional)</label><input class="form-input" id="tgPdfUrl" value="${htmlEscape(guide.pdfUrl || '')}" placeholder="https://... o data:application/pdf..."></div>
             <div class="form-group"><label class="form-label">Adjuntar PDF</label><input type="file" class="form-input" id="tgPdfFile" accept="application/pdf"></div>
         </div>
+        <div class="form-group" style="display:none"><label class="form-label">Compartir con</label><select class="form-input" id="tgAudience"><option value="teacher" selected>Solo docentes</option></select></div>
         <div class="form-group"><label class="form-label">Adjuntos del instructivo (PDF, DOC/DOCX, imágenes)</label><input type="file" class="form-input" id="tgAttachments" accept="application/pdf,.doc,.docx,image/*" multiple onchange="onTeacherGuideAttachmentInputChange(event)"></div>
         <div id="tgAttachmentList" style="margin-bottom:12px"></div>
         <button class="btn btn-teal" style="width:100%" onclick="saveTeacherGuideFromModal('${String(guide.id || '')}')">Guardar instructivo</button>
@@ -3117,6 +3401,12 @@ function openTeacherGuideModal(guideId) {
         const editor = document.getElementById('teacherGuideEditor');
         if (editor) editor.innerHTML = toRichHtml(guide.richHtml || '');
         trtEnsureEditor('teacherGuideEditor');
+        updateTeacherGuideCharCounts();
+        const titleEl = document.getElementById('tgTitle');
+        const detailEl = document.getElementById('tgDetail');
+        if (titleEl) titleEl.addEventListener('input', updateTeacherGuideCharCounts);
+        if (detailEl) detailEl.addEventListener('input', updateTeacherGuideCharCounts);
+        if (editor) editor.addEventListener('input', updateTeacherGuideCharCounts);
     }, 0);
 }
 
@@ -3128,7 +3418,10 @@ async function saveTeacherGuideFromModal(guideId) {
     const pdfFileEl = document.getElementById('tgPdfFile');
     let pdfUrl = pdfUrlInput;
     if (!title) return showToast('Ingresa el título del instructivo', 'error');
-    if (!editorHtml && !pdfUrl) return showToast('Agrega contenido o adjunta un PDF', 'error');
+    if (title.length > 200) return showToast('El título supera los 200 caracteres', 'error');
+    if (detail.length > 500) return showToast('La descripción supera los 500 caracteres', 'error');
+    const textOnly = (editorHtml || '').replace(/<[^>]*>/g, '').trim();
+    if (textOnly.length > 50000) return showToast('El contenido supera los 50 000 caracteres', 'error');
 
     const pdfFile = pdfFileEl && pdfFileEl.files && pdfFileEl.files[0] ? pdfFileEl.files[0] : null;
     if (pdfFile) {
@@ -3139,53 +3432,85 @@ async function saveTeacherGuideFromModal(guideId) {
         pdfUrl = dataUrl;
     }
 
+    const audienceVal = (document.getElementById('tgAudience') || {}).value || 'teacher';
+    const audienceArray = audienceVal === 'all' ? ['DOCENTE', 'ESTUDIANTE'] : ['DOCENTE'];
     const payload = {
-        id: guideId || ('guide-' + Date.now()),
         title,
         detail,
         hasText: !!editorHtml,
         hasPdf: !!pdfUrl,
         pdfUrl,
         richHtml: editorHtml,
-        textSections: guideRichHtmlToSections(editorHtml),
-        attachments: teacherGuideAttachmentDraft.map(file => ({
+        sectionsJson: JSON.stringify(guideRichHtmlToSections(editorHtml)),
+        attachmentsJson: JSON.stringify(teacherGuideAttachmentDraft.map(file => ({
             id: String(file.id || ('tg-att-' + Date.now())),
             name: String(file.name || 'archivo'),
             type: String(file.type || 'application/octet-stream'),
             dataUrl: String(file.dataUrl || '')
-        })).filter(file => !!file.dataUrl),
-        audience: ['DOCENTE', 'ESTUDIANTE'],
+        })).filter(file => !!file.dataUrl)),
+        audienceJson: JSON.stringify(audienceArray),
         ownerUserId: parseInt((currentUser && currentUser.id) || '0', 10) || null,
         ownerName: (currentUser && currentUser.name) || 'Docente',
         updatedAt: new Date().toISOString()
     };
 
-    const guides = readTeacherGuides();
-    const idx = guides.findIndex(g => String(g.id) === String(payload.id));
-    if (idx >= 0) {
-        if (!canManageTeacherGuide(guides[idx])) {
-            showToast('No tienes permiso para editar este instructivo', 'error');
-            return;
+    let saveError = false;
+    let errorMsg = '';
+    try {
+        let saved;
+        if (guideId) {
+            const res = await apiFetch('/api/guides/' + guideId, { method: 'PUT', body: JSON.stringify(payload) });
+            if (res && res.ok) {
+                saved = await res.json();
+            } else if (res) {
+                const errText = await res.text();
+                errorMsg = errText || ('HTTP ' + res.status);
+                throw new Error(errorMsg);
+            } else {
+                throw new Error('Sin respuesta del servidor');
+            }
+        } else {
+            saved = await postJson('/api/guides', payload);
         }
-        guides[idx] = { ...guides[idx], ...payload, ownerUserId: guideOwnerUserId(guides[idx]) || payload.ownerUserId, ownerName: guides[idx].ownerName || payload.ownerName };
+        if (saved) {
+            const idx = teacherGuides.findIndex(g => String(g.id) === String(saved.id));
+            if (idx >= 0) teacherGuides[idx] = saved;
+            else teacherGuides.unshift(saved);
+        }
+    } catch (e) {
+        saveError = true;
+        errorMsg = e.message || String(e);
+        console.error('saveTeacherGuideFromModal: error guardando instructivo', e);
+        // Fallback local con ID temporal para no perder el instructivo
+        const localId = guideId || ('guide-' + Date.now());
+        const localGuide = { ...payload, id: localId };
+        const idx = teacherGuides.findIndex(g => String(g.id) === String(localId));
+        if (idx >= 0) teacherGuides[idx] = localGuide;
+        else teacherGuides.unshift(localGuide);
     }
-    else guides.unshift(payload);
-    saveTeacherGuides(guides);
     closeModal();
+    renderInstructivosList();
+    if (saveError) {
+        showToast('Error del servidor: ' + (errorMsg || 'No se pudo guardar. Revisa la consola (F12) para más detalles.'), 'error');
+    } else {
+        showToast('Instructivo guardado', 'success');
+    }
+    // Sincronizar lista con servidor en segundo plano
     loadInstructivos();
-    showToast('Instructivo guardado', 'success');
 }
 
 function deleteTeacherGuide(guideId) {
-    const guide = readTeacherGuides().find(g => String(g.id) === String(guideId));
-    if (!guide || !canManageTeacherGuide(guide)) {
-        showToast('No tienes permiso para eliminar este instructivo', 'error');
+    const guide = teacherGuides.find(g => String(g.id) === String(guideId));
+    if (!guide || !canDeleteTeacherGuide(guide)) {
+        showToast('Solo el propietario o un administrador puede eliminar este instructivo', 'error');
         return;
     }
-    openConfirmModal('Eliminar instructivo', '¿Deseas eliminar este instructivo?', () => {
-        const next = readTeacherGuides().filter(g => String(g.id) !== String(guideId));
-        saveTeacherGuides(next);
-        loadInstructivos();
+    openConfirmModal('Eliminar instructivo', '¿Deseas eliminar este instructivo?', async () => {
+        try {
+            await apiFetch('/api/guides/' + guideId, { method: 'DELETE' });
+        } catch (e) {}
+        teacherGuides = teacherGuides.filter(g => String(g.id) !== String(guideId));
+        renderInstructivosList();
         showToast('Instructivo eliminado', 'success');
     }, 'Eliminar');
 }
@@ -3204,7 +3529,7 @@ async function saveProfile() {
     showToast('Perfil actualizado', 'success');
 }
 
-function openCourseView(course, options) {
+async function openCourseView(course, options) {
     const opts = options || {};
     currentCourse = typeof course === 'string' ? JSON.parse(course) : course;
     currentUnitIdx = Math.max(0, parseInt(opts.unitIdx || '0', 10) || 0);
@@ -3217,6 +3542,7 @@ function openCourseView(course, options) {
     document.getElementById('pageTitle').style.display = 'none';
     document.getElementById('pageSubtitle').style.display = 'none';
     document.getElementById('cvCourseName').textContent = currentCourse.name || 'Curso';
+    await loadUnits(currentCourse.id);
     document.getElementById('cvCourseMeta').textContent = (currentCourse.studentsCount || 0) + ' estudiantes · ' + getUnits(currentCourse.id).length + ' unidades';
     renderUnitTabs();
     renderUnit(currentUnitIdx, options);
@@ -3244,6 +3570,7 @@ function renderUnitTabs() {
 function renderUnit(idx, options) {
     const opts = options || {};
     currentUnitIdx = idx;
+    const canManage = canManageCurrentCourse();
     const units = getUnits(currentCourse.id);
     document.querySelectorAll('.unit-tab').forEach((el, i) => el.classList.toggle('active', i === idx));
     const contentArea = document.getElementById('unitContentArea');
@@ -3359,7 +3686,7 @@ function renderUnit(idx, options) {
         </div>
         <div class="card-body">
             ${acts.length ? acts.map((a, i) => {
-        const pending = MOCK.students.filter(s => { const sub = getStudentSubmission(s.id, a.id); return sub && sub.submitted && !sub.graded; }).length;
+        const pending = teacherStudents.filter(s => { const sub = getStudentSubmission(s.id, a.id); return sub && sub.submitted && !sub.graded; }).length;
         const cid = `act-t-${a.id}-${currentCourse.id}`;
         const mats = a.materials || [];
         return `<div class="activity-card" id="${cid}" style="margin-bottom:10px">
@@ -3387,7 +3714,7 @@ function renderUnit(idx, options) {
                         <div style="margin-top:14px;display:flex;gap:8px">
                             <button class="btn btn-sm btn-teal" onclick="openActivitySubmissions(${a.id},null,'submitted')">
                                 <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                                Calificar (${MOCK.students.filter(s => { const sub = getStudentSubmission(s.id, a.id); return sub && sub.submitted; }).length}/${MOCK.students.length})
+                                Calificar (${teacherStudents.filter(s => { const sub = getStudentSubmission(s.id, a.id); return sub && sub.submitted; }).length}/${teacherStudents.length})
                             </button>
                         </div>
                     </div>
@@ -3431,17 +3758,23 @@ function renderUnit(idx, options) {
             <span class="card-title">Bibliografía y Recursos</span>
             <div style="display:flex;align-items:center;gap:8px">
                 <span class="badge badge-success">${resources.length}</span>
-                <button class="btn btn-sm btn-outline" onclick="addResourceModal(${idx})">${IPLUS} Agregar</button>
+                ${canManage ? `<button class="btn btn-sm btn-outline" onclick="addResourceModal(${idx})">${IPLUS} Agregar</button>` : ''}
             </div>
         </div>
         <div class="card-body">
-            ${resources.map((r, ri) => `<div class="resource-card-item" style="cursor:default">
+            ${resources.map((r, ri) => {
+                const resUrl = (r.url || '').trim();
+                const hasUrl = resUrl && resUrl !== '#';
+                const nameHtml = hasUrl ? `<a href="${htmlEscape(resUrl)}" target="_blank" rel="noopener" style="color:var(--navy);text-decoration:underline">${htmlEscape(r.name)}</a>` : htmlEscape(r.name);
+                const deleteBtn = canManage ? `<button class="btn-icon del" onclick="removeResource(${idx},${ri})" title="Eliminar">${IDEL}</button>` : '';
+                return `<div class="resource-card-item" style="cursor:default">
                 <div class="resource-icon ${r.type || 'doc'}"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${r.type === 'video' ? IVID : r.type === 'link' ? ILINK : r.type === 'img' ? IIMG : '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>'}</svg></div>
-                <span class="resource-name">${r.name}</span>
+                <span class="resource-name">${nameHtml}</span>
                 <span class="resource-type">${(r.type || 'doc').toUpperCase()}</span>
-                <button class="btn-icon del" onclick="removeResource(${idx},${ri})" title="Eliminar">${IDEL}</button>
-            </div>`).join('') || '<div style="color:var(--text-muted);font-size:13px;padding:4px 0">Sin recursos asignados.</div>'}
-            <button class="add-item-btn" onclick="addResourceModal(${idx})">${IPLUS} Agregar recurso o bibliografía</button>
+                ${deleteBtn}
+            </div>`;
+            }).join('') || '<div style="color:var(--text-muted);font-size:13px;padding:4px 0">Sin recursos asignados.</div>'}
+            ${canManage ? `<button class="add-item-btn" onclick="addResourceModal(${idx})">${IPLUS} Agregar recurso o bibliografía</button>` : ''}
         </div>
     </div>`;
 
@@ -3455,6 +3788,7 @@ function renderUnit(idx, options) {
 }
 
 function buildTeacherForumsHtml(unitIdx, forums) {
+    const canManage = canManageCurrentCourse();
     const cards = forums.length ? forums.map((forum, forumIdx) => {
         ensureForumGradingDefaults(forum);
         const messages = forum.messages || [];
@@ -3465,26 +3799,29 @@ function buildTeacherForumsHtml(unitIdx, forums) {
             : forum.grading.type === 'none'
                 ? '<span class="badge badge-navy">Sin nota</span>'
                 : `<span class="badge badge-success">Nota real</span>`;
+        const deleteBtn = canManage ? `<button class="btn-icon del" onclick="removeForum(${unitIdx},${forumIdx})" title="Eliminar foro"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : '';
         return `<div class="forum-card" style="margin-bottom:12px">
             <div class="forum-card-header">
                 <div class="forum-card-icon"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
                 <div class="forum-card-meta">
-                    <div class="forum-card-title">${forum.title}</div>
+                    <div class="forum-card-title">${forum.title || ''}</div>
                     <div class="forum-card-desc">${forum.description || 'Sin descripcion.'}</div>
                 </div>
-                <button class="btn-icon del" onclick="removeForum(${unitIdx},${forumIdx})" title="Eliminar foro"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                ${deleteBtn}
             </div>
             <div class="forum-card-stats"><span class="forum-stat">${messages.length} publicacion(es)</span><span class="forum-stat">${participants.length} participante(s)</span>${gradeBadge}</div>
             <div class="forum-threads-body">
-                ${recent.length ? recent.map(m => `<div class="forum-thread-item"><div class="forum-thread-title">${m.authorName}</div><div class="forum-thread-meta"><span>${new Date(m.createdAt).toLocaleString('es-CO')}</span></div><div style="font-size:12.8px;color:var(--text-body);line-height:1.6;margin-top:6px">${m.text}</div></div>`).join('') : '<div style="font-size:12.5px;color:var(--text-muted)">Sin publicaciones aun.</div>'}
+                ${recent.length ? recent.map(m => `<div class="forum-thread-item"><div class="forum-thread-title">${m.authorName || ''}</div><div class="forum-thread-meta"><span>${new Date(m.createdAt).toLocaleString('es-CO')}</span></div><div style="font-size:12.8px;color:var(--text-body);line-height:1.6;margin-top:6px">${m.text || ''}</div></div>`).join('') : '<div style="font-size:12.5px;color:var(--text-muted)">Sin publicaciones aun.</div>'}
             </div>
             <div style="padding:0 20px 16px"><button class="btn btn-sm btn-teal" onclick="openTeacherForumDetail(${unitIdx},${forumIdx})">Abrir foro completo</button></div>
         </div>`;
     }).join('') : '<div style="font-size:13px;color:var(--text-muted)">Sin foros creados para esta unidad.</div>';
-    return `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Foros</span><button class="btn btn-sm btn-outline" onclick="addForumModal(${unitIdx})">Nuevo foro</button></div><div class="card-body">${cards}</div></div>`;
+    const newBtn = canManage ? `<button class="btn btn-sm btn-outline" onclick="addForumModal(${unitIdx})">Nuevo foro</button>` : '';
+    return `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Foros</span>${newBtn}</div><div class="card-body">${cards}</div></div>`;
 }
 
 function buildTeacherGlossaryHtml(unitIdx, glossaries) {
+    const canManage = canManageCurrentCourse();
     const cards = (glossaries || []).length ? (glossaries || []).map((glossary, glossaryIdx) => {
         ensureGlossaryDefaults(glossary);
         const participants = getGlossaryParticipants(glossary);
@@ -3496,18 +3833,24 @@ function buildTeacherGlossaryHtml(unitIdx, glossaries) {
                 : glossary.grading.type === 'real'
                     ? `<span class="badge badge-success">Nota real</span>`
                 : '<span class="badge badge-navy">Sin nota</span>';
+        const deleteBtn = canManage ? `<button class="btn-icon del" onclick="removeGlossaryCollection(${unitIdx},${glossaryIdx})" title="Eliminar glosario"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : '';
+        const manageButtons = canManage
+            ? `<button class="btn btn-sm btn-outline" onclick="addGlossaryModal(${unitIdx},${glossaryIdx})">Agregar término</button><button class="btn btn-sm btn-outline" onclick="openGlossaryGradingModal(${unitIdx},${glossaryIdx})">Configurar evaluación</button>`
+            : '';
         return `<div class="forum-card" style="margin-bottom:12px">
             <div class="forum-card-header">
                 <div class="forum-card-icon"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19h16"/><path d="M5 5h14v10H5z"/><path d="M9 9h6"/></svg></div>
                 <div class="forum-card-meta"><div class="forum-card-title">${glossary.title || 'Glosario'}</div><div class="forum-card-desc">${terms.length} término(s)</div></div>
+                ${deleteBtn}
             </div>
             <div class="forum-card-stats">${gradingBadge}<span class="forum-stat">${participants.length} participante(s)</span></div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;padding:0 20px 8px">${initials.length ? initials.map(i => `<span class="badge badge-navy">${i}</span>`).join('') : '<span style="font-size:12px;color:var(--text-muted)">Sin iniciales.</span>'}</div>
-            <div class="forum-threads-body">${recent.length ? recent.map(t => `<div class="forum-thread-item"><div class="forum-thread-title">${t.term}</div><div style="font-size:12.6px;color:var(--text-body);line-height:1.6;margin-top:4px">${t.definition}</div></div>`).join('') : '<div style="font-size:12.5px;color:var(--text-muted)">Sin términos aún.</div>'}</div>
-            <div style="padding:0 20px 16px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-sm btn-outline" onclick="addGlossaryModal(${unitIdx},${glossaryIdx})">Agregar término</button><button class="btn btn-sm btn-outline" onclick="openGlossaryGradingModal(${unitIdx},${glossaryIdx})">Configurar evaluación</button><button class="btn btn-sm btn-teal" onclick="openTeacherGlossaryDetail(${unitIdx},${glossaryIdx},'ALL',1)">Ver completo</button></div>
+            <div class="forum-threads-body">${recent.length ? recent.map(t => `<div class="forum-thread-item"><div class="forum-thread-title">${t.term || ''}</div><div style="font-size:12.6px;color:var(--text-body);line-height:1.6;margin-top:4px">${t.definition || ''}</div></div>`).join('') : '<div style="font-size:12.5px;color:var(--text-muted)">Sin términos aún.</div>'}</div>
+            <div style="padding:0 20px 16px;display:flex;gap:8px;flex-wrap:wrap">${manageButtons}<button class="btn btn-sm btn-teal" onclick="openTeacherGlossaryDetail(${unitIdx},${glossaryIdx},'ALL',1)">Ver completo</button></div>
         </div>`;
     }).join('') : '<div style="font-size:13px;color:var(--text-muted)">Sin glosarios creados para esta unidad.</div>';
-    return `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Glosarios</span><button class="btn btn-sm btn-outline" onclick="addGlossaryCollectionModal(${unitIdx})">Nuevo glosario</button></div><div class="card-body">${cards}</div></div>`;
+    const newBtn = canManage ? `<button class="btn btn-sm btn-outline" onclick="addGlossaryCollectionModal(${unitIdx})">Nuevo glosario</button>` : '';
+    return `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Glosarios</span>${newBtn}</div><div class="card-body">${cards}</div></div>`;
 }
 
 function addGlossaryCollectionModal(unitIdx) {
@@ -3825,6 +4168,19 @@ function saveGlossaryTerm(unitIdx, glossaryIdx) {
     showToast('Termino agregado', 'success');
 }
 
+function removeGlossaryCollection(unitIdx, glossaryIdx) {
+    openConfirmModal('Eliminar glosario', '¿Eliminar este glosario y todos sus términos?', () => {
+        const units = getUnits(currentCourse.id);
+        const unit = units[unitIdx];
+        if (!unit) return;
+        const glossaries = ensureUnitGlossaries(unit);
+        glossaries.splice(glossaryIdx, 1);
+        saveUnits(currentCourse.id, units);
+        renderUnit(unitIdx);
+        showToast('Glosario eliminado');
+    }, 'Eliminar');
+}
+
 function removeGlossaryTerm(unitIdx, glossaryIdx, termId) {
     const units = getUnits(currentCourse.id);
     const unit = units[unitIdx];
@@ -3914,7 +4270,12 @@ function renderTeacherGlossaryDetail(unitIdx, glossaryIdx, initial, page) {
     const chunk = items.slice((safePage - 1) * pageSize, safePage * pageSize);
     const host = document.getElementById('mGlossDetailList');
     if (!host) return;
-    host.innerHTML = `${chunk.length ? chunk.map((t) => `<div class="glossary-term-item"><div class="glossary-term-letter">${(t.term||'?').charAt(0).toUpperCase()}</div><div class="glossary-term-content"><div class="glossary-term-word">${t.term}</div><div class="glossary-term-def">${t.definition}</div></div><div class="glossary-term-actions"><button class="btn-icon del" onclick="removeGlossaryTerm(${unitIdx},${glossaryIdx},'${String(t.id).replace(/'/g, "\\'")}');openTeacherGlossaryDetail(${unitIdx},${glossaryIdx},'${initial}',${safePage})">✕</button></div></div>`).join('') : '<div style="font-size:13px;color:var(--text-muted)">Sin terminos para este filtro.</div>'}<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px"><span style="font-size:12px;color:var(--text-muted)">Pagina ${safePage} de ${totalPages}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="renderTeacherGlossaryDetail(${unitIdx},${glossaryIdx},'${initial}',${safePage-1})">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="renderTeacherGlossaryDetail(${unitIdx},${glossaryIdx},'${initial}',${safePage+1})">Siguiente</button></div></div>`;
+    host.innerHTML = `${chunk.length ? chunk.map((t) => {
+        const isStudent = t.createdBy === 'estudiante';
+        const studentBadge = isStudent ? `<span class="badge badge-warning" style="margin-left:6px;font-size:10px">Sugerido por estudiante</span>` : '';
+        const safeId = String(t.id || '').replace(/'/g, "\\'");
+        return `<div class="glossary-term-item"><div class="glossary-term-letter">${(t.term||'?').charAt(0).toUpperCase()}</div><div class="glossary-term-content"><div class="glossary-term-word">${htmlEscape(t.term)}${studentBadge}</div><div class="glossary-term-def">${t.definition || ''}</div></div><div class="glossary-term-actions"><button class="btn btn-sm btn-danger" onclick="removeGlossaryTerm(${unitIdx},${glossaryIdx},'${safeId}');openTeacherGlossaryDetail(${unitIdx},${glossaryIdx},'${initial}',${safePage})">Eliminar</button></div></div>`;
+    }).join('') : '<div style="font-size:13px;color:var(--text-muted)">Sin terminos para este filtro.</div>'}<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px"><span style="font-size:12px;color:var(--text-muted)">Pagina ${safePage} de ${totalPages}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="renderTeacherGlossaryDetail(${unitIdx},${glossaryIdx},'${initial}',${safePage-1})">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="renderTeacherGlossaryDetail(${unitIdx},${glossaryIdx},'${initial}',${safePage+1})">Siguiente</button></div></div>`;
 }
 
 let finalizeUnitState = null;
@@ -3957,7 +4318,10 @@ function saveUnitFinalizeConfig(courseId, unitId, cfg) {
 function getScoreByCategory(ctx, student, examScoresByExam) {
     const activities = ctx.acts.map(a => {
         const sub = getStudentSubmission(student.id, a.id);
-        return (sub && sub.submitted && sub.graded) ? clampGrade(sub.grade) : 0;
+        if (sub && sub.submitted && sub.graded) return clampGrade(sub.grade);
+        // Fallback: buscar calificación guardada en teacherGrades para esta actividad
+        const gradeRec = teacherGrades.find(g => g.activityId === a.id && g.student && g.student.id === student.id);
+        return gradeRec ? clampGrade(gradeRec.grade) : 0;
     });
     const exams = ctx.exams.map(ex => clampGrade((examScoresByExam[ex.id] || {})[student.id] || 0));
     const forumsReal = ctx.realForums.map(f => clampGrade((f.participantGrades || {})[student.id] || 0));
@@ -4039,7 +4403,7 @@ function readFinalizeExamScores(ctx) {
     const map = {};
     ctx.exams.forEach(ex => {
         map[ex.id] = {};
-        MOCK.students.forEach(st => {
+        teacherStudents.forEach(st => {
             map[ex.id][st.id] = clampGrade((document.getElementById('mUnitExam-' + ex.id + '-' + st.id) || {}).value);
         });
     });
@@ -4190,7 +4554,7 @@ function openFinalizeUnitModal(unitIdx) {
         <div id="mFinalizeWeightWarning" style="display:none;font-size:12px;color:var(--error);margin-bottom:10px"></div>
         <div style="max-height:48vh;overflow:auto;border:1px solid rgba(11,31,58,0.08);border-radius:10px">
             <table style="margin:0"><thead><tr><th>Estudiante</th><th>Prom. talleres</th><th>Prom. parciales</th><th>Prom. foros</th><th>Glosario</th><th>Bonificación</th><th>Nota final</th></tr></thead><tbody>
-                ${MOCK.students.map(st => `<tr>
+                ${teacherStudents.map(st => `<tr>
                     <td><div style="font-size:13px;font-weight:600">${st.user.name}</div><div style="font-size:11px;color:var(--text-muted)">${st.studentCode}</div></td>
                     <td id="mResTasks-${st.id}">0.0</td>
                     <td>
@@ -4230,7 +4594,7 @@ function recalcFinalizeUnitPreview() {
         warn.textContent = err || '';
     }
     let sumFinal = 0;
-    MOCK.students.forEach(st => {
+    teacherStudents.forEach(st => {
         const r = computeStudentUnitResult(ctx, st, examScores, cfg);
         const elTasks = document.getElementById('mResTasks-' + st.id);
         const elExam = document.getElementById('mResExams-' + st.id);
@@ -4251,10 +4615,10 @@ function recalcFinalizeUnitPreview() {
         }
     });
     const avgEl = document.getElementById('mFinalizeAvg');
-    if (avgEl) avgEl.textContent = cfg.mode === 'none' ? 'Modo manual: sin definitiva automática.' : ('Promedio del curso (unidad): ' + fmtGrade(MOCK.students.length ? sumFinal / MOCK.students.length : 0));
+    if (avgEl) avgEl.textContent = cfg.mode === 'none' ? 'Modo manual: sin definitiva automática.' : ('Promedio del curso (unidad): ' + fmtGrade(teacherStudents.length ? sumFinal / teacherStudents.length : 0));
 }
 
-function finalizeUnitApply() {
+async function finalizeUnitApply() {
     if (!finalizeUnitState || finalizeUnitState.unitIdx === undefined) return;
     const ctx = getFinalizeUnitContext(finalizeUnitState.unitIdx);
     if (!ctx.unit) return;
@@ -4267,11 +4631,19 @@ function finalizeUnitApply() {
     saveUnitExamScores(currentCourse.id, ctx.unit.id, examScores);
     saveUnitFinalizeConfig(currentCourse.id, ctx.unit.id, { ...cfg, reportIncludeFinal: !!((document.getElementById('mIncludeFinalInReport') || {}).checked) });
     if (cfg.mode !== 'none') {
-        MOCK.students.forEach(st => {
+        for (const st of teacherStudents) {
             const r = computeStudentUnitResult(ctx, st, examScores, cfg);
-            const description = `Cierre ${ctx.unit.name}: Talleres ${fmtGrade(r.avgActivities)}, Parciales ${fmtGrade(r.avgExams)}, Foros ${fmtGrade(r.avgForums)}, Glosarios ${fmtGrade(r.glossaryScore)}, Bonificación ${fmtGrade(r.bonus)}.`;
-            upsertTeacherGradeRecord(currentCourse.id, st, r.final, description, ctx.unit.id);
-        });
+            let description = '';
+            if (cfg.mode === 'simple-average') {
+                description = `Cierre ${ctx.unit.name}: Promedio simple = ${fmtGrade(r.final)} (Talleres ${fmtGrade(r.avgActivities)}, Parciales ${fmtGrade(r.avgExams)}, Foros ${fmtGrade(r.avgForums)}, Glosarios ${fmtGrade(r.glossaryScore)}, Bonificación ${fmtGrade(r.bonus)}).`;
+            } else if (cfg.mode === 'item-individual') {
+                description = `Cierre ${ctx.unit.name}: Ponderación por ítem = ${fmtGrade(r.final)} (Bonificación ${fmtGrade(r.bonus)}).`;
+            } else {
+                const gw = cfg.globalWeights || {};
+                description = `Cierre ${ctx.unit.name}: Ponderación global (Talleres ${gw.activities || 0}%, Parciales ${gw.exams || 0}%, Foros ${gw.forums || 0}%, Glosarios ${gw.glossary || 0}%) = ${fmtGrade(r.final)} (Bonificación ${fmtGrade(r.bonus)}).`;
+            }
+            await upsertTeacherGradeRecord(currentCourse.id, st, r.final, description, ctx.unit.id);
+        }
     }
     storageService.setItem('educat_unit_closure_' + currentCourse.id + '_' + ctx.unit.id, JSON.stringify({
         courseId: currentCourse.id,
@@ -4423,7 +4795,7 @@ function generateUnitReport() {
         xmlRows.push(`<Row>${subCells}</Row>`);
     }
 
-    MOCK.students.forEach((st, i) => {
+    teacherStudents.forEach((st, i) => {
         const nm = splitStudentName((st.user || {}).name || '');
         const rowNum = i + headerRowsCount + 1;
         const forumById = {};
@@ -4523,11 +4895,21 @@ function saveUnitEdit(idx) {
     closeModal(); renderUnitTabs(); renderUnit(idx); showToast('Unidad actualizada', 'success');
 }
 
-function deleteUnitConfirm(idx) {
-    openConfirmModal('Eliminar unidad', '¿Eliminar esta unidad y todo su contenido?', () => {
+async function deleteUnitConfirm(idx) {
+    openConfirmModal('Eliminar unidad', '¿Eliminar esta unidad y todo su contenido?', async () => {
         const units = getUnits(currentCourse.id);
+        const unit = units[idx];
+        if (unit && unit.id) {
+            try {
+                const res = await apiFetch('/api/course-units/' + unit.id, { method: 'DELETE' });
+                if (!res || !res.ok) throw new Error('HTTP ' + (res ? res.status : 'unknown'));
+            } catch (e) {
+                showToast('Error al eliminar unidad', 'error');
+                return;
+            }
+        }
         units.splice(idx, 1);
-        saveUnits(currentCourse.id, units);
+        await saveUnits(currentCourse.id, units);
         const newIdx = Math.max(0, idx - 1);
         renderUnitTabs();
         if (units.length) renderUnit(newIdx);
@@ -4712,15 +5094,14 @@ function addActivityModal(unitIdx) {
         <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="saveActivity(${unitIdx},'${keyAtts}','${keyMats}')">Agregar actividad</button>`);
 }
 
-function saveActivity(unitIdx, keyAtts, keyMats) {
+async function saveActivity(unitIdx, keyAtts, keyMats) {
     const title = document.getElementById('mActTitle').value.trim();
     if (!title) { showToast('El título es obligatorio', 'error'); return; }
     const attachments = getModalAttachments(keyAtts, []);
     const materials   = getModalAttachments(keyMats, []);
     const youtubeLinks = parseYoutubeLinks((document.getElementById('mActYoutubeLinks') || {}).value || '');
-    const newAct = {
-        id: Date.now(),
-        course: { id: currentCourse.id },
+    const payload = {
+        courseId: currentCourse.id,
         title,
         description: document.getElementById('mActDesc').value,
         dueDate: document.getElementById('mActDate').value,
@@ -4732,10 +5113,15 @@ function saveActivity(unitIdx, keyAtts, keyMats) {
         attachments,
         materials: [...materials, ...youtubeLinks]
     };
-    MOCK.activities.push(newAct);
-    const courseActs = getCourseActivitiesMerged(currentCourse.id);
-    courseActs.push(newAct);
-    saveStoredCourseActivities(currentCourse.id, courseActs);
+    let saved = null;
+    try {
+        saved = await postJson('/api/activities', payload);
+    } catch (e) {
+        showToast('Error guardando actividad en el servidor', 'error');
+        return;
+    }
+    const newAct = saved || { id: Date.now(), course: { id: currentCourse.id }, ...payload };
+    teacherActivities.push(newAct);
     const units = getUnits(currentCourse.id);
     units[unitIdx].activities = units[unitIdx].activities || [];
     units[unitIdx].activities.push(newAct.id);
@@ -4748,7 +5134,7 @@ function saveActivity(unitIdx, keyAtts, keyMats) {
 }
 
 function editActivityModal(actId, unitIdx) {
-    const a = MOCK.activities.find(x => x.id === actId);
+    const a = getActivityById(actId);
     if (!a) return;
     const keyAtts = 'act-edit-atts-' + actId;
     const keyMats = 'act-edit-mats-' + actId;
@@ -4821,15 +5207,15 @@ function editActivityModal(actId, unitIdx) {
 }
 
 function removeActExistingAtt(actId, field, idx) {
-    const a = MOCK.activities.find(x => x.id === actId);
+    const a = getActivityById(actId);
     if (!a || !Array.isArray(a[field])) return;
     a[field].splice(idx, 1);
     const el = document.getElementById('exatt2-' + field + '-' + idx);
     if (el) el.remove();
 }
 
-function updateActivity(actId, unitIdx, keyAtts, keyMats) {
-    const a = MOCK.activities.find(x => x.id === actId);
+async function updateActivity(actId, unitIdx, keyAtts, keyMats) {
+    const a = getActivityById(actId);
     if (!a) return;
     a.title       = document.getElementById('mActTitle').value.trim() || a.title;
     a.description = document.getElementById('mActDesc').value;
@@ -4846,11 +5232,25 @@ function updateActivity(actId, unitIdx, keyAtts, keyMats) {
     const newMats = getModalAttachments(keyMats, matsNoVideos);
     const youtubeLinks = parseYoutubeLinks((document.getElementById('mActYoutubeLinks') || {}).value || '');
     a.materials = [...newMats, ...youtubeLinks];
-    const courseActs = getCourseActivitiesMerged(currentCourse.id);
-    const idxAct = courseActs.findIndex(x => String(x.id) === String(a.id));
-    if (idxAct >= 0) courseActs[idxAct] = a;
-    else courseActs.push(a);
-    saveStoredCourseActivities(currentCourse.id, courseActs);
+    const payload = {
+        courseId: a.course ? a.course.id : currentCourse.id,
+        title: a.title,
+        description: a.description,
+        dueDate: a.dueDate,
+        dueTime: a.dueTime,
+        allowLateSubmission: a.allowLateSubmission,
+        visibleFrom: a.visibleFrom,
+        attachments: a.attachments,
+        materials: a.materials
+    };
+    try {
+        await apiFetch('/api/activities/' + actId, { method: 'PUT', body: JSON.stringify(payload) });
+    } catch (e) {
+        showToast('Error actualizando actividad en el servidor', 'error');
+        return;
+    }
+    const idxAct = teacherActivities.findIndex(x => String(x.id) === String(a.id));
+    if (idxAct >= 0) teacherActivities[idxAct] = a;
     clearModalFiles(keyAtts);
     clearModalFiles(keyMats);
     closeModal();
@@ -4858,12 +5258,14 @@ function updateActivity(actId, unitIdx, keyAtts, keyMats) {
     showToast('Actividad actualizada', 'success');
 }
 
-function removeActivity(actId, unitIdx) {
+async function removeActivity(actId, unitIdx) {
     const units = getUnits(currentCourse.id);
     units[unitIdx].activities = (units[unitIdx].activities || []).filter(id => id !== actId);
     saveUnits(currentCourse.id, units);
-    const courseActs = getCourseActivitiesMerged(currentCourse.id).filter(a => String(a.id) !== String(actId));
-    saveStoredCourseActivities(currentCourse.id, courseActs);
+    try {
+        await apiFetch('/api/activities/' + actId, { method: 'DELETE' });
+    } catch (e) {}
+    teacherActivities = teacherActivities.filter(a => String(a.id) !== String(actId));
     renderUnit(unitIdx);
     showToast('Actividad eliminada de esta unidad');
 }
@@ -4872,62 +5274,369 @@ function removeActivity(actId, unitIdx) {
    EXAM CRUD
 ═══════════════════════════════════════════════════════════════════════════ */
 function addExamModal(unitIdx) {
-    openModal('Nueva Evaluación', `
-        <div class="form-group"><label class="form-label">Título</label><input type="text" class="form-input" id="mExTitle" placeholder="Ej: Parcial I — Álgebra Lineal"></div>
-        <div class="form-group"><label class="form-label">Fecha</label><input type="date" class="form-input" id="mExDate"></div>
-        <div class="form-group"><label class="form-label">Hora</label><input type="time" class="form-input" id="mExTime" value="07:00"></div>
-        <div class="form-group"><label class="form-label">Descripción</label><textarea class="form-input" id="mExDesc" placeholder="Temas, duración, materiales permitidos..."></textarea></div>
-        <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="saveExam(${unitIdx})">Programar evaluación</button>`);
-}
-
-function saveExam(unitIdx) {
-    const title = document.getElementById('mExTitle').value.trim();
-    if (!title) { showToast('El título es obligatorio', 'error'); return; }
-    const newExam = { id: Date.now(), course: { id: currentCourse.id }, title, examDate: document.getElementById('mExDate').value, examTime: (document.getElementById('mExTime') || {}).value || '07:00', description: document.getElementById('mExDesc').value };
-    MOCK.exams.push(newExam);
-    const courseExams = getCourseExamsMerged(currentCourse.id);
-    courseExams.push(newExam);
-    saveStoredCourseExams(currentCourse.id, courseExams);
-    const units = getUnits(currentCourse.id);
-    units[unitIdx].exams = units[unitIdx].exams || [];
-    units[unitIdx].exams.push(newExam.id);
-    saveUnits(currentCourse.id, units);
-    closeModal(); renderUnit(unitIdx); showToast('Evaluación programada', 'success');
+    examEditorState = {
+        examId: null, unitIdx,
+        questions: [],
+        currentQuestionIndex: 0,
+        config: {
+            accessKey: '', totalTimeMinutes: 0, timePerQuestionSeconds: 0,
+            allowBacktrack: true, showScoreOnFinish: true, showCorrectAnswers: false,
+            showCorrectAnswersAfterAll: true, allowRetake: false,
+            passingScore: 6.0, maxScore: 10.0, shuffleQuestions: false, shuffleOptions: false
+        }
+    };
+    openExamEditor();
 }
 
 function editExamModal(examId, unitIdx) {
-    const x = MOCK.exams.find(e => e.id === examId);
+    const x = teacherExams.find(e => String(e.id) === String(examId));
     if (!x) return;
-    openModal('Editar Evaluación', `
-        <div class="form-group"><label class="form-label">Título</label><input type="text" class="form-input" id="mExTitle" value="${x.title}"></div>
-        <div class="form-group"><label class="form-label">Fecha</label><input type="date" class="form-input" id="mExDate" value="${x.examDate || ''}"></div>
-        <div class="form-group"><label class="form-label">Hora</label><input type="time" class="form-input" id="mExTime" value="${x.examTime || '07:00'}"></div>
-        <div class="form-group"><label class="form-label">Descripción</label><textarea class="form-input" id="mExDesc">${x.description || ''}</textarea></div>
-        <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="updateExam(${examId},${unitIdx})">Guardar cambios</button>`);
+    const cfg = safeJsonParse(x.configJson, examEditorState.config);
+    examEditorState = {
+        examId, unitIdx,
+        questions: (x.questions || []).map(q => ({
+            id: q.id,
+            orderIndex: q.orderIndex || 0,
+            questionType: q.questionType || 'single_choice',
+            questionText: q.questionText || '',
+            options: safeJsonParse(q.optionsJson, []),
+            correctAnswer: safeJsonParse(q.correctAnswerJson, null),
+            feedback: q.feedback || '',
+            points: q.points != null ? q.points : 1.0,
+            timeLimitSeconds: q.timeLimitSeconds || 0
+        })),
+        currentQuestionIndex: 0,
+        config: { ...examEditorState.config, ...cfg, maxAttempts: x.maxAttempts != null ? x.maxAttempts : (cfg.allowRetake ? 3 : 1) }
+    };
+    openExamEditor();
 }
 
-function updateExam(examId, unitIdx) {
-    const x = MOCK.exams.find(e => e.id === examId);
-    if (!x) return;
-    x.title = document.getElementById('mExTitle').value.trim() || x.title;
-    x.examDate = document.getElementById('mExDate').value;
-    x.examTime = (document.getElementById('mExTime') || {}).value || '07:00';
-    x.description = document.getElementById('mExDesc').value;
-    const courseExams = getCourseExamsMerged(currentCourse.id);
-    const idxEx = courseExams.findIndex(e => String(e.id) === String(x.id));
-    if (idxEx >= 0) courseExams[idxEx] = x;
-    else courseExams.push(x);
-    saveStoredCourseExams(currentCourse.id, courseExams);
-    closeModal(); renderUnit(unitIdx); showToast('Evaluación actualizada', 'success');
+function openExamEditor() {
+    const st = examEditorState;
+    const maxScore = parseFloat(document.getElementById('mAdminMaxGrade')?.value || 10);
+    const exam = st.examId ? teacherExams.find(e => String(e.id) === String(st.examId)) : null;
+    const title = exam ? exam.title : '';
+    const examDate = exam ? (exam.examDate || '') : '';
+    const examTime = exam ? (exam.examTime || '07:00') : '07:00';
+    const description = exam ? (exam.description || '') : '';
+    const cfg = st.config;
+    openModal((st.examId ? 'Editar' : 'Nuevo') + ' Evaluación — Editor completo', `
+    <div style="display:flex;gap:8px;margin-bottom:12px;border-bottom:1px solid rgba(11,31,58,0.08);padding-bottom:8px">
+        <button class="btn btn-sm btn-teal" id="examTabConfig" onclick="switchExamTab('config')">Configuración</button>
+        <button class="btn btn-sm btn-outline" id="examTabQuestions" onclick="switchExamTab('questions')">Preguntas (${st.questions.length})</button>
+        <button class="btn btn-sm btn-outline" id="examTabAdvanced" onclick="switchExamTab('advanced')">Avanzado</button>
+    </div>
+    <div id="examEditorBody">
+        <div id="examTabContentConfig">
+            <div class="form-group"><label class="form-label">Título</label><input type="text" class="form-input" id="mExTitle" value="${htmlEscape(title)}" placeholder="Ej: Parcial I — Álgebra Lineal"></div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">Fecha</label><input type="date" class="form-input" id="mExDate" value="${examDate}"></div>
+                <div class="form-group"><label class="form-label">Hora</label><input type="time" class="form-input" id="mExTime" value="${examTime}"></div>
+            </div>
+            <div class="form-group"><label class="form-label">Descripción</label><textarea class="form-input" id="mExDesc" rows="3" placeholder="Temas, duración, materiales permitidos...">${htmlEscape(description)}</textarea></div>
+            <div class="form-group"><label class="form-label">Clave de acceso (opcional)</label><input type="text" class="form-input" id="mExAccessKey" value="${htmlEscape(cfg.accessKey || '')}" placeholder="Dejar vacío si no requiere clave"></div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">Abre el (fecha y hora)</label><input type="datetime-local" class="form-input" id="mExOpenAt" value="${exam && exam.openAt ? exam.openAt.slice(0,16) : ''}"></div>
+                <div class="form-group"><label class="form-label">Cierra el (fecha y hora)</label><input type="datetime-local" class="form-input" id="mExCloseAt" value="${exam && exam.closeAt ? exam.closeAt.slice(0,16) : ''}"></div>
+            </div>
+        </div>
+        <div id="examTabContentQuestions" style="display:none">
+            <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+                <button class="btn btn-sm btn-teal" onclick="addExamQuestion()">+ Nueva pregunta</button>
+                <span style="font-size:12px;color:var(--text-muted)">Total: ${st.questions.length} preguntas · Puntos: ${st.questions.reduce((a,q)=>a+(q.points||1),0).toFixed(1)}</span>
+            </div>
+            <div id="examQuestionList"></div>
+            <div id="examQuestionEditor" style="margin-top:12px"></div>
+        </div>
+        <div id="examTabContentAdvanced" style="display:none">
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">Tiempo total (minutos, 0 = ilimitado)</label><input type="number" class="form-input" id="mExTotalTime" min="0" value="${cfg.totalTimeMinutes || 0}"></div>
+                <div class="form-group"><label class="form-label">Tiempo por pregunta (seg, 0 = ilimitado)</label><input type="number" class="form-input" id="mExTimePerQ" min="0" value="${cfg.timePerQuestionSeconds || 0}"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">Nota mínima aprobatoria</label><input type="number" class="form-input" id="mExPassing" min="0" max="${maxScore}" step="0.1" value="${cfg.passingScore || 6.0}"></div>
+                <div class="form-group"><label class="form-label">Nota máxima</label><input type="number" class="form-input" id="mExMaxScore" min="1" step="0.1" value="${cfg.maxScore || maxScore}"></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="mExAllowBack" ${cfg.allowBacktrack ? 'checked' : ''}> Permitir volver a preguntas anteriores</label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="mExShowScore" ${cfg.showScoreOnFinish ? 'checked' : ''}> Mostrar nota al finalizar</label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="mExShowCorrect" ${cfg.showCorrectAnswers ? 'checked' : ''}> Mostrar respuestas correctas inmediatamente</label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="mExShowAfterAll" ${cfg.showCorrectAnswersAfterAll ? 'checked' : ''}> Mostrar respuestas solo cuando todos terminen</label>
+                <div style="display:flex;flex-direction:column;gap:4px">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="mExAllowRetake" ${cfg.allowRetake ? 'checked' : ''} onchange="toggleMaxAttemptsInput()"> Permitir reintentar</label>
+                    <div id="mExMaxAttemptsWrap" style="display:${cfg.allowRetake ? '' : 'none'};padding-left:22px">
+                        <input type="number" class="form-input" id="mExMaxAttempts" min="1" max="50" value="${exam && exam.maxAttempts != null ? exam.maxAttempts : (cfg.allowRetake ? 3 : 1)}" style="max-width:120px;padding:6px 10px;font-size:13px" placeholder="N° intentos">
+                    </div>
+                </div>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="mExShuffleQ" ${cfg.shuffleQuestions ? 'checked' : ''}> Mezclar orden de preguntas</label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="mExShuffleO" ${cfg.shuffleOptions ? 'checked' : ''}> Mezclar opciones de respuesta</label>
+            </div>
+        </div>
+    </div>
+    <div style="margin-top:14px;border-top:1px solid rgba(11,31,58,0.08);padding-top:12px">
+        <button class="btn btn-teal" style="width:100%" onclick="saveExamFromEditor()">Guardar evaluación</button>
+    </div>`, { size: 'xl' });
+    renderExamQuestionList();
+    renderExamQuestionEditor();
+    switchExamTab('config');
 }
 
-function removeExam(examId, unitIdx) {
-    const units = getUnits(currentCourse.id);
-    units[unitIdx].exams = (units[unitIdx].exams || []).filter(id => id !== examId);
-    saveUnits(currentCourse.id, units);
-    const courseExams = getCourseExamsMerged(currentCourse.id).filter(e => String(e.id) !== String(examId));
-    saveStoredCourseExams(currentCourse.id, courseExams);
-    renderUnit(unitIdx); showToast('Evaluación eliminada de esta unidad');
+function switchExamTab(tab) {
+    ['config','questions','advanced'].forEach(t => {
+        const btn = document.getElementById('examTab' + t.charAt(0).toUpperCase() + t.slice(1));
+        const content = document.getElementById('examTabContent' + t.charAt(0).toUpperCase() + t.slice(1));
+        if (btn) btn.className = 'btn btn-sm ' + (t === tab ? 'btn-teal' : 'btn-outline');
+        if (content) content.style.display = t === tab ? '' : 'none';
+    });
+    if (tab === 'questions') {
+        renderExamQuestionList();
+        renderExamQuestionEditor();
+    }
+}
+
+function renderExamQuestionList() {
+    const host = document.getElementById('examQuestionList');
+    if (!host) return;
+    const qs = examEditorState.questions;
+    if (!qs.length) { host.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">Aún no hay preguntas. Haz clic en "Nueva pregunta".</div>'; return; }
+    host.innerHTML = qs.map((q, i) => {
+        const typeLabel = (EXAM_QUESTION_TYPES.find(t => t.key === q.questionType) || {}).label || q.questionType;
+        return `<div class="card-check" style="justify-content:space-between;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px;${i===examEditorState.currentQuestionIndex?'border-color:var(--teal);background:rgba(0,150,136,0.04)':''}" onclick="selectExamQuestion(${i})">
+            <div style="display:flex;align-items:center;gap:8px">
+                <span class="badge badge-navy">${i+1}</span>
+                <span style="font-size:13px;font-weight:600">${htmlEscape((q.questionText || '').replace(/<[^>]*>/g, '').slice(0, 60) || 'Sin texto')}</span>
+                <span class="badge badge-navy" style="font-size:10px">${typeLabel}</span>
+                <span class="badge badge-gold" style="font-size:10px">${(q.points || 1).toFixed(1)} pts</span>
+            </div>
+            <button class="btn-icon del" onclick="event.stopPropagation();removeExamQuestion(${i})" title="Eliminar">✕</button>
+        </div>`;
+    }).join('');
+}
+
+function selectExamQuestion(idx) {
+    examEditorState.currentQuestionIndex = idx;
+    renderExamQuestionList();
+    renderExamQuestionEditor();
+}
+
+function addExamQuestion() {
+    const newQ = {
+        id: null,
+        orderIndex: examEditorState.questions.length,
+        questionType: 'single_choice',
+        questionText: '',
+        options: [{ id: 'opt_' + Date.now() + '_0', text: 'Opción A', correct: true }, { id: 'opt_' + Date.now() + '_1', text: 'Opción B', correct: false }],
+        correctAnswer: null,
+        feedback: '',
+        points: 1.0,
+        timeLimitSeconds: 0
+    };
+    examEditorState.questions.push(newQ);
+    examEditorState.currentQuestionIndex = examEditorState.questions.length - 1;
+    renderExamQuestionList();
+    renderExamQuestionEditor();
+}
+
+function removeExamQuestion(idx) {
+    examEditorState.questions.splice(idx, 1);
+    examEditorState.questions.forEach((q, i) => q.orderIndex = i);
+    if (examEditorState.currentQuestionIndex >= examEditorState.questions.length) {
+        examEditorState.currentQuestionIndex = Math.max(0, examEditorState.questions.length - 1);
+    }
+    renderExamQuestionList();
+    renderExamQuestionEditor();
+}
+
+function renderExamQuestionEditor() {
+    const host = document.getElementById('examQuestionEditor');
+    if (!host) return;
+    const q = examEditorState.questions[examEditorState.currentQuestionIndex];
+    if (!q) { host.innerHTML = ''; return; }
+    const typeOpts = EXAM_QUESTION_TYPES.map(t => `<option value="${t.key}" ${q.questionType===t.key?'selected':''}>${t.label}</option>`).join('');
+    let optionsHtml = '';
+    if (q.questionType === 'single_choice' || q.questionType === 'multiple_choice') {
+        optionsHtml = `<div style="margin-top:10px"><div style="font-size:12px;font-weight:600;margin-bottom:6px">Opciones</div>${(q.options || []).map((opt, oi) => `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+            <input type="${q.questionType==='single_choice'?'radio':'checkbox'}" name="examQCorrect" ${opt.correct?'checked':''} onchange="updateExamOptionCorrect(${oi},this.checked)">
+            <input type="text" class="form-input" style="flex:1" value="${htmlEscape(opt.text || '')}" placeholder="Texto de la opción" oninput="updateExamOptionText(${oi},this.value)">
+            <button class="btn-icon del" onclick="removeExamOption(${oi})" title="Eliminar opción">✕</button>
+        </div>`).join('')}<button class="btn btn-sm btn-outline" onclick="addExamOption()">+ Agregar opción</button></div>`;
+    } else if (q.questionType === 'true_false') {
+        optionsHtml = `<div style="margin-top:10px"><div style="font-size:12px;font-weight:600;margin-bottom:6px">Respuesta correcta</div>
+            <select class="form-input" id="examQCorrectTF" onchange="updateExamQuestionField('correctAnswer',this.value==='true')">
+                <option value="true" ${q.correctAnswer===true?'selected':''}>Verdadero</option>
+                <option value="false" ${q.correctAnswer===false?'selected':''}>Falso</option>
+            </select></div>`;
+    }
+    host.innerHTML = `<div class="card" style="margin:0">
+        <div class="card-header" style="padding:10px 14px"><span class="card-title" style="font-size:13px">Editar pregunta #${examEditorState.currentQuestionIndex+1}</span></div>
+        <div class="card-body" style="padding:12px 14px">
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">Tipo de pregunta</label><select class="form-input" id="examQType" onchange="changeExamQuestionType(this.value)">${typeOpts}</select></div>
+                <div class="form-group"><label class="form-label">Puntos</label><input type="number" class="form-input" id="examQPoints" min="0.1" step="0.1" value="${q.points || 1}" onchange="updateExamQuestionField('points',parseFloat(this.value)||1)"></div>
+            </div>
+            <div class="form-group"><label class="form-label">Enunciado (editor avanzado)</label>${buildRichEditorHtml('examQTextEditor', 160)}</div>
+            ${optionsHtml}
+            <div class="form-group" style="margin-top:10px"><label class="form-label">Retroalimentación (se muestra al estudiante después de responder)</label><textarea class="form-input" id="examQFeedback" rows="2" placeholder="Explica por qué esta respuesta es correcta o incorrecta...">${htmlEscape(q.feedback || '')}</textarea></div>
+        </div>
+    </div>`;
+    setTimeout(() => {
+        const editor = document.getElementById('examQTextEditor');
+        if (editor) {
+            editor.innerHTML = toRichHtml(q.questionText || '');
+            trtEnsureEditor('examQTextEditor');
+            editor.addEventListener('input', () => { updateExamQuestionField('questionText', trtGetHtml('examQTextEditor')); });
+        }
+        const fb = document.getElementById('examQFeedback');
+        if (fb) fb.addEventListener('input', () => updateExamQuestionField('feedback', fb.value));
+    }, 0);
+}
+
+function changeExamQuestionType(newType) {
+    const q = examEditorState.questions[examEditorState.currentQuestionIndex];
+    if (!q) return;
+    q.questionType = newType;
+    if (newType === 'single_choice' || newType === 'multiple_choice') {
+        if (!q.options || !q.options.length) {
+            q.options = [
+                { id: 'opt_' + Date.now() + '_0', text: 'Opción A', correct: newType==='single_choice' },
+                { id: 'opt_' + Date.now() + '_1', text: 'Opción B', correct: false }
+            ];
+        }
+    } else if (newType === 'true_false') {
+        q.correctAnswer = q.correctAnswer === true || q.correctAnswer === false ? q.correctAnswer : true;
+    }
+    renderExamQuestionEditor();
+}
+
+function updateExamQuestionField(field, value) {
+    const q = examEditorState.questions[examEditorState.currentQuestionIndex];
+    if (!q) return;
+    q[field] = value;
+    if (field === 'points') renderExamQuestionList();
+}
+
+function addExamOption() {
+    const q = examEditorState.questions[examEditorState.currentQuestionIndex];
+    if (!q) return;
+    q.options = q.options || [];
+    q.options.push({ id: 'opt_' + Date.now() + '_' + q.options.length, text: 'Nueva opción', correct: false });
+    renderExamQuestionEditor();
+}
+
+function removeExamOption(oi) {
+    const q = examEditorState.questions[examEditorState.currentQuestionIndex];
+    if (!q || !q.options) return;
+    q.options.splice(oi, 1);
+    if (q.questionType === 'single_choice' && q.options.length && !q.options.some(o => o.correct)) {
+        q.options[0].correct = true;
+    }
+    renderExamQuestionEditor();
+}
+
+function updateExamOptionText(oi, value) {
+    const q = examEditorState.questions[examEditorState.currentQuestionIndex];
+    if (!q || !q.options || !q.options[oi]) return;
+    q.options[oi].text = value;
+}
+
+function updateExamOptionCorrect(oi, checked) {
+    const q = examEditorState.questions[examEditorState.currentQuestionIndex];
+    if (!q || !q.options || !q.options[oi]) return;
+    if (q.questionType === 'single_choice') {
+        q.options.forEach((o, i) => o.correct = (i === oi));
+    } else {
+        q.options[oi].correct = !!checked;
+    }
+}
+
+function toggleMaxAttemptsInput() {
+    const wrap = document.getElementById('mExMaxAttemptsWrap');
+    const chk = document.getElementById('mExAllowRetake');
+    if (wrap) wrap.style.display = (chk && chk.checked) ? '' : 'none';
+}
+
+function readExamConfigFromForm() {
+    return {
+        accessKey: String((document.getElementById('mExAccessKey') || {}).value || '').trim(),
+        totalTimeMinutes: parseInt((document.getElementById('mExTotalTime') || {}).value || '0', 10) || 0,
+        timePerQuestionSeconds: parseInt((document.getElementById('mExTimePerQ') || {}).value || '0', 10) || 0,
+        allowBacktrack: !!(document.getElementById('mExAllowBack') || {}).checked,
+        showScoreOnFinish: !!(document.getElementById('mExShowScore') || {}).checked,
+        showCorrectAnswers: !!(document.getElementById('mExShowCorrect') || {}).checked,
+        showCorrectAnswersAfterAll: !!(document.getElementById('mExShowAfterAll') || {}).checked,
+        allowRetake: !!(document.getElementById('mExAllowRetake') || {}).checked,
+        passingScore: parseFloat((document.getElementById('mExPassing') || {}).value || '6'),
+        maxScore: parseFloat((document.getElementById('mExMaxScore') || {}).value || '10'),
+        shuffleQuestions: !!(document.getElementById('mExShuffleQ') || {}).checked,
+        shuffleOptions: !!(document.getElementById('mExShuffleO') || {}).checked
+    };
+}
+
+async function saveExamFromEditor() {
+    const st = examEditorState;
+    const title = String((document.getElementById('mExTitle') || {}).value || '').trim();
+    if (!title) { showToast('El título es obligatorio', 'error'); return; }
+    const description = String((document.getElementById('mExDesc') || {}).value || '');
+    const examDate = (document.getElementById('mExDate') || {}).value || '';
+    const examTime = (document.getElementById('mExTime') || {}).value || '07:00';
+    const openAt = (document.getElementById('mExOpenAt') || {}).value || '';
+    const closeAt = (document.getElementById('mExCloseAt') || {}).value || '';
+    const cfg = readExamConfigFromForm();
+    const maxAttempts = cfg.allowRetake ? (parseInt((document.getElementById('mExMaxAttempts') || {}).value || '1', 10) || 1) : 1;
+    const questions = st.questions.map(q => ({
+        id: q.id,
+        orderIndex: q.orderIndex,
+        questionType: q.questionType,
+        questionText: q.questionText,
+        optionsJson: JSON.stringify(q.options || []),
+        correctAnswerJson: q.questionType === 'true_false' ? JSON.stringify(q.correctAnswer) : JSON.stringify((q.options || []).filter(o => o.correct).map(o => o.id)),
+        feedback: q.feedback,
+        points: q.points,
+        timeLimitSeconds: q.timeLimitSeconds
+    }));
+    const payload = {
+        courseId: currentCourse.id,
+        title, examDate, examTime, description,
+        accessKey: cfg.accessKey,
+        openAt: openAt ? openAt + ':00' : '',
+        closeAt: closeAt ? closeAt + ':00' : '',
+        maxAttempts,
+        configJson: JSON.stringify(cfg),
+        settingsJson: JSON.stringify({ maxScore: cfg.maxScore, passingScore: cfg.passingScore }),
+        questions
+    };
+    try {
+        let saved;
+        if (st.examId) {
+            const res = await apiFetch('/api/exams/' + st.examId, { method: 'PUT', body: JSON.stringify(payload) });
+            saved = res && res.ok ? await res.json() : null;
+        } else {
+            saved = await postJson('/api/exams', payload);
+        }
+        if (saved) {
+            const idx = teacherExams.findIndex(e => String(e.id) === String(saved.id));
+            if (idx >= 0) teacherExams[idx] = saved;
+            else teacherExams.push(saved);
+        }
+        closeModal();
+        renderUnit(st.unitIdx);
+        showToast('Evaluación guardada', 'success');
+    } catch (e) {
+        console.error('saveExamFromEditor error', e);
+        showToast('Error guardando evaluación: ' + (e.message || 'Revisa la consola'), 'error');
+    }
+}
+
+async function removeExam(examId, unitIdx) {
+    openConfirmModal('Eliminar evaluación', '¿Eliminar esta evaluación y todas sus preguntas?', async () => {
+        const units = getUnits(currentCourse.id);
+        units[unitIdx].exams = (units[unitIdx].exams || []).filter(id => id !== examId);
+        saveUnits(currentCourse.id, units);
+        try { await apiFetch('/api/exams/' + examId, { method: 'DELETE' }); } catch (e) {}
+        teacherExams = teacherExams.filter(e => String(e.id) !== String(examId));
+        renderUnit(unitIdx);
+        showToast('Evaluación eliminada');
+    }, 'Eliminar');
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -4937,16 +5646,19 @@ function addResourceModal(unitIdx) {
     openModal('Agregar Recurso', `
         <div class="form-group"><label class="form-label">Nombre del recurso</label><input type="text" class="form-input" id="mResName" placeholder="Ej: Álgebra Lineal — Howard Anton (Cap. 1-3)"></div>
         <div class="form-group"><label class="form-label">Tipo</label><select class="form-input" id="mResType"><option value="pdf">PDF</option><option value="doc">Documento</option><option value="link">Enlace web</option><option value="video">Video</option><option value="img">Imagen</option></select></div>
-        <div class="form-group"><label class="form-label">URL (opcional)</label><input type="url" class="form-input" id="mResUrl" placeholder="https://..."></div>
+        <div class="form-group"><label class="form-label">URL <span style="font-size:12px;color:var(--text-muted)">(obligatoria)</span></label><input type="url" class="form-input" id="mResUrl" placeholder="https://..."></div>
         <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="saveResource(${unitIdx})">Agregar recurso</button>`);
 }
 
 function saveResource(unitIdx) {
     const name = document.getElementById('mResName').value.trim();
+    const type = document.getElementById('mResType').value;
+    const url = (document.getElementById('mResUrl').value || '').trim();
     if (!name) { showToast('El nombre del recurso es obligatorio', 'error'); return; }
+    if (!url || url === '#') { showToast('La URL es obligatoria para todos los recursos', 'error'); return; }
     const units = getUnits(currentCourse.id);
     units[unitIdx].resources = units[unitIdx].resources || [];
-    units[unitIdx].resources.push({ name, type: document.getElementById('mResType').value, url: document.getElementById('mResUrl').value || '#' });
+    units[unitIdx].resources.push({ name, type, url: url || '#' });
     saveUnits(currentCourse.id, units);
     closeModal(); renderUnit(unitIdx); showToast('Recurso agregado', 'success');
 }
@@ -4988,7 +5700,7 @@ async function createGrade(courseId) {
     const val = parseFloat(document.getElementById('mGrade').value);
     const desc = document.getElementById('mGradeDesc').value;
     if (isNaN(val) || val < 0 || val > 10) { showToast('Calificación inválida', 'error'); return; }
-    const student = MOCK.students.find(s => s.id === sId);
+    const student = teacherStudents.find(s => s.id === sId);
     try {
         const saved = await postJson('/api/grades', {
             studentId: sId,
@@ -5010,7 +5722,7 @@ async function createSchedule() {
     const end = document.getElementById('schEnd').value;
     if (!cId || !day || !start || !end) { showToast('Completa todos los campos del horario', 'error'); return; }
     if (start >= end) { showToast('La hora de fin debe ser mayor que la hora de inicio', 'error'); return; }
-    const course = MOCK.courses.find(c => c.id === cId) || {};
+    const course = teacherCourses.find(c => c.id === cId) || {};
     try {
         const saved = await postJson('/api/schedules', {
             courseId: cId,
@@ -5192,7 +5904,7 @@ async function renderTeacherAbsenceReports() {
                     const hasUrl = !!resolveSubmissionFileSource(f);
                     return `<div class="attachment-item" style="margin-bottom:6px"><div class="attachment-icon doc"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><span class="attachment-name">${f.name || 'Archivo'}</span><span class="attachment-meta">${f.size ? (f.size/1024).toFixed(0) + ' KB' : ''}</span><button class="attachment-download" ${hasUrl ? `onclick="previewAbsenceSupport('${String(r.id).replace(/'/g, "\\'")}',${fi})"` : 'disabled'}>${hasUrl ? 'Previsualizar' : 'Sin vista previa'}</button><button class="attachment-download" ${hasUrl ? `onclick="downloadAbsenceSupport('${String(r.id).replace(/'/g, "\\'")}',${fi})"` : 'disabled'}>${hasUrl ? 'Descargar' : 'Sin descarga'}</button></div>`;
                 }).join('') : '<div style="font-size:12px;color:var(--text-muted)">No se adjuntaron soportes.</div>'}</div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn btn-sm btn-success-outline" onclick="updateAbsenceReportStatus('${r.id}','approved')">Validar excusa</button><button class="btn btn-sm btn-danger" onclick="updateAbsenceReportStatus('${r.id}','rejected')">No validar</button></div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn btn-sm btn-success-outline" onclick="updateAbsenceReportStatus('${r.id}','approved')">Validar excusa</button><button class="btn btn-sm btn-danger" onclick="updateAbsenceReportStatus('${r.id}','rejected')">No validar</button><button class="btn btn-sm btn-outline" style="color:var(--error);border-color:rgba(192,57,43,0.35)" onclick="deleteAbsenceReport('${r.id}')">Eliminar</button></div>
             </div>
         </div>`;
     }).join('') + `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;flex-wrap:wrap"><span style="font-size:12px;color:var(--text-muted)">Mostrando ${(safePage - 1) * state.pageSize + 1}-${Math.min(safePage * state.pageSize, reports.length)} de ${reports.length}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="changeAbsenceReportsPage(-1)">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="changeAbsenceReportsPage(1)">Siguiente</button></div></div>`;
@@ -5250,6 +5962,18 @@ async function updateAbsenceReportStatus(reportId, status) {
     }
     showToast(normalized === 'APPROVED' ? 'Excusa marcada como valida' : 'Excusa marcada como no valida', 'success');
     renderTeacherAbsenceReports();
+}
+
+function deleteAbsenceReport(reportId) {
+    openConfirmModal('Eliminar excusa', '¿Estás seguro de que deseas eliminar esta excusa de inasistencia? Esta acción no se puede deshacer.', async () => {
+        const res = await apiFetch('/api/teacher/absence-reports/' + reportId, { method: 'DELETE' });
+        if (!res || !res.ok) {
+            showToast('No se pudo eliminar la excusa', 'error');
+            return;
+        }
+        showToast('Excusa eliminada correctamente', 'success');
+        renderTeacherAbsenceReports();
+    }, 'Eliminar');
 }
 
 function ensureTeacherWellbeingCard() {
@@ -5673,8 +6397,6 @@ async function init() {
     try {
         authHeader = '';
         setDate();
-        initStorageBackendSync();
-        await hydrateStorageFromBackend();
         const me = await tryFetch('/api/auth/me');
         if (!me || !me.id) {
             window.location.href = '/login?role=teacher&redirect=/teacher-dashboard';
@@ -5794,7 +6516,7 @@ document.getElementById('btnNewGrade').addEventListener('click', () => {
     const courseId = parseInt(document.getElementById('gradeCourseFilter').value);
     if (!courseId) { showToast('Selecciona un curso primero', 'error'); return; }
     openModal('Nueva Calificación', `
-        <div class="form-group"><label class="form-label">Estudiante</label><select class="form-input" id="mStudent">${MOCK.students.map(s => `<option value="${s.id}">${s.user.name}</option>`).join('')}</select></div>
+        <div class="form-group"><label class="form-label">Estudiante</label><select class="form-input" id="mStudent">${teacherStudents.map(s => `<option value="${s.id}">${s.user.name}</option>`).join('')}</select></div>
         <div class="form-group"><label class="form-label">Calificación (0-10)</label><input type="number" class="form-input" id="mGrade" min="0" max="10" step="0.1" placeholder="Ej: 8.5"></div>
         <div class="form-group"><label class="form-label">Descripción</label><textarea class="form-input" id="mGradeDesc" placeholder="Observaciones..."></textarea></div>
         <button class="btn btn-teal" style="width:100%" onclick="createGrade(${courseId})">Registrar calificación</button>`);
@@ -5803,7 +6525,7 @@ document.getElementById('btnNewGrade').addEventListener('click', () => {
 document.getElementById('btnExportGrades').addEventListener('click', exportGrades);
 
 document.getElementById('btnNewSchedule').addEventListener('click', () => {
-    const courses = teacherCourses.length ? teacherCourses : MOCK.courses;
+    const courses = teacherCourses.length ? teacherCourses : [];
     openModal('Nuevo Horario', `
         <div class="form-group"><label class="form-label">Curso</label><select class="form-input" id="schCourse">${courses.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}</select></div>
         <div class="form-row">
@@ -5832,9 +6554,9 @@ document.getElementById('saveProfileBtn').addEventListener('click', saveProfile)
 const btnNewTeacherGuide = document.getElementById('btnNewTeacherGuide');
 if (btnNewTeacherGuide) btnNewTeacherGuide.addEventListener('click', () => openTeacherGuideModal(''));
 
-document.getElementById('btnBackToList').addEventListener('click', () => {
+document.getElementById('btnBackToList').addEventListener('click', async () => {
     document.getElementById('submissionDetailView').style.display = 'none';
-    renderEntregasList();
+    await renderEntregasList();
 });
 
 const btnJoinCourseCodeTeacher = document.getElementById('btnJoinCourseCodeTeacher');
