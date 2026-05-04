@@ -4,10 +4,12 @@ import com.github.net.educat.domain.Grade;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface GradeRepository extends JpaRepository<Grade, Integer> {
     List<Grade> findByStudentId(Integer studentId);
     List<Grade> findByCourseId(Integer courseId);
     List<Grade> findByStudentIdAndCourseId(Integer studentId, Integer courseId);
+    Optional<Grade> findByStudentIdAndActivityId(Integer studentId, Integer activityId);
 }

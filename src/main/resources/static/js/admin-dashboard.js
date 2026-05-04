@@ -225,6 +225,9 @@ const state = {
         certCurrentPageStudentIds: [],
         certStudentsPage: 1,
         certStudentsPageSize: 8,
+        certTableSearch: '',
+        certTablePage: 1,
+        certTablePageSize: 8,
         enrollmentReviewSearch: '',
         enrollmentReviewStatusFilter: 'pending-review',
         enrollmentReviewLevelFilter: 'all',
@@ -631,14 +634,19 @@ async function loadData() {
     state.academicLevels = asArray(await api('/api/academic-levels').catch(() => [])).map(l => ({ ...l, id: String(l.id || '') }));
     state.academicGrades = asArray(await api('/api/academic-grades').catch(() => [])).map(g => ({ ...g, id: String(g.id || ''), levelId: String(g.levelId || '') }));
     state.courseLevels = asObject(readStorage(STORAGE_KEYS.courseLevels, {}));
-    state.courseGrades = asObject(readStorage(STORAGE_KEYS.courseGrades, {}));
     state.courseCapacity = asObject(readStorage(STORAGE_KEYS.courseCapacity, {}));
     state.teacherLevels = asObject(readStorage(STORAGE_KEYS.teacherLevels, {}));
     state.teacherGrades = asObject(readStorage(STORAGE_KEYS.teacherGrades, {}));
     state.studentLevels = asObject(readStorage(STORAGE_KEYS.studentLevels, {}));
-    state.studentGrades = asObject(readStorage(STORAGE_KEYS.studentGrades, {}));
+
+    const courseGradesRes = await api('/api/config/course-grades').catch(() => null);
+    state.courseGrades = courseGradesRes && courseGradesRes.value ? asObject(JSON.parse(courseGradesRes.value)) : asObject(readStorage(STORAGE_KEYS.courseGrades, {}));
+    const studentGradesRes = await api('/api/config/student-grades').catch(() => null);
+    state.studentGrades = studentGradesRes && studentGradesRes.value ? asObject(JSON.parse(studentGradesRes.value)) : asObject(readStorage(STORAGE_KEYS.studentGrades, {}));
     const assignmentRulesRes = await api('/api/config/assignment-rules').catch(() => null);
     state.assignmentRules = assignmentRulesRes && assignmentRulesRes.value ? asArray(JSON.parse(assignmentRulesRes.value)) : [];
+    const cutPeriodsRes = await api('/api/config/cut-periods').catch(() => null);
+    state.cutPeriods = cutPeriodsRes && cutPeriodsRes.value ? asArray(JSON.parse(cutPeriodsRes.value)) : [];
     const enrollmentConfigRes = await api('/api/config/enrollment-form-config').catch(() => null);
     state.ui.enrollmentFormConfigLoaded = enrollmentConfigRes && enrollmentConfigRes.value ? asArray(JSON.parse(enrollmentConfigRes.value)).map(cloneEnrollmentField) : [];
 
@@ -773,6 +781,7 @@ function renderOverview() {
         <div class="muted" style="margin-top:6px">Libertad docente: ${p.allowTeacherCustom ? 'Si' : 'No'}</div>
         <div class="muted">Rango de parciales: ${p.examMinPercent}% - ${p.examMaxPercent}%</div>
     `;
+    callIfFn('renderEvaluationReportSection');
 }
 
 function userNameFrom(obj) {
@@ -892,6 +901,7 @@ function cleanupStudentAcademicLinks() {
 
     state.studentLevels = cleanedStudentLevels;
     state.studentGrades = cleanedStudentGrades;
+    saveStudentGradesToBackend();
 }
 
 
@@ -1185,6 +1195,7 @@ async function confirmDeleteCourse(courseId) {
     delete state.courseGrades[String(courseId)];
     delete state.courseCapacity[String(courseId)];
     saveLevelsState();
+    saveCourseGradesToBackend();
     closeModal();
     renderCoursesSection();
     renderOverview();
@@ -1232,6 +1243,7 @@ async function createCourse() {
     setCourseGradeIds(String(saved.id), gradeIds);
     state.courseCapacity[String(saved.id)] = capacity;
     saveLevelsState();
+    saveCourseGradesToBackend();
     renderCoursesSection();
     renderOverview();
     document.getElementById('courseName').value = '';
@@ -1363,6 +1375,16 @@ async function resolveTeacherIdForCourseCreation(teacherValue) {
 
 async function saveLevelsState() {
     await api('/api/config/assignment-rules', { method: 'PUT', headers: headers(), body: JSON.stringify(state.assignmentRules) }).catch(() => {});
+}
+
+async function saveCourseGradesToBackend() {
+    await api('/api/config/course-grades', { method: 'PUT', headers: headers(), body: JSON.stringify(state.courseGrades) }).catch(() => {});
+    saveStorage(STORAGE_KEYS.courseGrades, state.courseGrades);
+}
+
+async function saveStudentGradesToBackend() {
+    await api('/api/config/student-grades', { method: 'PUT', headers: headers(), body: JSON.stringify(state.studentGrades) }).catch(() => {});
+    saveStorage(STORAGE_KEYS.studentGrades, state.studentGrades);
 }
 
 function setCourseGradeIds(courseId, gradeIds) {
@@ -2057,15 +2079,17 @@ async function saveRolePerms() {
 async function saveUserPerms() {
     const userId = String((document.getElementById('permUser') || {}).value || '');
     if (!userId) return showToast('Selecciona un usuario', 'error');
+    const perms = asArray(state.userPerms[userId]).map(String);
     try {
         const saved = await api('/api/admin/access/users/' + encodeURIComponent(userId) + '/permissions', {
             method: 'PUT',
             headers: headers(),
-            body: JSON.stringify({ permissions: asArray(state.userPerms[userId]) })
+            body: JSON.stringify({ permissions: perms })
         });
         state.userPerms[userId] = asArray(saved).map(String);
     } catch (e) {
-        return showToast('No se pudo guardar permisos del usuario en servidor', 'error');
+        console.error('Error guardando permisos de usuario:', e);
+        return showToast('No se pudo guardar permisos del usuario en servidor: ' + (e && e.message ? e.message : 'Error desconocido'), 'error');
     }
     showToast('Permisos de usuario guardados', 'success');
 }
@@ -2938,6 +2962,22 @@ function certStudentsNextPage() {
     renderCertificatesSection();
 }
 
+function setCertTableSearch(value) {
+    state.ui.certTableSearch = String(value || '');
+    state.ui.certTablePage = 1;
+    renderCertificatesSection();
+}
+
+function certTablePrevPage() {
+    state.ui.certTablePage = Math.max(1, parseInt(state.ui.certTablePage || '1', 10) - 1);
+    renderCertificatesSection();
+}
+
+function certTableNextPage() {
+    state.ui.certTablePage = parseInt(state.ui.certTablePage || '1', 10) + 1;
+    renderCertificatesSection();
+}
+
 function renderCertificatesSection() {
     const levelEl = document.getElementById('certFilterLevel');
     const gradeQueryEl = document.getElementById('certGradeQuery');
@@ -3097,16 +3137,42 @@ function renderCertificatesSection() {
         summaryEl.textContent = `Seleccionados: ${selectedSet.size} | Filtrados: ${filtered.length} | Mostrando: ${paged.items.length}`;
     }
 
-    const rows = (state.certificates || []).map(c => {
+    // ── Tabla de certificados emitidos con búsqueda y paginación ──
+    const tableSearch = String(state.ui.certTableSearch || '').trim().toLowerCase();
+    const tableCerts = (state.certificates || []).filter(c => {
+        if (!tableSearch) return true;
+        const student = (state.students || []).find(s => String(s.id) === String(c.studentId || (c.student || {}).id || ''));
+        const studentName = student ? userNameFrom(student).toLowerCase() : '';
+        const certName = String(c.name || '').toLowerCase();
+        return studentName.includes(tableSearch) || certName.includes(tableSearch);
+    });
+    const tablePaged = paginateItems(tableCerts, state.ui.certTablePage, state.ui.certTablePageSize || 8);
+    state.ui.certTablePage = tablePaged.page;
+
+    const rows = tablePaged.items.map(c => {
         const student = (state.students || []).find(s => String(s.id) === String(c.studentId || (c.student || {}).id || ''));
         const dateRaw = c.createdAt || c.issuedAt || '';
         const date = dateRaw ? new Date(dateRaw).toLocaleDateString('es-CO') : '-';
         const fileLabel = c.fileName || (c.filePath ? 'Adjunto' : '-');
         return `<tr><td>${escapeHtml(student ? userNameFrom(student) : 'Sin estudiante')}</td><td>${escapeHtml(c.name || 'Sin nombre')}</td><td>${escapeHtml(fileLabel)}</td><td>${escapeHtml(date)}</td><td><button class="btn btn-sm btn-outline" onclick="deleteCertificate('${String(c.id)}')">Eliminar</button></td></tr>`;
     }).join('');
-    host.innerHTML = rows
-        ? `<table class="table"><thead><tr><th>Estudiante</th><th>Certificado</th><th>Archivo</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>${rows}</tbody></table>`
-        : '<div class="muted">No hay certificados registrados.</div>';
+
+    const tablePager = tableCerts.length > (state.ui.certTablePageSize || 8)
+        ? `<div class="pager" style="margin-top:10px">
+            <button class="btn btn-sm btn-outline" ${tablePaged.page <= 1 ? 'disabled' : ''} onclick="certTablePrevPage()">Anterior</button>
+            <span>${tablePaged.page}/${tablePaged.totalPages}</span>
+            <button class="btn btn-sm btn-outline" ${tablePaged.page >= tablePaged.totalPages ? 'disabled' : ''} onclick="certTableNextPage()">Siguiente</button>
+           </div>`
+        : '';
+
+    host.innerHTML = `
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+            <input class="form-input" style="max-width:260px" placeholder="Buscar por alumno o certificado" value="${escapeHtml(state.ui.certTableSearch || '')}" oninput="setCertTableSearch(this.value)">
+        </div>
+        ${rows
+            ? `<table class="table"><thead><tr><th>Estudiante</th><th>Certificado</th><th>Archivo</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>${rows}</tbody></table>${tablePager}`
+            : '<div class="muted">No hay certificados registrados.</div>'}
+    `;
 }
 
 async function createCertificate() {
@@ -3122,6 +3188,7 @@ async function createCertificate() {
 
     let created = 0;
     let failed = 0;
+    let lastError = '';
     for (const studentId of selectedStudentIds) {
         try {
             const saved = await api('/api/certificates', {
@@ -3140,6 +3207,7 @@ async function createCertificate() {
             created += 1;
         } catch (e) {
             failed += 1;
+            lastError = e.message || 'Error desconocido';
         }
     }
 
@@ -3149,7 +3217,7 @@ async function createCertificate() {
     renderCertificatesSection();
     renderOverview();
     if (failed > 0) {
-        showToast(`Certificados emitidos: ${created}. Fallidos: ${failed}.`, 'error');
+        showToast(`Certificados emitidos: ${created}. Fallidos: ${failed}. ${lastError}`, 'error');
         return;
     }
     showToast(`Certificados emitidos: ${created}`, 'success');
@@ -3778,6 +3846,14 @@ function openGuideForm(guideId) {
         <div class="form-group"><label class="form-label">Título</label><input class="form-input" id="guideTitle" value="${escapeHtml(guide.title || '')}"></div>
         <div class="form-group"><label class="form-label">Detalle corto</label><textarea class="form-input" id="guideDetail" style="min-height:90px">${escapeHtml(guide.detail || '')}</textarea></div>
         <div class="form-group">
+            <label class="form-label">Audiencia</label>
+            <select class="form-input" id="guideAudience">
+                <option value="ESTUDIANTE" ${(!guide.audienceJson || String(guide.audienceJson).includes('ESTUDIANTE')) ? 'selected' : ''}>Estudiantes</option>
+                <option value="DOCENTE" ${String(guide.audienceJson || '').includes('DOCENTE') ? 'selected' : ''}>Docentes</option>
+                <option value="TODOS" ${String(guide.audienceJson || '').includes('TODOS') ? 'selected' : ''}>Todos</option>
+            </select>
+        </div>
+        <div class="form-group">
             <label class="form-label">Contenido del instructivo (editor de texto)</label>
             ${buildRichEditorHtml('guideRichEditor')}
         </div>
@@ -3817,6 +3893,7 @@ async function saveGuideFromModal(guideId) {
     const pdfUrl = String(modalState.guidePdfDataUrl || pdfUrlInput || '').trim();
     const richHtml = sanitizeRichHtml(trtGetHtml('guideRichEditor'));
     const attachments = normalizeGuideAttachments(modalState.guideAttachments);
+    const audience = String((document.getElementById('guideAudience') || {}).value || 'ESTUDIANTE');
     if (!title) return showToast('Título requerido', 'error');
     const payload = {
         title,
@@ -3827,7 +3904,8 @@ async function saveGuideFromModal(guideId) {
         textSections: [],
         richHtml,
         attachments,
-        sectionsJson: JSON.stringify([])
+        sectionsJson: JSON.stringify([]),
+        audienceJson: JSON.stringify([audience])
     };
     try {
         if (guideId && !isNaN(parseInt(guideId, 10))) {
@@ -6225,6 +6303,7 @@ async function importStudentsBatch() {
             }
         }
     }
+    saveStudentGradesToBackend();
 
     cleanupStudentAcademicLinks();
     cleanupAssistantSelections();
@@ -6302,6 +6381,67 @@ function saveGradePolicy() {
     api('/api/config/grade-policy', { method: 'PUT', headers: headers(), body: JSON.stringify(state.gradePolicy) }).catch(() => {});
     renderOverview();
     showToast('Política de calificación guardada', 'success');
+}
+
+function renderCutPeriodsSection() {
+    const host = document.getElementById('cutPeriodsList');
+    if (!host) return;
+    const periods = asArray(state.cutPeriods);
+    if (!periods.length) {
+        host.innerHTML = '<div class="muted" style="padding:8px 0">No hay periodos configurados.</div>';
+        return;
+    }
+    host.innerHTML = periods.map((p, i) => `
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:8px;align-items:end;margin-bottom:10px;padding:10px;border:1px solid rgba(11,31,58,0.08);border-radius:8px" data-cut-index="${i}">
+            <div class="form-group" style="margin:0">
+                <label class="form-label" style="font-size:11px">Nombre</label>
+                <input type="text" class="form-input cut-period-name" value="${escapeHtml(p.name || '')}" placeholder="Ej: Primer corte">
+            </div>
+            <div class="form-group" style="margin:0">
+                <label class="form-label" style="font-size:11px">Inicio</label>
+                <input type="date" class="form-input cut-period-start" value="${escapeHtml(p.startDate || '')}">
+            </div>
+            <div class="form-group" style="margin:0">
+                <label class="form-label" style="font-size:11px">Cierre</label>
+                <input type="date" class="form-input cut-period-end" value="${escapeHtml(p.endDate || '')}">
+            </div>
+            <div class="form-group" style="margin:0">
+                <label class="form-label" style="font-size:11px">Habilitar desde</label>
+                <input type="date" class="form-input cut-period-enabled" value="${escapeHtml(p.enabledFrom || '')}">
+            </div>
+            <button class="btn btn-sm btn-danger" onclick="removeCutPeriod(${i})" title="Eliminar">×</button>
+        </div>
+    `).join('');
+}
+
+function addCutPeriod() {
+    state.cutPeriods = asArray(state.cutPeriods);
+    state.cutPeriods.push({ name: '', startDate: '', endDate: '', enabledFrom: '' });
+    renderCutPeriodsSection();
+}
+
+function removeCutPeriod(index) {
+    state.cutPeriods = asArray(state.cutPeriods);
+    state.cutPeriods.splice(index, 1);
+    renderCutPeriodsSection();
+}
+
+function saveCutPeriods() {
+    const host = document.getElementById('cutPeriodsList');
+    if (!host) return;
+    const rows = host.querySelectorAll('[data-cut-index]');
+    const periods = [];
+    rows.forEach(row => {
+        const name = String((row.querySelector('.cut-period-name') || {}).value || '').trim();
+        const startDate = String((row.querySelector('.cut-period-start') || {}).value || '').trim();
+        const endDate = String((row.querySelector('.cut-period-end') || {}).value || '').trim();
+        const enabledFrom = String((row.querySelector('.cut-period-enabled') || {}).value || '').trim();
+        if (name) periods.push({ name, startDate, endDate, enabledFrom });
+    });
+    state.cutPeriods = periods;
+    api('/api/config/cut-periods', { method: 'PUT', headers: headers(), body: JSON.stringify(periods) }).catch(() => {});
+    renderCutPeriodsSection();
+    showToast('Periodos de corte guardados', 'success');
 }
 
 function renderEnrollmentsTable() {
@@ -6552,6 +6692,8 @@ async function deleteAcademicGrade(gradeId) {
     cleanupStudentAcademicLinks();
     cleanupAssistantSelections();
     saveLevelsState();
+    saveCourseGradesToBackend();
+    saveStudentGradesToBackend();
     renderCoursesSection();
 }
 
@@ -6589,6 +6731,8 @@ async function deleteAcademicLevel(levelId) {
     cleanupStudentAcademicLinks();
     cleanupAssistantSelections();
     saveLevelsState();
+    saveCourseGradesToBackend();
+    saveStudentGradesToBackend();
     renderCoursesSection();
     showToast('Nivel eliminado', 'success');
 }
@@ -6978,6 +7122,7 @@ function confirmDeleteAllUsers() {
     state.studentGrades = {};
     cleanupAssistantSelections();
     saveLevelsState();
+    saveStudentGradesToBackend();
     closeModal();
     renderOverview();
     renderEnrollmentsTable();
@@ -7243,6 +7388,216 @@ function bindEvents() {
     bindClick('btnExportSurveyResults', () => callIfFn('exportSurveyResultsExcel'));
 
     bindClickIfFn('btnSaveGrading', 'saveGradePolicy');
+    bindClickIfFn('btnAddCutPeriod', 'addCutPeriod');
+    bindClickIfFn('btnSaveCutPeriods', 'saveCutPeriods');
+}
+
+const adminEvalReportState = { data: [], filtered: [], page: 1, pageSize: 6, query: '', teacherFilter: 'all', courseFilter: 'all' };
+
+function computeTeacherStats(evalItems) {
+    const byTeacher = {};
+    evalItems.forEach(item => {
+        const teacherName = ((item.course || {}).teacher || {}).user ? ((item.course || {}).teacher || {}).user.name : (((item.course || {}).teacher || {}).name || 'Sin docente');
+        const courseName = (item.course || {}).name || 'Curso';
+        const key = teacherName + '|' + courseName;
+        if (!byTeacher[key]) byTeacher[key] = { teacherName, courseName, answers: {}, count: 0, totalScore: 0, scoreCount: 0 };
+        byTeacher[key].count++;
+        const ans = item.answers || {};
+        Object.entries(ans).forEach(([k, v]) => {
+            const num = parseFloat(v);
+            if (!isNaN(num)) {
+                byTeacher[key].answers[k] = (byTeacher[key].answers[k] || 0) + num;
+                byTeacher[key].totalScore += num;
+                byTeacher[key].scoreCount++;
+            }
+        });
+    });
+    const evalLabels = {};
+    (state.forms.eval || []).forEach(q => { if (q && q.id) evalLabels[String(q.id)] = String(q.text || q.label || q.id).trim(); });
+    return Object.values(byTeacher).map(t => {
+        const avgMap = {};
+        Object.entries(t.answers).forEach(([k, sum]) => { avgMap[k] = (sum / t.count).toFixed(1); });
+        const overallAvg = t.scoreCount ? (t.totalScore / t.scoreCount).toFixed(1) : '0.0';
+        const positiveCount = t.scoreCount ? Object.values(t.answers).filter(sum => (sum / t.count) >= 6).length : 0;
+        const totalQuestions = Object.keys(t.answers).length;
+        return { ...t, avgMap, overallAvg, positiveCount, totalQuestions, evalLabels };
+    }).sort((a, b) => parseFloat(b.overallAvg) - parseFloat(a.overallAvg));
+}
+
+function renderAdminEvalReportList() {
+    const container = document.getElementById('adminEvaluationReportList');
+    if (!container) return;
+    const s = adminEvalReportState;
+    let items = s.filtered;
+    if (s.teacherFilter !== 'all') items = items.filter(t => t.teacherName === s.teacherFilter);
+    if (s.courseFilter !== 'all') items = items.filter(t => t.courseName === s.courseFilter);
+    if (s.query) {
+        const q = s.query.toLowerCase();
+        items = items.filter(t => t.teacherName.toLowerCase().includes(q) || t.courseName.toLowerCase().includes(q));
+    }
+    const totalPages = Math.max(1, Math.ceil(items.length / s.pageSize));
+    s.page = Math.min(Math.max(1, s.page), totalPages);
+    const pageItems = items.slice((s.page - 1) * s.pageSize, s.page * s.pageSize);
+
+    if (!items.length) {
+        container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin resultados</div><div class="empty-state-text">No hay datos para los filtros seleccionados.</div></div>';
+        return;
+    }
+
+    const rows = pageItems.map((t, idx) => {
+        const avgEntries = Object.entries(t.avgMap).map(([k, avg]) => {
+            const label = t.evalLabels[k] || k;
+            const num = parseFloat(avg);
+            let color = 'var(--text-body)';
+            if (num >= 8) color = 'var(--success)';
+            else if (num >= 6) color = 'var(--gold)';
+            else color = 'var(--error)';
+            return `<span style="display:inline-block;background:var(--cream);border:1px solid rgba(11,31,58,0.08);border-radius:6px;padding:4px 8px;margin:2px;font-size:12px">${escapeHtml(label)}: <strong style="color:${color}">${avg}</strong></span>`;
+        }).join('');
+        const positiveRate = t.totalQuestions ? Math.round((t.positiveCount / t.totalQuestions) * 100) : 0;
+        const overallColor = parseFloat(t.overallAvg) >= 8 ? 'var(--success)' : (parseFloat(t.overallAvg) >= 6 ? 'var(--gold)' : 'var(--error)');
+        return `<div class="card" style="margin-bottom:14px">
+            <div class="card-header" style="padding:14px 18px">
+                <div>
+                    <div style="font-size:14px;font-weight:700">${escapeHtml(t.teacherName)}</div>
+                    <div style="font-size:12px;color:var(--text-muted)">${escapeHtml(t.courseName)} · ${t.count} evaluacion(es)</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px">
+                    <span style="font-size:18px;font-weight:700;color:${overallColor}">${t.overallAvg}</span>
+                    <span class="badge ${positiveRate >= 70 ? 'badge-success' : (positiveRate >= 50 ? 'badge-gold' : 'badge-error')}" style="font-size:11px">${positiveRate}% positivas</span>
+                </div>
+            </div>
+            <div class="card-body" style="padding:16px 18px">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:1px;margin-bottom:8px">Promedios por pregunta</div>
+                <div style="display:flex;flex-wrap:wrap;gap:4px">${avgEntries}</div>
+            </div>
+        </div>`;
+    }).join('');
+
+    const pager = `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;flex-wrap:wrap">
+        <span style="font-size:12px;color:var(--text-muted)">Mostrando ${(s.page - 1) * s.pageSize + 1}-${Math.min(s.page * s.pageSize, items.length)} de ${items.length}</span>
+        <div style="display:flex;gap:6px">
+            <button class="btn btn-sm btn-outline" ${s.page === 1 ? 'disabled' : ''} onclick="changeAdminEvalReportPage(-1)">Anterior</button>
+            <button class="btn btn-sm btn-outline" ${s.page === totalPages ? 'disabled' : ''} onclick="changeAdminEvalReportPage(1)">Siguiente</button>
+        </div>
+    </div>`;
+
+    container.innerHTML = rows + pager;
+}
+
+function changeAdminEvalReportPage(delta) {
+    adminEvalReportState.page += delta;
+    renderAdminEvalReportList();
+}
+
+function renderAdminEvalGlobalSummary(stats) {
+    const el = document.getElementById('adminEvalGlobalSummary');
+    if (!el || !stats.length) return;
+    const best = stats[0];
+    const globalAvg = stats.length ? (stats.reduce((s, t) => s + parseFloat(t.overallAvg), 0) / stats.length).toFixed(1) : '0.0';
+    const top3 = stats.slice(0, 3);
+    const podium = top3.map((t, i) => {
+        const medal = i === 0 ? '🥇' : (i === 1 ? '🥈' : '🥉');
+        return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border-radius:8px;border:1px solid rgba(11,31,58,0.08)">
+            <div style="font-size:20px">${medal}</div>
+            <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.teacherName)}</div>
+                <div style="font-size:11px;color:var(--text-muted)">${escapeHtml(t.courseName)}</div>
+            </div>
+            <div style="font-size:15px;font-weight:700;color:var(--success)">${t.overallAvg}</div>
+        </div>`;
+    }).join('');
+    el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px">
+        <div style="background:linear-gradient(135deg,#0B1F3A,#1A3A6B);color:#fff;border-radius:10px;padding:14px;text-align:center">
+            <div style="font-size:22px;font-weight:700">${globalAvg}</div>
+            <div style="font-size:11px;opacity:0.8;margin-top:4px">Promedio global</div>
+        </div>
+        <div style="background:var(--cream);border:1px solid rgba(11,31,58,0.08);border-radius:10px;padding:14px;text-align:center">
+            <div style="font-size:22px;font-weight:700;color:var(--success)">${escapeHtml(best.teacherName)}</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Mejor docente</div>
+        </div>
+        <div style="background:var(--cream);border:1px solid rgba(11,31,58,0.08);border-radius:10px;padding:14px;text-align:center">
+            <div style="font-size:22px;font-weight:700;color:var(--teal)">${stats.length}</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Docentes evaluados</div>
+        </div>
+    </div>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:1px;margin-bottom:10px">Podio de docentes</div>
+    <div style="display:flex;flex-direction:column;gap:8px">${podium}</div>`;
+}
+
+function renderEvaluationReportSection() {
+    const container = document.getElementById('adminEvaluationReportOverview');
+    if (!container) return;
+    const perms = Array.isArray((activeSessionUser || {}).permissions) ? activeSessionUser.permissions : [];
+    const canView = isCurrentUserAdmin() || perms.includes('evaluacion.ver-reporte-admin');
+    if (!canView) {
+        container.innerHTML = '';
+        return;
+    }
+    container.innerHTML = '<div class="card"><div class="card-header"><span class="card-title">Reporte de Evaluacion Docente</span></div><div class="card-body"><div class="loading"><div class="spinner"></div>Cargando reporte...</div></div></div>';
+    fetchEvaluationReport().then(data => {
+        const items = Array.isArray(data) ? data : (data && Array.isArray(data.content) ? data.content : []);
+        if (!items.length) {
+            container.innerHTML = '<div class="card"><div class="card-header"><span class="card-title">Reporte de Evaluacion Docente</span></div><div class="card-body"><div class="alert alert-info">No hay evaluaciones enviadas aun.</div></div></div>';
+            return;
+        }
+        const evalItems = items.filter(x => String((x || {}).evaluationType || '').toUpperCase() === 'EVAL');
+        const stats = computeTeacherStats(evalItems);
+        adminEvalReportState.data = stats;
+        adminEvalReportState.filtered = stats.slice();
+        const teachers = [...new Set(stats.map(t => t.teacherName))].sort();
+        const courses = [...new Set(stats.map(t => t.courseName))].sort();
+
+        container.innerHTML = `<div class="card">
+            <div class="card-header">
+                <span class="card-title">Reporte de Evaluacion Docente</span>
+            </div>
+            <div class="card-body">
+                <div id="adminEvalGlobalSummary" style="margin-bottom:16px"></div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+                    <input class="form-input" id="adminEvalQuery" placeholder="Buscar docente o curso..." style="min-width:220px;flex:1">
+                    <select class="form-input" id="adminEvalTeacherFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                        <option value="all">Todos los docentes</option>
+                        ${teachers.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
+                    </select>
+                    <select class="form-input" id="adminEvalCourseFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                        <option value="all">Todos los cursos</option>
+                        ${courses.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+                    </select>
+                    <select class="form-input" id="adminEvalPageSize" style="width:auto;padding:7px 12px;font-size:13px">
+                        <option value="6">6 por pagina</option>
+                        <option value="10">10 por pagina</option>
+                        <option value="20">20 por pagina</option>
+                    </select>
+                </div>
+                <div id="adminEvaluationReportList"></div>
+            </div>
+        </div>`;
+
+        setTimeout(() => {
+            const qEl = document.getElementById('adminEvalQuery');
+            const tEl = document.getElementById('adminEvalTeacherFilter');
+            const cEl = document.getElementById('adminEvalCourseFilter');
+            const pEl = document.getElementById('adminEvalPageSize');
+            if (qEl) qEl.oninput = () => { adminEvalReportState.query = qEl.value || ''; adminEvalReportState.page = 1; renderAdminEvalReportList(); };
+            if (tEl) tEl.onchange = () => { adminEvalReportState.teacherFilter = tEl.value || 'all'; adminEvalReportState.page = 1; renderAdminEvalReportList(); };
+            if (cEl) cEl.onchange = () => { adminEvalReportState.courseFilter = cEl.value || 'all'; adminEvalReportState.page = 1; renderAdminEvalReportList(); };
+            if (pEl) pEl.onchange = () => { adminEvalReportState.pageSize = Math.max(1, parseInt(pEl.value || '6', 10) || 6); adminEvalReportState.page = 1; renderAdminEvalReportList(); };
+            renderAdminEvalGlobalSummary(stats);
+            renderAdminEvalReportList();
+        }, 0);
+    }).catch(() => {
+        container.innerHTML = '<div class="card"><div class="card-header"><span class="card-title">Reporte de Evaluacion Docente</span></div><div class="card-body"><div class="alert alert-error">No se pudo cargar el reporte.</div></div></div>';
+    });
+}
+
+async function fetchEvaluationReport() {
+    return await api('/api/admin/evaluation-report?page=0&size=500');
+}
+
+function isCurrentUserAdmin() {
+    const roleName = String((((activeSessionUser || {}).role || {}).name) || '').toUpperCase();
+    return roleName === 'ADMIN' || roleName === 'ADMINISTRADOR';
 }
 
 function renderAll() {
@@ -7256,6 +7611,7 @@ function renderAll() {
     callIfFn('renderFormsSection');
     callIfFn('renderImportSection');
     callIfFn('renderGradePolicySection');
+    callIfFn('renderCutPeriodsSection');
 }
 
 function hideInitialBootLoader() {

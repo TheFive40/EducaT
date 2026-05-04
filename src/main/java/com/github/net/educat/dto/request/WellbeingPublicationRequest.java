@@ -26,5 +26,6 @@ public class WellbeingPublicationRequest {
     private String date;
     private String content;
     private String videoLink;
+    private String requestedBy;
 }
 

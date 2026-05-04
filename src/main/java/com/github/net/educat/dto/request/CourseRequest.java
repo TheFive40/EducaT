@@ -14,4 +14,5 @@ public class CourseRequest {
     private String defaultScheduleDay;
     private LocalTime defaultStartTime;
     private LocalTime defaultEndTime;
+    private String cutConfigJson;
 }

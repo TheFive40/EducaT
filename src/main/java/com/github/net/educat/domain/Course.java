@@ -26,4 +26,6 @@ public class Course {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "teacher_id")
     private Teacher teacher;
+    @Column(name = "cut_config_json", columnDefinition = "TEXT")
+    private String cutConfigJson;
 }

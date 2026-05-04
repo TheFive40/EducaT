@@ -77,6 +77,7 @@ public class CourseServiceImpl implements CourseService {
         course.setDefaultScheduleDay(normalizeCourseScheduleDay(request.getDefaultScheduleDay()));
         course.setDefaultStartTime(request.getDefaultStartTime());
         course.setDefaultEndTime(request.getDefaultEndTime());
+        course.setCutConfigJson(request.getCutConfigJson());
         if (request.getTeacherId() == null) {
             course.setTeacher(null);
         } else {
@@ -230,6 +231,15 @@ public class CourseServiceImpl implements CourseService {
                 .map(studentMapper::toResponse)
                 .map(s -> (Object) s)
                 .toList();
+    }
+
+    @Override
+    public CourseResponse updateCutConfig(Integer id, String cutConfigJson) {
+        Course course = courseRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Course not found: " + id));
+        course.setCutConfigJson(cutConfigJson);
+        Course saved = courseRepository.save(course);
+        return courseMapper.toResponse(saved);
     }
 
     private CourseResponse ensureCodeAndMap(Course course) {

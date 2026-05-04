@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.security.Principal;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/courses")
@@ -67,6 +68,11 @@ public class CourseController {
     @PutMapping("/{id}")
     public ResponseEntity<CourseResponse> update(@PathVariable Integer id, @Valid @RequestBody CourseRequest request) {
         return ResponseEntity.ok(courseService.update(id, request));
+    }
+    
+    @PatchMapping("/{id}/cut-config")
+    public ResponseEntity<CourseResponse> updateCutConfig(@PathVariable Integer id, @RequestBody Map<String, String> payload) {
+        return ResponseEntity.ok(courseService.updateCutConfig(id, payload.get("cutConfigJson")));
     }
     
     @DeleteMapping("/{id}")

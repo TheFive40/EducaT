@@ -67,6 +67,18 @@ public class AccessControlServiceImpl implements AccessControlService {
         labels.put("bienestar.rechazar-publicacion", "Bienestar - Denegar solicitud de publicacion");
         labels.put("bienestar.eliminar-comentario", "Bienestar - Eliminar comentarios");
         labels.put("bienestar.eliminar-reaccion", "Bienestar - Eliminar reacciones");
+        labels.put("bienestar.crear-publicacion.psicologia", "Bienestar - Crear publicacion en Psicologia");
+        labels.put("bienestar.crear-publicacion.deportes", "Bienestar - Crear publicacion en Deportes");
+        labels.put("bienestar.crear-publicacion.arte", "Bienestar - Crear publicacion en Arte y Cultura");
+        labels.put("bienestar.crear-publicacion.orientacion", "Bienestar - Crear publicacion en Orientacion");
+        labels.put("bienestar.crear-publicacion.salud", "Bienestar - Crear publicacion en Salud");
+        labels.put("bienestar.crear-publicacion.becas", "Bienestar - Crear publicacion en Becas");
+        labels.put("bienestar.publicar-sin-solicitud", "Bienestar - Publicar sin solicitud de aprobacion");
+        labels.put("bienestar.revisar-solicitudes-publicacion", "Bienestar - Revisar solicitudes de publicacion");
+        labels.put("bienestar.psicologia.gestionar-citas", "Bienestar Psicologia - Gestionar citas y disponibilidad");
+        labels.put("bienestar.psicologia.ver-citas", "Bienestar Psicologia - Ver citas agendadas");
+        labels.put("evaluacion.ver-reporte-docente", "Evaluacion - Ver reporte profesoral propio");
+        labels.put("evaluacion.ver-reporte-admin", "Evaluacion - Ver reporte general (admin/coordinador)");
         labels.put(P_ADMIN, "Acceso a Portal Administrador");
         labels.put(P_TEACHER, "Acceso a Portal Docente");
         labels.put(P_STUDENT, "Acceso a Portal Estudiante");
@@ -93,32 +105,60 @@ public class AccessControlServiceImpl implements AccessControlService {
     @Override
     @Transactional
     public List<String> saveRolePermissions(Integer roleId, List<String> permissions) {
-        rolePermissionRepository.deleteByRole_Id(roleId);
-        List<String> sanitized = sanitizePermissions(permissions);
         Role role = roleRepository.findById(roleId)
                 .orElseThrow(() -> new IllegalArgumentException("Role not found: " + roleId));
-        for (String perm : sanitized) {
-            rolePermissionRepository.save(RolePermission.builder()
-                    .role(role)
-                    .permissionKey(perm)
-                    .build());
+
+        List<RolePermission> existing = rolePermissionRepository.findByRole_Id(roleId);
+        if (!existing.isEmpty()) {
+            rolePermissionRepository.deleteAll(existing);
+            rolePermissionRepository.flush();
         }
+
+        List<String> sanitized = sanitizePermissions(permissions);
+        Set<String> unique = new LinkedHashSet<>(sanitized);
+
+        if (!unique.isEmpty()) {
+            List<RolePermission> toSave = new ArrayList<>();
+            for (String perm : unique) {
+                toSave.add(RolePermission.builder()
+                        .role(role)
+                        .permissionKey(perm)
+                        .build());
+            }
+            rolePermissionRepository.saveAll(toSave);
+            rolePermissionRepository.flush();
+        }
+
         return sanitized;
     }
 
     @Override
     @Transactional
     public List<String> saveUserPermissions(Integer userId, List<String> permissions) {
-        userPermissionRepository.deleteByUser_Id(userId);
-        List<String> sanitized = sanitizePermissions(permissions);
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
-        for (String perm : sanitized) {
-            userPermissionRepository.save(UserPermission.builder()
-                    .user(user)
-                    .permissionKey(perm)
-                    .build());
+
+        List<UserPermission> existing = userPermissionRepository.findByUser_Id(userId);
+        if (!existing.isEmpty()) {
+            userPermissionRepository.deleteAll(existing);
+            userPermissionRepository.flush();
         }
+
+        List<String> sanitized = sanitizePermissions(permissions);
+        Set<String> unique = new LinkedHashSet<>(sanitized);
+
+        if (!unique.isEmpty()) {
+            List<UserPermission> toSave = new ArrayList<>();
+            for (String perm : unique) {
+                toSave.add(UserPermission.builder()
+                        .user(user)
+                        .permissionKey(perm)
+                        .build());
+            }
+            userPermissionRepository.saveAll(toSave);
+            userPermissionRepository.flush();
+        }
+
         return sanitized;
     }
 

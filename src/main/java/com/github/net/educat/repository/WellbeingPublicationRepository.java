@@ -10,4 +10,6 @@ import java.util.List;
 public interface WellbeingPublicationRepository extends JpaRepository<WellbeingPublication, Integer> {
     List<WellbeingPublication> findBySectionOrderByDateDesc(String section);
     List<WellbeingPublication> findAllByOrderByDateDesc();
+    List<WellbeingPublication> findByStatusOrderByRequestedAtDesc(String status);
+    List<WellbeingPublication> findByStatusAndAutoPublishAtBefore(String status, java.time.LocalDateTime autoPublishAt);
 }

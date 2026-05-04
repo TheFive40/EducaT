@@ -47,4 +47,25 @@ public class WellbeingPublication {
 
     @Column(name = "reactions_json", columnDefinition = "TEXT")
     private String reactionsJson;
+
+    @Column(nullable = false, length = 20)
+    private String status;
+
+    @Column(name = "requested_by", length = 200)
+    private String requestedBy;
+
+    @Column(name = "requested_at")
+    private java.time.LocalDateTime requestedAt;
+
+    @Column(name = "reviewed_by", length = 200)
+    private String reviewedBy;
+
+    @Column(name = "reviewed_at")
+    private java.time.LocalDateTime reviewedAt;
+
+    @Column(name = "resolution_comment", columnDefinition = "TEXT")
+    private String resolutionComment;
+
+    @Column(name = "auto_publish_at")
+    private java.time.LocalDateTime autoPublishAt;
 }

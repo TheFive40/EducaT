@@ -51,4 +51,14 @@ public class ConfigController {
     public ResponseEntity<ConfigResponse> saveAssignmentRules(@RequestBody String rules) {
         return ResponseEntity.ok(configService.saveAssignmentRules(rules));
     }
+
+    @GetMapping("/cut-periods")
+    public ResponseEntity<ConfigResponse> getCutPeriods() {
+        return ResponseEntity.ok(configService.getCutPeriods());
+    }
+
+    @PutMapping("/cut-periods")
+    public ResponseEntity<ConfigResponse> saveCutPeriods(@RequestBody String periods) {
+        return ResponseEntity.ok(configService.saveCutPeriods(periods));
+    }
 }

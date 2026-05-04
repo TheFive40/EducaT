@@ -15,6 +15,26 @@ let evalSentMemory = {};
 let wellnessStateCache = null;
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   ESCOGENCIA DE HORARIO STATE
+   ═══════════════════════════════════════════════════════════════════════════ */
+let apAvailableCourses = [];
+let apSelectedSchedules = [];
+let apCourseSchedulesMap = {};
+let apPendingEnrollments = [];
+let apAdminCourseGrades = {};
+let apAdminStudentGrades = {};
+let apAcademicGrades = [];
+let apMyGradeId = '';
+let studentSchedulePolicy = { scheduleSelectionMode: 'free' };
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CERTIFICATES STATE
+   ═══════════════════════════════════════════════════════════════════════════ */
+let certFilterYear = '';
+let certPage = 1;
+const CERT_PAGE_SIZE = 5;
+
+/* ═══════════════════════════════════════════════════════════════════════════
    EXAM TAKER STATE
 ═══════════════════════════════════════════════════════════════════════════ */
 let examTakerState = {
@@ -327,23 +347,44 @@ function loadAdminFormsOrDefault() {
     try {
         const raw = JSON.parse(storageService.getItem('educat_admin_eval_forms') || '{}');
         return {
-            eval: Array.isArray(raw.eval) && raw.eval.length ? raw.eval : DEFAULT_EVAL_QUESTIONS,
-            autoeval: Array.isArray(raw.autoeval) && raw.autoeval.length ? raw.autoeval : DEFAULT_AUTOEVAL_QUESTIONS
+            eval: Array.isArray(raw.eval) ? raw.eval : [],
+            autoeval: Array.isArray(raw.autoeval) ? raw.autoeval : []
         };
     } catch (e) {
-        return { eval: DEFAULT_EVAL_QUESTIONS, autoeval: DEFAULT_AUTOEVAL_QUESTIONS };
+        return { eval: [], autoeval: [] };
     }
 }
 
 function refreshAdminFormsFromStorage() {
     const forms = loadAdminFormsOrDefault();
-    EVAL_QUESTIONS = Array.isArray(forms.eval) ? forms.eval : DEFAULT_EVAL_QUESTIONS;
-    AUTOEVAL_QUESTIONS = Array.isArray(forms.autoeval) ? forms.autoeval : DEFAULT_AUTOEVAL_QUESTIONS;
+    EVAL_QUESTIONS = Array.isArray(forms.eval) ? forms.eval : [];
+    AUTOEVAL_QUESTIONS = Array.isArray(forms.autoeval) ? forms.autoeval : [];
 }
 
-let EVAL_QUESTIONS = DEFAULT_EVAL_QUESTIONS;
-let AUTOEVAL_QUESTIONS = DEFAULT_AUTOEVAL_QUESTIONS;
+let EVAL_QUESTIONS = [];
+let AUTOEVAL_QUESTIONS = [];
 refreshAdminFormsFromStorage();
+
+async function loadEvalFormsFromBackend() {
+    try {
+        const evalForms = await tryFetch('/api/evaluation-forms/type/eval');
+        const autoevalForms = await tryFetch('/api/evaluation-forms/type/autoeval');
+        if (evalForms && evalForms.length && evalForms[0].questionsJson) {
+            const parsed = JSON.parse(evalForms[0].questionsJson);
+            EVAL_QUESTIONS = Array.isArray(parsed) ? parsed : [];
+        } else {
+            EVAL_QUESTIONS = [];
+        }
+        if (autoevalForms && autoevalForms.length && autoevalForms[0].questionsJson) {
+            const parsed = JSON.parse(autoevalForms[0].questionsJson);
+            AUTOEVAL_QUESTIONS = Array.isArray(parsed) ? parsed : [];
+        } else {
+            AUTOEVAL_QUESTIONS = [];
+        }
+    } catch (e) {
+        // Si falla el backend, mantener lo que ya esté cargado (puede estar vacio)
+    }
+}
 
 const MOCK_OUTCOMES = {
     1: [
@@ -974,21 +1015,32 @@ function buildCourseGradeBreakdown(course) {
     const cid = parseInt((course || {}).id || '0', 10) || 0;
     const rows = grades.filter(g => parseInt(((g || {}).course || {}).id || '0', 10) === cid);
     if (!rows.length) return { periods: [], definitive: null };
-    const average = rows.reduce((sum, g) => sum + parseFloat((g || {}).grade || 0), 0) / rows.length;
-    const periodBase = parseFloat(average.toFixed(2));
-    return {
-        periods: [
-            { name: 'Corte 1', grade: periodBase, weight: 33.3 },
-            { name: 'Corte 2', grade: periodBase, weight: 33.3 },
-            { name: 'Corte 3', grade: periodBase, weight: 33.4 }
-        ],
-        definitive: parseFloat(periodBase.toFixed(2))
-    };
+
+    const periods = [];
+    const cutFinalGrades = rows.filter(g => String(g.source || '').toLowerCase() === 'cut');
+
+    if (cutFinalGrades.length) {
+        cutFinalGrades.forEach(g => {
+            const cutName = g.description || 'Corte';
+            periods.push({ name: cutName, grade: parseFloat(parseFloat(g.grade || 0).toFixed(2)), weight: 0, type: 'cut' });
+        });
+    }
+
+    const definitive = periods.length
+        ? parseFloat((periods.reduce((s, p) => s + p.grade, 0) / periods.length).toFixed(2))
+        : null;
+
+    return { periods, definitive };
 }
 
 function buildCourseOutcomes(course) {
     const cid = parseInt((course || {}).id || '0', 10) || 0;
-    const courseRows = grades.filter(g => parseInt(((g || {}).course || {}).id || '0', 10) === cid);
+    // Solo usar definitivas de unidad (source === 'unit') y cortes (source === 'cut') para los resultados
+    const courseRows = grades.filter(g => {
+        if (parseInt(((g || {}).course || {}).id || '0', 10) !== cid) return false;
+        const src = String(g.source || '').toLowerCase();
+        return src === 'unit' || src === 'cut';
+    });
     if (!courseRows.length) return [];
     return courseRows.map((g, idx) => {
         const val = parseFloat((g || {}).grade || 0);
@@ -1053,12 +1105,32 @@ function isSubmissionLate(act, sub) {
     if (!deadline) return false;
     return new Date(sub.submittedAt) > deadline;
 }
+function getOpenStudentCardIds() {
+    return Object.keys(getStudentUnitCardState());
+}
+
 function toggleCard(id, forceOpen) {
     const el = document.getElementById(id);
     if (!el) return;
     const nextOpen = typeof forceOpen === 'boolean' ? forceOpen : !el.classList.contains('open');
     el.classList.toggle('open', nextOpen);
     setStudentCardOpen(id, nextOpen);
+
+    // Si es una tarjeta de actividad y se esta abriendo, refrescar la submission para mostrar la calificacion mas reciente
+    if (nextOpen && String(id).startsWith('act-')) {
+        const parts = String(id).split('-');
+        const actId = parseInt(parts[1], 10);
+        if (actId && currentCourse) {
+            const openIds = getOpenStudentCardIds();
+            refreshStudentSubmission(actId).then(() => {
+                renderUnit(currentUnitIdx, { skipPersist: true });
+                openIds.forEach(cid => {
+                    const cel = document.getElementById(cid);
+                    if (cel) cel.classList.add('open');
+                });
+            });
+        }
+    }
 }
 
 function navigateTo(section, options) {
@@ -1328,16 +1400,26 @@ function loadAreaPersonal() {
         { type:'certificados', color:'rgba(39,174,96,0.1)',  stroke:'var(--success)',    icon:'<circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/>',                                                                                                                                            title:'Certificados',                sub:'Consulta, visualiza y descarga tus certificados disponibles' },
         { type:'eval',       color:'rgba(26,58,107,0.08)',  stroke:'var(--navy-light)', icon:'<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>',                                              title:'Evaluación Docente',           sub:'Evalúa individualmente a cada uno de tus profesores' },
         { type:'autoeval',   color:'rgba(142,68,173,0.08)', stroke:'#8e44ad',           icon:'<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>',                                                                                                                                                title:'Autoevaluación',               sub:'Reflexiona sobre tu propio desempeño académico' },
-        { type:'horario',    color:'rgba(39,174,96,0.08)',  stroke:'var(--success)',    icon:'<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/>',                                                               title:'Escogencia de Horario',        sub:'Indica tu disponibilidad horaria para el próximo período' },
+        { type:'horario',    color:'rgba(39,174,96,0.08)',  stroke:'var(--success)',    icon:'<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/>',                                                               title:'Escogencia de Horario',        sub:'Matriculate en cursos y arma tu horario semanal' },
         { type:'resultados', color:'rgba(30,107,116,0.08)', stroke:'var(--teal)',       icon:'<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>',                                                                                                              title:'Resultados de Aprendizaje',    sub:'Competencias y logros alcanzados por asignatura' },
         { type:'bienestar',  color:'rgba(192,57,43,0.07)',  stroke:'#e74c3c',           icon:'<path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/>',                                                                               title:'Bienestar Estudiantil',        sub:'Servicios de apoyo psicológico, salud, deporte y más' },
     ];
-    document.getElementById('personalGrid').innerHTML = items.map(it => `
-        <div class="ap-menu-card" onclick="openPersonalView('${it.type}')">
+    const isScheduleBlocked = String(studentSchedulePolicy.scheduleSelectionMode || 'free') === 'admin';
+    document.getElementById('personalGrid').innerHTML = items.map(it => {
+        if (it.type === 'horario' && isScheduleBlocked) {
+            return `<div class="ap-menu-card" style="opacity:0.55;cursor:not-allowed;position:relative" onclick="showToast('El administrador ha bloqueado la escogencia de horario','warning')">
+                <div style="position:absolute;top:8px;right:8px"><span class="badge badge-error" style="font-size:10px;padding:2px 6px">Bloqueado</span></div>
+                <div class="ap-menu-icon" style="background:rgba(192,57,43,0.08)"><svg width="26" height="26" fill="none" stroke="var(--error)" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+                <div class="ap-menu-info"><div class="ap-menu-title">${it.title}</div><div class="ap-menu-sub">Escogencia de horario deshabilitada por administracion</div></div>
+                <svg width="16" height="16" fill="none" stroke="var(--text-light)" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>`;
+        }
+        return `<div class="ap-menu-card" onclick="openPersonalView('${it.type}')">
             <div class="ap-menu-icon" style="background:${it.color}"><svg width="26" height="26" fill="none" stroke="${it.stroke}" stroke-width="1.5" viewBox="0 0 24 24">${it.icon}</svg></div>
             <div class="ap-menu-info"><div class="ap-menu-title">${it.title}</div><div class="ap-menu-sub">${it.sub}</div></div>
             <svg width="16" height="16" fill="none" stroke="var(--text-light)" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-        </div>`).join('');
+        </div>`;
+    }).join('');
 }
 
 function openPersonalView(type, options) {
@@ -1364,9 +1446,20 @@ function openPersonalView(type, options) {
     const courses  = enr.map(e => e.course).filter(Boolean);
     const content  = document.getElementById('personalSubContent');
     content.innerHTML = '';
-    if      (type === 'grades')     { content.innerHTML = apGradesHtml(courses);            apInitGrades(); }
+    if      (type === 'grades')     {
+        content.innerHTML = '<div class="loading"><div class="spinner"></div>Cargando calificaciones...</div>';
+        tryFetch('/api/grades/student/' + (currentStudent ? currentStudent.id : 0) + '?_t=' + Date.now()).then(grData => {
+            if (Array.isArray(grData)) grades = grData;
+            const freshCourses = enrollments.map(e => e.course).filter(Boolean);
+            content.innerHTML = apGradesHtml(freshCourses);
+            apInitGrades();
+        });
+    }
     else if (type === 'instructivos') {
-        content.innerHTML = apInstructivosHtml();
+        content.innerHTML = '<div class="loading"><div class="spinner"></div>Cargando instructivos...</div>';
+        apLoadGuides().then(() => {
+            content.innerHTML = apInstructivosHtml();
+        });
     }
     else if (type === 'certificados') { content.innerHTML = apCertificadosHtml(); apRefreshCertificates(); }
     else if (type === 'eval')       {
@@ -1377,7 +1470,19 @@ function openPersonalView(type, options) {
         content.innerHTML = apEvalHtml(courses, 'autoeval');
         apInitEval(courses, 'autoeval');
     }
-    else if (type === 'horario')    { content.innerHTML = apHorarioHtml();                   apInitHorario(); }
+    else if (type === 'horario')    {
+        if (String(studentSchedulePolicy.scheduleSelectionMode || 'free') === 'admin') {
+            content.innerHTML = `<div style="max-width:600px;margin:60px auto;text-align:center;padding:40px 24px">
+                <div style="width:72px;height:72px;border-radius:50%;background:rgba(192,57,43,0.08);display:flex;align-items:center;justify-content:center;margin:0 auto 20px">
+                    <svg width="32" height="32" fill="none" stroke="var(--error)" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                </div>
+                <div style="font-size:18px;font-weight:700;color:var(--text-dark);margin-bottom:10px">Escogencia de horario bloqueada</div>
+                <div style="font-size:14px;color:var(--text-muted);line-height:1.6">El administrador ha deshabilitado la escogencia libre de horario. Tu horario sera asignado por la institucion.</div>
+            </div>`;
+        } else {
+            content.innerHTML = apHorarioHtml(); apInitHorario();
+        }
+    }
     else if (type === 'resultados') { content.innerHTML = apResultadosHtml(courses); }
     else if (type === 'bienestar')  { content.innerHTML = apBienestarHtml(); apInitBienestar(); }
     if (!options || !options.skipPersist) {
@@ -1420,9 +1525,12 @@ function apGradesHtml(courses) {
     const prom  = valid.length ? (valid.reduce((s,x)=>s+x.def,0)/valid.length).toFixed(2) : '—';
     const pc    = apGC(parseFloat(prom));
     const rows  = cg.map((x,i) => {
-        if (!x.def) return '';
+        if (x.def === null) return '';
         const dc = apGC(x.def);
-        const ps = x.periods.map(p => { const c=apGC(p.grade); return `<div class="ap-period-row"><span class="ap-period-name">${p.name}</span><div class="ap-period-bar-wrap"><div class="ap-period-bar"><div class="ap-period-fill" style="width:${(p.grade/10)*100}%;background:${c}"></div></div></div><span class="ap-period-grade" style="color:${c}">${p.grade.toFixed(1)}</span></div>`; }).join('');
+        const ps = x.periods.map(p => {
+            const c=apGC(p.grade);
+            return `<div class="ap-period-row"><span class="ap-period-name">${p.name}</span><div class="ap-period-bar-wrap"><div class="ap-period-bar"><div class="ap-period-fill" style="width:${(p.grade/10)*100}%;background:${c}"></div></div></div><span class="ap-period-grade" style="color:${c}">${p.grade.toFixed(1)}</span></div>`;
+        }).join('');
         return `<div class="ap-course-row" id="apgrow-${i}"><div class="ap-course-row-header" onclick="apToggleGrade(${i})"><div class="ap-course-row-dot" style="background:${dc}"></div><span class="ap-course-row-name">${x.course.name}</span><span class="ap-course-row-def" style="color:${dc}">${x.def.toFixed(2)}</span><svg class="ap-chevron" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></div><div class="ap-course-row-body" id="apgbody-${i}" style="display:none"><div class="ap-periods-list">${ps}</div><div class="ap-definitiva-row"><span>Nota definitiva del curso</span><strong style="font-size:20px;font-family:'Cormorant Garamond',serif;color:${dc}">${x.def.toFixed(2)}<span style="font-size:12px;color:var(--text-muted)">/10</span></strong></div></div></div>`;
     }).join('');
     return `<div style="max-width:760px;margin:0 auto"><div class="card"><div style="background:linear-gradient(135deg,#0B1F3A,#1A3A6B);padding:28px;display:flex;align-items:center;justify-content:space-between;gap:12px;position:relative;overflow:hidden"><div style="position:relative"><div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,0.55);margin-bottom:4px">Promedio General</div><div style="font-family:'Cormorant Garamond',serif;font-size:48px;font-weight:700;color:#fff;line-height:1">${prom}<span style="font-size:16px;color:rgba(255,255,255,0.45)">/10</span></div><div style="font-size:13px;color:rgba(255,255,255,0.5);margin-top:5px">${valid.length} curso(s) · Período Académico 2025</div></div><div style="font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:8px 18px;border-radius:20px;border:1px solid ${pc}50;background:${pc}20;color:${pc};flex-shrink:0">${apGL(parseFloat(prom))}</div></div><div class="ap-courses-list">${rows}</div></div></div>`;
@@ -1552,7 +1660,29 @@ function loadAdminGuidesOrDefault() {
 
 let AP_GUIDES = loadAdminGuidesOrDefault();
 
-
+async function apLoadGuides() {
+    try {
+        const data = await tryFetch('/api/guides?audience=ESTUDIANTE');
+        const items = Array.isArray(data) ? data : [];
+        AP_GUIDES = items.map(g => {
+            const textSections = safeJsonParse(g.sectionsJson, []);
+            const attachments = safeJsonParse(g.attachmentsJson, []);
+            return {
+                id: String(g.id || ''),
+                title: String(g.title || ''),
+                detail: String(g.detail || ''),
+                richHtml: String(g.richHtml || ''),
+                pdfUrl: String(g.pdfUrl || ''),
+                hasText: !!g.hasText,
+                hasPdf: !!g.hasPdf,
+                textSections: Array.isArray(textSections) ? textSections : [],
+                attachments: Array.isArray(attachments) ? attachments : []
+            };
+        });
+    } catch (e) {
+        showToast('No se pudieron cargar los instructivos', 'error');
+    }
+}
 
 function apGetGuideById(guideId) {
     return AP_GUIDES.find(g => g.id === guideId) || null;
@@ -1709,7 +1839,27 @@ function apCertificadosHtml() {
         </div>`;
     }
 
-    const rows = certs.map(cert => {
+    // Extraer años únicos
+    const years = [...new Set(certs.map(c => {
+        const d = c.issuedAt ? new Date(c.issuedAt + 'T00:00:00') : null;
+        return d ? d.getFullYear() : null;
+    }).filter(Boolean))].sort((a, b) => b - a);
+
+    // Filtrar por año
+    const filtered = certs.filter(c => {
+        if (!certFilterYear) return true;
+        const d = c.issuedAt ? new Date(c.issuedAt + 'T00:00:00') : null;
+        return d ? String(d.getFullYear()) === certFilterYear : false;
+    });
+
+    // Paginar
+    const totalPages = Math.max(1, Math.ceil(filtered.length / CERT_PAGE_SIZE));
+    const safePage = Math.max(1, Math.min(totalPages, certPage));
+    certPage = safePage;
+    const start = (safePage - 1) * CERT_PAGE_SIZE;
+    const paged = filtered.slice(start, start + CERT_PAGE_SIZE);
+
+    const rows = paged.map(cert => {
         const certName = cert.name || 'Certificado';
         const issuedText = cert.issuedAt ? new Date(cert.issuedAt + 'T00:00:00').toLocaleDateString('es-CO') : 'No informado';
         const statusRaw = (cert.status || '').toLowerCase();
@@ -1746,12 +1896,28 @@ function apCertificadosHtml() {
         </tr>`;
     }).join('');
 
+    const yearOptions = years.map(y => `<option value="${y}" ${String(y) === certFilterYear ? 'selected' : ''}>${y}</option>`).join('');
+    const pager = filtered.length > CERT_PAGE_SIZE
+        ? `<div style="display:flex;justify-content:center;align-items:center;gap:10px;padding:14px;border-top:1px solid rgba(11,31,58,0.06)">
+            <button class="btn btn-sm btn-outline" ${safePage <= 1 ? 'disabled' : ''} onclick="apCertPrevPage()">Anterior</button>
+            <span style="font-size:12.5px;color:var(--text-muted)">${safePage}/${totalPages}</span>
+            <button class="btn btn-sm btn-outline" ${safePage >= totalPages ? 'disabled' : ''} onclick="apCertNextPage()">Siguiente</button>
+           </div>`
+        : '';
+
     return `<div style="max-width:960px;margin:0 auto">
         <div class="card">
-            <div class="card-header">
+            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
                 <div>
                     <span class="card-title">Mis Certificados</span>
                     <div style="font-size:12.5px;color:var(--text-muted);margin-top:2px">Consulta el estado de tus certificados y descárgalos cuando estén disponibles.</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <label style="font-size:12.5px;color:var(--text-muted)">Año:</label>
+                    <select class="form-input" style="min-width:100px" onchange="apSetCertYear(this.value)">
+                        <option value="" ${!certFilterYear ? 'selected' : ''}>Todos</option>
+                        ${yearOptions}
+                    </select>
                 </div>
             </div>
             <div class="card-body" style="padding:0;overflow-x:auto">
@@ -1764,11 +1930,31 @@ function apCertificadosHtml() {
                             <th>Acciones</th>
                         </tr>
                     </thead>
-                    <tbody>${rows}</tbody>
+                    <tbody>${rows || '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:18px">No hay certificados para el año seleccionado.</td></tr>'}</tbody>
                 </table>
+                ${pager}
             </div>
         </div>
     </div>`;
+}
+
+function apSetCertYear(year) {
+    certFilterYear = String(year || '');
+    certPage = 1;
+    const content = document.getElementById('personalSubContent');
+    if (content) content.innerHTML = apCertificadosHtml();
+}
+
+function apCertPrevPage() {
+    certPage = Math.max(1, certPage - 1);
+    const content = document.getElementById('personalSubContent');
+    if (content) content.innerHTML = apCertificadosHtml();
+}
+
+function apCertNextPage() {
+    certPage += 1;
+    const content = document.getElementById('personalSubContent');
+    if (content) content.innerHTML = apCertificadosHtml();
 }
 
 async function apRefreshCertificates() {
@@ -1860,6 +2046,9 @@ function isEvalAnswerFilled(q, value) {
 function apEvalHtml(courses, prefix) {
     const questions = prefix==='autoeval' ? AUTOEVAL_QUESTIONS : EVAL_QUESTIONS;
     const info = prefix==='autoeval' ? 'Reflexiona honestamente sobre tu desempeño en cada asignatura.' : 'Evalúa a cada docente. Tu opinión es completamente confidencial.';
+    if (!questions.length) {
+        return `<div style="max-width:860px;margin:0 auto"><div class="card"><div style="padding:10px 18px;background:rgba(200,150,46,0.05);border-bottom:1px solid rgba(200,150,46,0.12);font-size:13px;color:var(--text-muted);display:flex;align-items:center;gap:8px"><svg width="14" height="14" fill="none" stroke="var(--gold)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>${info}</div><div style="padding:24px;text-align:center;color:var(--text-muted)">No hay preguntas configuradas para esta evaluación.</div></div></div>`;
+    }
     const tabs = courses.map((c,i) => {
         const sent = !!evalSentMemory[apEvalKey(prefix,c.id)];
         return `<button class="eval-tab ${i===0?'active':''}" onclick="apSwitchEval(${i},'${prefix}')" id="${prefix}-tab-${i}">${sent?'<svg width="12" height="12" fill="none" stroke="var(--success)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>':''} ${c.name.length>18?c.name.slice(0,17)+'…':c.name}</button>`;
@@ -2005,28 +2194,551 @@ async function apSubmitEval(prefix, panelIdx, courseId) {
 
 // ── 4. Escogencia de Horario ─────────────────────────────────────
 function apHorarioHtml() {
-    const days  = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
-    const slots = ['06:00–07:00','07:00–08:00','08:00–09:00','09:00–10:00','10:00–11:00','11:00–12:00','12:00–13:00','13:00–14:00','14:00–15:00','15:00–16:00','16:00–17:00','17:00–18:00','18:00–19:00','19:00–20:00'];
-    const headCols = days.map(d=>`<th style="text-align:center;font-size:11px;padding:8px 6px">${d}</th>`).join('');
-    const bodyRows = slots.map(s => {
-        const cells = days.map(d => { const key='sch_'+d+'_'+s; return `<td style="text-align:center;padding:4px 3px"><button class="sch-cell" id="${key}" onclick="apToggleSch('${key}')" title="${d} ${s}"></button></td>`; }).join('');
-        return `<tr><td style="font-size:11.5px;font-weight:600;color:var(--text-muted);padding:4px 10px;white-space:nowrap">${s}</td>${cells}</tr>`;
-    }).join('');
-    return `<div style="max-width:900px;margin:0 auto"><div class="card"><div class="card-header"><div><div class="card-title">Disponibilidad Horaria</div><div style="font-size:12.5px;color:var(--text-muted);margin-top:3px">Marca los bloques en los que estás disponible para el próximo período</div></div><div style="display:flex;gap:8px;align-items:center"><div style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted)"><div style="width:14px;height:14px;border-radius:3px;background:rgba(200,150,46,0.15);border:1.5px solid var(--gold)"></div>Disponible</div><button class="btn btn-sm btn-outline" onclick="apClearSch()">Limpiar</button><button class="btn btn-sm btn-gold" onclick="apSaveSch()">Guardar disponibilidad</button></div></div><div class="card-body" style="overflow-x:auto;padding:0"><table style="width:100%;border-collapse:collapse;min-width:600px"><thead><tr><th style="font-size:10px;padding:8px 10px;text-align:left;color:var(--text-muted);border-bottom:2px solid var(--cream-dark);background:var(--cream)">Franja</th>${headCols}</tr></thead><tbody>${bodyRows}</tbody></table></div></div></div>`;
+    return `<div id="apHorarioRoot" style="position:fixed;inset:0;z-index:300;background:var(--cream);display:flex;flex-direction:column;font-family:'Jost',sans-serif;overflow:hidden;">
+  <div class="sch-topbar-navy">
+    <div class="sch-topbar-navy-left">
+      <span class="sch-brand">Educa<span>T</span></span>
+      <span class="sch-topbar-sep"></span>
+      <span class="sch-topbar-label">Selección de Horario</span>
+    </div>
+    <button class="sch-topbar-back" onclick="closePersonalView()">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+      Volver al Aula Principal
+    </button>
+  </div>
+  <div class="sch-progress-strip">
+    <div class="sch-progress-left">
+      <span class="sch-progress-label">Inscripción</span>
+      <div class="sch-progress-bar-wrap">
+        <div class="sch-progress-bar-bg"><div class="sch-progress-bar-fill" id="apProgressFill" style="width:0%"></div></div>
+      </div>
+      <span class="sch-progress-count" id="apProgressCount">0 de 0 materias</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <button style="display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:7px;background:transparent;border:1.5px solid rgba(11,31,58,0.14);color:var(--text-body);font-family:'Jost',sans-serif;font-size:12.5px;font-weight:500;cursor:pointer;transition:all .2s" onmouseover="this.style.borderColor='var(--navy)'" onmouseout="this.style.borderColor='rgba(11,31,58,0.14)'" onclick="apRandomizeSchedule()">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+        Horario aleatorio
+      </button>
+      <button class="sch-btn-complete" id="apBtnComplete" onclick="apShowConfirmModal()" disabled>Completar horario</button>
+    </div>
+  </div>
+  <div class="sch-layout" id="apHorarioLayout">
+    <div class="sch-sidebar-new">
+      <div class="sch-sidebar-header-new">
+        <div class="sch-sidebar-header-top">
+          <span class="sch-sidebar-eye">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </span>
+          <span class="sch-sidebar-grade" id="apSidebarGrade">Asignaturas · Grado</span>
+        </div>
+        <div class="sch-sidebar-title">Mi Selección</div>
+        <div class="sch-sidebar-subtitle">Elige un grupo por cada materia para completar tu horario</div>
+      </div>
+      <div class="sch-sidebar-list" id="apHorarioCursosList">
+        <div class="sch-loading"><div class="spinner"></div><div>Cargando cursos...</div></div>
+      </div>
+    </div>
+    <div class="sch-calendar-area">
+      <div class="sch-calendar-area-header">
+        <div>
+          <div class="sch-calendar-area-title">Horario Semanal</div>
+          <div class="sch-calendar-area-subtitle">Visualiza las franjas horarias de tus materias seleccionadas</div>
+        </div>
+        <div class="sch-legend-inline">
+          <span class="sch-legend-item"><span class="sch-legend-dot" style="background:var(--success)"></span>Inscrito</span>
+          <span class="sch-legend-item"><span class="sch-legend-dot" style="background:var(--text-light)"></span>Sin inscribir</span>
+        </div>
+      </div>
+      <div class="sch-calendar-area-body" id="apHorarioCalendar">
+        <div class="sch-loading"><div class="spinner"></div><div>Cargando horario...</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="sch-success-screen" id="apSuccessScreen" style="display:none;">
+    <div class="sch-success-card">
+      <div class="sch-success-ring">
+        <svg width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <div class="sch-success-title">Horario confirmado</div>
+      <div class="sch-success-subtitle">Cambios realizados exitosamente</div>
+      <div class="sch-success-list" id="apSuccessList"></div>
+      <button class="sch-success-btn" onclick="closePersonalView()">Volver al Aula Principal</button>
+    </div>
+  </div>
+  <div class="sch-modal-backdrop" id="apScheduleModal" style="display:none;" onclick="if(event.target===this)apCloseScheduleModal()">
+    <div class="sch-modal-panel">
+      <div class="sch-modal-header">
+        <div class="sch-modal-header-left">
+          <div class="sch-modal-icon" id="apModalIcon"></div>
+          <div>
+            <div class="sch-modal-title" id="apModalTitle"></div>
+            <div class="sch-modal-subtitle" id="apModalSubtitle"></div>
+          </div>
+        </div>
+        <button class="sch-modal-close" onclick="apCloseScheduleModal()">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="sch-modal-body">
+        <table class="sch-modal-table">
+          <thead><tr><th>Código</th><th>Docente</th><th>Horario</th><th>Cupos</th><th>Acción</th></tr></thead>
+          <tbody id="apModalTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="sch-modal-backdrop" id="apConfirmModal" style="display:none;" onclick="if(event.target===this)apCloseConfirmModal()">
+    <div class="sch-modal-panel sch-modal-sm">
+      <div class="sch-modal-header">
+        <div class="sch-modal-title">Confirmar inscripción</div>
+        <button class="sch-modal-close" onclick="apCloseConfirmModal()">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="sch-modal-body">
+        <div class="sch-confirm-text">Revisa las materias seleccionadas antes de enviar tu inscripción.</div>
+        <div class="sch-confirm-list" id="apConfirmList"></div>
+        <button class="sch-btn-submit" onclick="apDoFinalize()">Enviar inscripción</button>
+        <button class="sch-btn-review" onclick="apCloseConfirmModal()">Revisar horario</button>
+      </div>
+    </div>
+  </div>
+  <div class="sch-toast-container" id="apSchToastContainer"></div>
+</div>`;
 }
+
 function apInitHorario() {
-    const sid = currentStudent?currentStudent.id:1;
-    const saved = JSON.parse(storageService.getItem('educat_sch_sel_'+sid)||'{}');
-    Object.keys(saved).forEach(k => { if(saved[k]){ const el=document.getElementById(k); if(el) el.classList.add('selected'); } });
+    apLoadHorarioData();
 }
-function apToggleSch(key) { const el=document.getElementById(key); if(el) el.classList.toggle('selected'); }
-function apSaveSch() {
-    const sid=currentStudent?currentStudent.id:1, state={};
-    document.querySelectorAll('.sch-cell').forEach(b=>{ state[b.id]=b.classList.contains('selected'); });
-    storageService.setItem('educat_sch_sel_'+sid, JSON.stringify(state));
-    showToast('Disponibilidad guardada correctamente','success');
+
+async function apLoadHorarioData() {
+    const sid = currentStudent ? currentStudent.id : 0;
+    if (!sid) return;
+
+    const [enrData, allCoursesData, mySchedulesData, courseGradesRes, studentGradesRes, academicGradesRes] = await Promise.all([
+        tryFetch('/api/enrollments/student/' + sid),
+        tryFetch('/api/courses'),
+        tryFetch('/api/schedules/student/' + sid),
+        tryFetch('/api/config/course-grades'),
+        tryFetch('/api/config/student-grades'),
+        tryFetch('/api/academic-grades')
+    ]);
+
+    const myEnrollments = Array.isArray(enrData) ? enrData : [];
+    const allCourses = Array.isArray(allCoursesData) ? allCoursesData : [];
+    const myCurrentSchedules = Array.isArray(mySchedulesData) ? mySchedulesData : [];
+
+    apAdminCourseGrades = (courseGradesRes && courseGradesRes.value) ? safeJsonParse(courseGradesRes.value, {}) : {};
+    apAdminStudentGrades = (studentGradesRes && studentGradesRes.value) ? safeJsonParse(studentGradesRes.value, {}) : {};
+    apAcademicGrades = Array.isArray(academicGradesRes) ? academicGradesRes : [];
+    apMyGradeId = String(apAdminStudentGrades[String(sid)] || '');
+
+    const enrolledCourseIds = new Set(myEnrollments.map(e => String(((e || {}).course || {}).id || '')));
+
+    // Filtrar cursos por grado del estudiante si hay informacion de grados disponible
+    if (apMyGradeId) {
+        apAvailableCourses = allCourses.filter(c => {
+            const cid = String(c.id || '');
+            const courseGradeId = String(apAdminCourseGrades[cid] || '');
+            return !enrolledCourseIds.has(cid) && courseGradeId === apMyGradeId;
+        });
+    } else {
+        apAvailableCourses = allCourses.filter(c => !enrolledCourseIds.has(String(c.id || '')));
+    }
+
+    const schedulePromises = apAvailableCourses.map(async c => {
+        const sch = await tryFetch('/api/schedules/course/' + c.id);
+        apCourseSchedulesMap[c.id] = Array.isArray(sch) ? sch : [];
+    });
+    await Promise.all(schedulePromises);
+
+    // Los horarios ya matriculados no son "pendientes"
+    apSelectedSchedules = myCurrentSchedules.map(s => ({ ...s, _confirmed: true }));
+    apPendingEnrollments = [];
+
+    apRenderHorarioPicker();
 }
-function apClearSch() { document.querySelectorAll('.sch-cell').forEach(b=>b.classList.remove('selected')); showToast('Selección limpiada'); }
+
+function apRenderHorarioPicker() {
+    const listEl = document.getElementById('apHorarioCursosList');
+    const calEl = document.getElementById('apHorarioCalendar');
+    const progressFill = document.getElementById('apProgressFill');
+    const progressCount = document.getElementById('apProgressCount');
+    const btnComplete = document.getElementById('apBtnComplete');
+    const gradeEl = document.getElementById('apSidebarGrade');
+    if (!listEl || !calEl) return;
+
+    const totalCourses = apAvailableCourses.length;
+    const enrolledCount = apAvailableCourses.filter(c => apSelectedSchedules.some(s => s.course && s.course.id === c.id)).length;
+    const pct = totalCourses > 0 ? Math.round((enrolledCount / totalCourses) * 100) : 0;
+
+    if (progressFill) progressFill.style.width = pct + '%';
+    if (progressCount) progressCount.textContent = enrolledCount + ' de ' + totalCourses + ' materias';
+    if (btnComplete) {
+        btnComplete.disabled = enrolledCount < totalCourses || totalCourses === 0;
+        if (btnComplete.disabled) {
+            btnComplete.style.opacity = '0.45';
+            btnComplete.style.cursor = 'not-allowed';
+        } else {
+            btnComplete.style.opacity = '1';
+            btnComplete.style.cursor = 'pointer';
+        }
+    }
+    if (gradeEl && apMyGradeId && apAcademicGrades.length) {
+        const g = apAcademicGrades.find(x => String(x.id) === apMyGradeId);
+        gradeEl.textContent = 'Asignaturas \u00b7 ' + (g ? g.name : 'Grado');
+    }
+
+    if (!apAvailableCourses.length) {
+        listEl.innerHTML = `<div class="sch-empty"><svg width="40" height="40" fill="none" stroke="var(--text-light)" stroke-width="1.5" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><div class="sch-empty-title">Sin cursos disponibles</div><div class="sch-empty-text">Ya est\u00e1s matriculado en todos los cursos de tu grado.</div></div>`;
+    } else {
+        const sortedCourses = [...apAvailableCourses].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+        let firstUnselectedIndex = -1;
+        sortedCourses.forEach((c, idx) => {
+            const hasSchedules = (apCourseSchedulesMap[c.id] || []).length > 0;
+            const selectedSch = apSelectedSchedules.find(s => s.course && s.course.id === c.id);
+            if (hasSchedules && !selectedSch && firstUnselectedIndex === -1) firstUnselectedIndex = idx;
+        });
+
+        listEl.innerHTML = sortedCourses.map((c, idx) => {
+            const hasSchedules = (apCourseSchedulesMap[c.id] || []).length > 0;
+            const selectedSch = apSelectedSchedules.find(s => s.course && s.course.id === c.id);
+            const isLocked = !selectedSch && firstUnselectedIndex !== -1 && idx !== firstUnselectedIndex;
+            const teacherName = c.teacher && c.teacher.user ? c.teacher.user.name : 'Sin docente';
+
+            const colorIdx = idx % 8;
+            const colorSet = apSchColor(colorIdx);
+            const statusText = selectedSch ? 'Inscrito' : 'Pendiente';
+            const statusClass = selectedSch ? 'sch-card-inscrito' : 'sch-card-pendiente';
+            const isEnrolled = !!selectedSch;
+
+            const iconHtml = `<div class="sch-card-icon" style="border-color:${colorSet.border};color:${colorSet.text};background:${colorSet.bg}"><span>${(c.name || '').charAt(0).toUpperCase()}</span></div>`;
+
+            const detailHtml = isEnrolled
+                ? `<div class="sch-card-detail"><span class="sch-card-code">${escapeHtml(selectedSch.courseCode || selectedSch.code || '\u2014')}</span><span class="sch-card-schedule">${escapeHtml(selectedSch.day)} \u00b7 ${selectedSch.startTime} \u2013 ${selectedSch.endTime}</span></div>`
+                : '';
+
+            return `<div class="sch-course-row ${statusClass} ${isLocked ? 'is-locked' : ''}" onclick="${isLocked ? '' : `apOpenCourseScheduleModal(${c.id})`}">
+                <div class="sch-course-row-main">
+                    ${iconHtml}
+                    <div class="sch-course-row-info">
+                        <div class="sch-course-row-name">${escapeHtml(c.name)}</div>
+                        <div class="sch-course-row-teacher">${escapeHtml(teacherName)}</div>
+                    </div>
+                    <span class="sch-course-row-pill ${isEnrolled ? 'pill-inscrito' : 'pill-pendiente'}">${statusText}</span>
+                    <svg class="sch-course-row-chevron" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+                </div>
+                ${detailHtml}
+            </div>`;
+        }).join('');
+    }
+
+    apRenderScheduleCalendar(apSelectedSchedules, 'apHorarioCalendar');
+}
+
+function apRenderScheduleCalendar(schedules, containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const DAY_ORDER = ['Lunes','Martes','Miercoles','Jueves','Viernes','Sabado'];
+    const DAY_SHORT = {Lunes:'Lun',Martes:'Mar',Miercoles:'Mi\u00e9',Jueves:'Jue',Viernes:'Vie',Sabado:'S\u00e1b'};
+    function toMin(t) { if(!t)return 0; const[h,m]=t.split(':').map(Number); return h*60+(m||0); }
+
+    const hasSchedules = schedules && schedules.length > 0;
+    const allMins = hasSchedules ? schedules.flatMap(s => [toMin(s.startTime),toMin(s.endTime)]) : [];
+    const startHour = hasSchedules ? Math.min(6, Math.floor(Math.min(...allMins)/60)) : 7;
+    const endHour = hasSchedules ? Math.max(20, Math.ceil(Math.max(...allMins)/60)) : 19;
+    const minTime = startHour*60, maxTime = endHour*60, PX = 2.4, totalH = (maxTime-minTime)*PX;
+
+    const courseIds = [...new Set(schedules.map(s=>s.course&&s.course.id).filter(Boolean))];
+    const colorMap = {}; courseIds.forEach((id,i) => colorMap[id]=apSchColor(i));
+
+    let guideHtml='', timeLabelsHtml='';
+    for (let h=startHour;h<=endHour;h++) {
+        const top=(h*60-minTime)*PX;
+        guideHtml+=`<div class="wcal-guide" style="top:${top}px"></div>`;
+        timeLabelsHtml+=`<div class="wcal-time-label" style="top:${top}px">${String(h).padStart(2,'0')}:00</div>`;
+    }
+    for (let h=startHour;h<=endHour;h++) {
+        const top=((h*60+30)-minTime)*PX;
+        if (top < totalH) guideHtml+=`<div class="wcal-guide" style="top:${top}px;opacity:0.5"></div>`;
+    }
+
+    let colsHtml='';
+    DAY_ORDER.forEach(day => {
+        const daySch=schedules.filter(s=>s.day===day); let blocksHtml='';
+        daySch.forEach(s => {
+            const sMin=(toMin(s.startTime)-minTime)*PX;
+            const height=Math.max((toMin(s.endTime)-toMin(s.startTime))*PX-2,22);
+            const c=colorMap[s.course&&s.course.id]||apSchColor(0);
+            const name=s.course?s.course.name:'\u2014';
+            const code=s.courseCode || s.code || '';
+            const isPending = s._pending === true;
+            const pendingTag = isPending ? '<span class="sch-pending-badge">Pendiente</span>' : '';
+            blocksHtml+=`<div class="wcal-block" style="top:${sMin}px;height:${height}px;background:${c.bg};border-left:3px solid ${c.border};" title="${escapeHtml(name)}${code?' \u00b7 '+escapeHtml(code):''}\n${s.startTime} \u2013 ${s.endTime}">
+                <span class="wcal-block-name" style="color:${c.text}">${escapeHtml(name)}${pendingTag}</span>
+                <span class="wcal-block-time">${s.startTime} \u2013 ${s.endTime}</span>
+                ${code?`<span class="wcal-block-teacher">${escapeHtml(code)}</span>`:''}
+            </div>`;
+        });
+        colsHtml+=`<div class="wcal-day-col"><div class="wcal-day-header"><span class="wcal-day-full">${day}</span><span class="wcal-day-short">${DAY_SHORT[day]||day}</span></div><div class="wcal-day-body" style="height:${totalH}px">${guideHtml}${blocksHtml}</div></div>`;
+    });
+
+    container.innerHTML = `<div class="wcal-root"><div class="wcal-time-col" style="width:56px"><div class="wcal-corner" style="height:48px"></div><div class="wcal-time-track" style="height:${totalH}px">${timeLabelsHtml}</div></div><div class="wcal-grid">${colsHtml}</div></div>`;
+}
+
+function apOpenCourseScheduleModal(courseId) {
+    const course = apAvailableCourses.find(c => c.id === courseId);
+    const schedules = apCourseSchedulesMap[courseId] || [];
+    if (!course || !schedules.length) return;
+
+    const alreadySelected = apSelectedSchedules.find(s => s.course && s.course.id === courseId);
+    const existingWithoutThis = apSelectedSchedules.filter(s => !(s.course && s.course.id === courseId));
+
+    const colorIdx = apAvailableCourses.findIndex(c => c.id === courseId) % 8;
+    const colorSet = apSchColor(colorIdx);
+
+    document.getElementById('apModalTitle').textContent = course.name || '';
+    document.getElementById('apModalSubtitle').textContent = (course.teacher && course.teacher.user ? course.teacher.user.name : 'Sin docente');
+    const iconEl = document.getElementById('apModalIcon');
+    if (iconEl) {
+        iconEl.style.borderColor = colorSet.border;
+        iconEl.style.color = colorSet.text;
+        iconEl.style.background = colorSet.bg;
+        iconEl.innerHTML = `<span>${(course.name || '').charAt(0).toUpperCase()}</span>`;
+    }
+
+    const tbody = document.getElementById('apModalTableBody');
+    if (!tbody) return;
+
+    tbody.innerHTML = schedules.map((sch, idx) => {
+        const isSelected = alreadySelected && alreadySelected.id === sch.id;
+        const conflict = !isSelected ? apCheckScheduleConflict(sch, existingWithoutThis) : null;
+        const conflictTag = conflict ? `<span class="sch-tag-conflict">Conflicto</span>` : '';
+        const isFull = !isSelected && sch.capacity && sch.enrolled >= sch.capacity;
+        const isDisabled = conflict || isFull;
+        const btnClass = isSelected ? 'sch-btn-navy' : (isDisabled ? 'sch-btn-disabled' : 'sch-btn-navy');
+        const btnText = isSelected ? 'Quitar inscripci\u00f3n' : (conflict ? 'Conflicto' : (isFull ? 'Sin cupos' : 'Inscribirse'));
+        const onclick = isSelected ? `apRemoveCourseSelection(${courseId})` : (isDisabled ? '' : `apSelectCourseSchedule(${courseId}, ${sch.id})`);
+
+        const teacher = sch.teacher || (course.teacher && course.teacher.user ? course.teacher.user.name : '\u2014');
+        const gradeTitle = course.teacher && course.teacher.specialization ? course.teacher.specialization : '';
+
+        const enrolled = Number(sch.enrolled || 0);
+        const capacity = Number(sch.capacity || 30);
+        const cupoPct = capacity > 0 ? Math.round((enrolled / capacity) * 100) : 0;
+
+        return `<tr class="${isSelected ? 'sch-row-selected' : ''} ${conflict ? 'sch-row-conflict' : ''}">
+            <td><div class="sch-td-code">${escapeHtml(sch.courseCode || sch.code || '\u2014')}</div>${conflictTag}</td>
+            <td><div class="sch-td-name">${escapeHtml(teacher)}</div>${gradeTitle ? `<div class="sch-td-grade">${escapeHtml(gradeTitle)}</div>` : ''}</td>
+            <td><div class="sch-td-time">${sch.startTime} \u2013 ${sch.endTime}</div><div class="sch-td-days">${escapeHtml(sch.day)}</div></td>
+            <td>
+                <div class="sch-cupo-text">${enrolled} de ${capacity}</div>
+                <div class="sch-cupo-bar"><div class="sch-cupo-fill" style="width:${cupoPct}%"></div></div>
+            </td>
+            <td><button class="sch-table-btn ${btnClass}" onclick="${onclick}" ${isDisabled ? 'disabled' : ''}>${btnText}</button></td>
+        </tr>`;
+    }).join('');
+
+    document.getElementById('apScheduleModal').style.display = 'flex';
+}
+
+function apCheckScheduleConflict(newSch, existingSchedules) {
+    if (!newSch || !newSch.day || !newSch.startTime || !newSch.endTime) return null;
+    const newStart = apTimeToMin(newSch.startTime);
+    const newEnd = apTimeToMin(newSch.endTime);
+    for (const ex of existingSchedules) {
+        if (ex.day !== newSch.day) continue;
+        const exStart = apTimeToMin(ex.startTime);
+        const exEnd = apTimeToMin(ex.endTime);
+        if (newStart < exEnd && newEnd > exStart) {
+            return ex;
+        }
+    }
+    return null;
+}
+
+function apTimeToMin(t) {
+    if (!t) return 0;
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + (m || 0);
+}
+
+function apSelectCourseSchedule(courseId, scheduleId) {
+    const course = apAvailableCourses.find(c => c.id === courseId);
+    const sch = (apCourseSchedulesMap[courseId] || []).find(s => s.id === scheduleId);
+    if (!course || !sch) return;
+
+    apSelectedSchedules = apSelectedSchedules.filter(s => !(s.course && s.course.id === courseId));
+    apSelectedSchedules.push({ ...sch, course: course, _pending: true });
+
+    apCloseScheduleModal();
+    apRenderHorarioPicker();
+    apSchToast(`${escapeHtml(course.name)} agregado a tu horario`, 'success');
+}
+
+function apRemoveCourseSelection(courseId) {
+    apSelectedSchedules = apSelectedSchedules.filter(s => !(s.course && s.course.id === courseId));
+    apCloseScheduleModal();
+    apRenderHorarioPicker();
+    apSchToast('Curso removido de tu selecci\u00f3n', 'success');
+}
+
+async function apFinalizeSchedule() {
+    const pending = apSelectedSchedules.filter(s => s._pending === true);
+    if (!pending.length) {
+        apSchToast('No hay cambios pendientes para confirmar', 'error');
+        return;
+    }
+
+    const sid = currentStudent ? currentStudent.id : 0;
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const sch of pending) {
+        const courseId = sch.course ? sch.course.id : null;
+        if (!courseId) continue;
+        try {
+            await postJson('/api/enrollments', {
+                studentId: sid,
+                courseId: courseId,
+                enrollmentDate: new Date().toISOString()
+            });
+            successCount++;
+            delete sch._pending;
+            sch._confirmed = true;
+        } catch (e) {
+            errorCount++;
+            console.error('Error matriculando curso', courseId, e);
+        }
+    }
+
+    if (successCount > 0) {
+        await reloadStudentEnrollments();
+        await apLoadHorarioData();
+
+        const successList = document.getElementById('apSuccessList');
+        if (successList) {
+            const confirmed = apSelectedSchedules.filter(s => s._confirmed);
+            successList.innerHTML = confirmed.map((s, idx) => {
+                const colorSet = apSchColor(idx % 8);
+                return `<div class="sch-success-item">
+                    <div class="sch-success-icon" style="border-color:${colorSet.border};color:${colorSet.text};background:${colorSet.bg}"><span>${(s.course && s.course.name ? s.course.name.charAt(0) : 'M').toUpperCase()}</span></div>
+                    <div class="sch-success-info">
+                        <div class="sch-success-name">${escapeHtml(s.course ? s.course.name : '\u2014')}</div>
+                        <div class="sch-success-meta">${escapeHtml(s.courseCode || s.code || '\u2014')} \u00b7 ${escapeHtml(s.day)} ${s.startTime} \u2013 ${s.endTime}</div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        const layout = document.getElementById('apHorarioLayout');
+        const successScreen = document.getElementById('apSuccessScreen');
+        if (layout) layout.style.display = 'none';
+        if (successScreen) successScreen.style.display = 'flex';
+
+        apSchToast(`${successCount} curso(s) matriculado(s) correctamente`, 'success');
+    } else {
+        apSchToast('No se pudo confirmar ninguna matr\u00edcula', 'error');
+    }
+}
+
+function apCloseScheduleModal() {
+    const el = document.getElementById('apScheduleModal');
+    if (el) el.style.display = 'none';
+}
+
+function apShowConfirmModal() {
+    const list = document.getElementById('apConfirmList');
+    if (!list) return;
+    const pending = apSelectedSchedules.filter(s => s._pending === true);
+    if (!pending.length) {
+        apSchToast('No hay cambios pendientes para confirmar', 'error');
+        return;
+    }
+
+    list.innerHTML = pending.map((s, idx) => {
+        const colorSet = apSchColor(idx % 8);
+        return `<div class="sch-confirm-item">
+            <div class="sch-confirm-icon" style="border-color:${colorSet.border};color:${colorSet.text};background:${colorSet.bg}"><span>${(s.course && s.course.name ? s.course.name.charAt(0) : 'M').toUpperCase()}</span></div>
+            <div class="sch-confirm-info">
+                <div class="sch-confirm-name">${escapeHtml(s.course ? s.course.name : '\u2014')}</div>
+                <div class="sch-confirm-meta">${escapeHtml(s.day)} \u00b7 ${s.startTime} \u2013 ${s.endTime}</div>
+            </div>
+        </div>`;
+    }).join('');
+
+    document.getElementById('apConfirmModal').style.display = 'flex';
+}
+
+function apCloseConfirmModal() {
+    const el = document.getElementById('apConfirmModal');
+    if (el) el.style.display = 'none';
+}
+
+async function apDoFinalize() {
+    apCloseConfirmModal();
+    await apFinalizeSchedule();
+}
+
+function apSchToast(msg, type) {
+    const container = document.getElementById('apSchToastContainer');
+    if (!container) return;
+    const t = document.createElement('div');
+    t.className = 'sch-toast' + (type ? ' sch-toast-' + type : '');
+    t.textContent = msg;
+    container.appendChild(t);
+    setTimeout(() => {
+        t.style.opacity = '0';
+        t.style.transform = 'translateY(10px)';
+        setTimeout(() => t.remove(), 300);
+    }, 3500);
+}
+
+function apSchColor(index) {
+    const PALETTE = [
+        { bg: 'rgba(74,111,165,0.12)', border: '#4A6FA5', text: '#2E4A6E' },
+        { bg: 'rgba(42,157,143,0.12)', border: '#2A9D8F', text: '#1D6B62' },
+        { bg: 'rgba(233,196,106,0.18)', border: '#C8962E', text: '#7A5A1D' },
+        { bg: 'rgba(155,89,182,0.12)', border: '#9B59B6', text: '#5B2577' },
+        { bg: 'rgba(39,174,96,0.12)', border: '#27AE60', text: '#1A6B3C' },
+        { bg: 'rgba(231,76,60,0.10)', border: '#E74C3C', text: '#7B1D13' },
+        { bg: 'rgba(52,152,219,0.12)', border: '#3498DB', text: '#1A5276' },
+        { bg: 'rgba(243,156,18,0.12)', border: '#F39C12', text: '#7A4B00' }
+    ];
+    return PALETTE[(index || 0) % PALETTE.length];
+}
+
+function apRandomizeSchedule() {
+    const candidates = [...apAvailableCourses].sort(() => Math.random() - 0.5);
+    const newSelection = [];
+    const usedSchedules = [...apSelectedSchedules.filter(s => s._confirmed === true)];
+
+    for (const course of candidates) {
+        const options = (apCourseSchedulesMap[course.id] || []).sort(() => Math.random() - 0.5);
+        for (const sch of options) {
+            const conflict = apCheckScheduleConflict(sch, usedSchedules);
+            if (!conflict) {
+                newSelection.push({ ...sch, course: course, _pending: true });
+                usedSchedules.push({ ...sch, course: course });
+                break;
+            }
+        }
+    }
+
+    if (!newSelection.length) {
+        showToast('No se encontro ninguna combinacion posible', 'error');
+        return;
+    }
+
+    apSelectedSchedules = [
+        ...apSelectedSchedules.filter(s => s._confirmed === true),
+        ...newSelection
+    ];
+
+    apRenderHorarioPicker();
+    showToast(`Horario aleatorio generado: ${newSelection.length} curso(s) seleccionado(s)`, 'success');
+}
 
 // ── 5. Resultados de Aprendizaje ─────────────────────────────────
 function apResultadosHtml(courses) {
@@ -2164,8 +2876,8 @@ async function apLoadWellnessContentFromBackend() {
 
     if (apCanManageWellnessPosts()) {
         try {
-            const adminPublications = await apWellbeingAdminRequest('GET', '/api/admin/wellbeing/publications');
-            apSetWellnessContent(apBuildWellnessContentFromAdminPublications(adminPublications));
+            const allPublications = await apWellbeingAdminRequest('GET', '/api/wellbeing/publications');
+            apSetWellnessContent(apBuildWellnessContentFromAdminPublications(allPublications));
             return true;
         } catch (e) {
         }
@@ -2361,20 +3073,33 @@ function getAdminPermissionsForCurrentStudent() {
 }
 
 function canAccessWellnessSection(section) {
-    const map = {
-        psychology: 'bienestar.psicologia',
-        sports: 'bienestar.deportes',
-        art: 'bienestar.arte',
-        orientation: 'bienestar.orientacion',
-        medical: 'bienestar.salud',
-        scholarships: 'bienestar.becas'
-    };
-    const key = map[section];
-    if (!key) return true;
+    return true;
+}
+
+function apCanCreateWellnessPostForSection(section) {
     const perms = getAdminPermissionsForCurrentStudent();
-    const anyWellnessConfig = perms.some(p => String(p || '').startsWith('bienestar.'));
-    if (!anyWellnessConfig) return true;
-    return perms.includes(key);
+    if (apRoleIsAdmin()) return true;
+    const sectionMap = {
+        psychology: 'bienestar.crear-publicacion.psicologia',
+        sports: 'bienestar.crear-publicacion.deportes',
+        art: 'bienestar.crear-publicacion.arte',
+        orientation: 'bienestar.crear-publicacion.orientacion',
+        medical: 'bienestar.crear-publicacion.salud',
+        scholarships: 'bienestar.crear-publicacion.becas'
+    };
+    const key = sectionMap[section];
+    if (key && perms.includes(key)) return true;
+    return perms.includes('bienestar.publicar');
+}
+
+function apCanDeleteComment() {
+    const perms = getAdminPermissionsForCurrentStudent();
+    return apRoleIsAdmin() || perms.includes('bienestar.eliminar-comentario');
+}
+
+function apCanDeleteReaction() {
+    const perms = getAdminPermissionsForCurrentStudent();
+    return apRoleIsAdmin() || perms.includes('bienestar.eliminar-reaccion');
 }
 
 function apRoleIsAdmin() {
@@ -2388,9 +3113,8 @@ function apCanManageWellnessPosts() {
     return perms.includes('bienestar.publicar') || perms.includes('bienestar.editar-publicacion') || perms.includes('bienestar.eliminar-publicacion');
 }
 
-function apCanCreateWellnessPost() {
-    const perms = getAdminPermissionsForCurrentStudent();
-    return apRoleIsAdmin() || perms.includes('bienestar.publicar');
+function apCanCreateWellnessPost(section) {
+    return apCanCreateWellnessPostForSection(section);
 }
 
 function apCanEditWellnessPost() {
@@ -2447,17 +3171,19 @@ async function apSaveWellbeingPostFromModal(section, type, postId) {
         author: String((document.getElementById('wbPostAuthor') || {}).value || '').trim(),
         videoLink: String((document.getElementById('wbPostVideo') || {}).value || '').trim(),
         content: String(srtGetHtml('wbPostEditor') || '').trim(),
-        date: new Date().toISOString().slice(0, 10)
+        date: new Date().toISOString().slice(0, 10),
+        requestedBy: (currentUser && currentUser.name) || 'Administracion'
     };
     if (!payload.title || !payload.content) {
         showToast('Completa título y contenido', 'error');
         return;
     }
     try {
+        let result = null;
         if (postId) {
-            await apWellbeingAdminRequest('PUT', '/api/admin/wellbeing/publications/' + encodeURIComponent(String(postId)), payload);
+            await apWellbeingAdminRequest('PUT', '/api/wellbeing/publications/' + encodeURIComponent(String(postId)), payload);
         } else {
-            await apWellbeingAdminRequest('POST', '/api/admin/wellbeing/publications', payload);
+            result = await apWellbeingAdminRequest('POST', '/api/wellbeing/publications', payload);
         }
         await apLoadWellnessContentFromBackend();
         apSetFeedConfig(safeSection, { query: '', sort: 'recent', page: 1 });
@@ -2466,7 +3192,11 @@ async function apSaveWellbeingPostFromModal(section, type, postId) {
         apSaveWellnessState(state);
         closeModal();
         apOpenWellnessSection(safeSection);
-        showToast('Publicación guardada', 'success');
+        if (result && result.status === 'PENDING') {
+            showToast('Publicacion enviada a revision. Un docente la aprobara en un plazo maximo de 24h.', 'info');
+        } else {
+            showToast('Publicación guardada', 'success');
+        }
     } catch (e) {
         showToast((e && e.message) ? e.message : 'No se pudo guardar la publicación', 'error');
     }
@@ -2475,7 +3205,7 @@ async function apSaveWellbeingPostFromModal(section, type, postId) {
 function apDeleteWellbeingPost(section, postId) {
     openStudentConfirmModal('Eliminar publicación', '¿Eliminar esta publicación de bienestar?', 'Eliminar', async () => {
         try {
-            await apWellbeingAdminRequest('DELETE', '/api/admin/wellbeing/publications/' + encodeURIComponent(String(postId)));
+            await apWellbeingAdminRequest('DELETE', '/api/wellbeing/publications/' + encodeURIComponent(String(postId)));
             await apLoadWellnessContentFromBackend();
             apRenderWellnessSection(section);
             showToast('Publicación eliminada', 'success');
@@ -2498,7 +3228,11 @@ function apWellnessCardsHtml() {
     if (!allowed.length) {
         return `<div class="card"><div class="card-body"><div class="empty-state"><div class="empty-state-title">Sin módulos habilitados</div><div class="empty-state-text">Tu rol no tiene secciones de bienestar asignadas por administración.</div></div></div></div>`;
     }
-    return `<div class="bw-grid">${allowed.map(c => `<div class="bw-card"><div class="bw-card-title-row"><span class="bw-card-mini-icon"><svg width="16" height="16" fill="none" stroke="var(--navy)" stroke-width="1.8" viewBox="0 0 24 24">${c.icon}</svg></span><div class="bw-card-title">${c.title}</div></div><p class="bw-card-desc">${c.desc}</p><button class="bw-card-btn" onclick="apOpenWellnessSection('${c.sec}')">Ingresar <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button></div>`).join('')}</div>`;
+    return `<div class="bw-grid">${allowed.map(c => {
+        const canCreate = apCanCreateWellnessPostForSection(c.sec);
+        const createBtn = canCreate ? `<button class="bw-card-btn" style="margin-top:8px;background:var(--teal);color:#fff;border-color:var(--teal)" onclick="apOpenWellbeingPostModal('${c.sec}','post','')" title="Crear publicacion">+ Crear publicacion</button>` : '';
+        return `<div class="bw-card"><div class="bw-card-title-row"><span class="bw-card-mini-icon"><svg width="16" height="16" fill="none" stroke="var(--navy)" stroke-width="1.8" viewBox="0 0 24 24">${c.icon}</svg></span><div class="bw-card-title">${c.title}</div></div><p class="bw-card-desc">${c.desc}</p><button class="bw-card-btn" onclick="apOpenWellnessSection('${c.sec}')">Ingresar <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>${createBtn}</div>`;
+    }).join('')}</div>`;
 }
 
 function apSocialReactionCount(section, post, reactionKey) {
@@ -2572,6 +3306,28 @@ async function apAddPostComment(section, postId) {
         // Mantiene fallback local en caso de error de red/API.
     }
 }
+function apClearPostReactions(section, postId) {
+    openStudentConfirmModal('Eliminar reacciones', '¿Eliminar todas las reacciones de esta publicacion?', 'Eliminar', async () => {
+        const state = apGetWellnessState();
+        if (state.postReactions && state.postReactions[section]) {
+            delete state.postReactions[section][postId];
+            apSaveWellnessState(state);
+        }
+        apRenderWellnessSection(section);
+        showToast('Reacciones eliminadas', 'success');
+    });
+}
+function apClearPostComments(section, postId) {
+    openStudentConfirmModal('Eliminar comentarios', '¿Eliminar todos los comentarios de esta publicacion?', 'Eliminar', async () => {
+        const state = apGetWellnessState();
+        if (state.postComments && state.postComments[section]) {
+            delete state.postComments[section][postId];
+            apSaveWellnessState(state);
+        }
+        apRenderWellnessSection(section);
+        showToast('Comentarios eliminados', 'success');
+    });
+}
 function apOpenAllPostComments(section, postId) {
     const state = apGetWellnessState();
     const comments = ((((state.postComments || {})[section] || {})[postId]) || []);
@@ -2592,7 +3348,9 @@ function apRenderPostCard(section, post) {
     const adminActions = apCanManageWellnessPosts()
         ? `<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">${apCanEditWellnessPost() ? `<button class="btn btn-sm btn-outline" onclick="apOpenWellbeingPostModal('${section}','${post.type || 'post'}','${post.id}')">Editar</button>` : ''}${apCanDeleteWellnessPost() ? `<button class="btn btn-sm btn-outline" onclick="apDeleteWellbeingPost('${section}','${post.id}')">Eliminar</button>` : ''}</div>`
         : '';
-    return `<article class="bw-social-card"><div class="bw-post-head"><div class="bw-post-title">${post.title}</div><div class="bw-post-meta">${post.author ? post.author + ' · ' : ''}${new Date(post.date + 'T00:00:00').toLocaleDateString('es-CO')}</div></div>${adminActions}<div class="bw-post-body">${post.content || ''}</div>${apVideoEmbedHtml(post.videoLink)}<div class="bw-reactions-row"><button class="bw-react-btn ${myReaction==='like'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','like')">👍 ${apSocialReactionCount(section, post, 'like')}</button><button class="bw-react-btn ${myReaction==='love'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','love')">❤️ ${apSocialReactionCount(section, post, 'love')}</button><button class="bw-react-btn ${myReaction==='clap'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','clap')">👏 ${apSocialReactionCount(section, post, 'clap')}</button></div><div class="bw-comments-wrap"><div class="bw-comments-list">${commentsPreview}</div><div class="bw-comment-form"><input id="bwCommentInput-${section}-${post.id}" class="form-input" placeholder="Escribe un comentario..."><button class="btn btn-sm btn-outline" onclick="apAddPostComment('${section}','${post.id}')">Comentar</button></div></div></article>`;
+    const deleteReactionBtn = apCanDeleteReaction() ? `<button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="apClearPostReactions('${section}','${post.id}')" title="Eliminar reacciones">🗑️ Reacciones</button>` : '';
+    const deleteCommentBtn = apCanDeleteComment() ? `<button class="btn btn-sm btn-outline" onclick="apClearPostComments('${section}','${post.id}')" title="Eliminar comentarios">🗑️ Comentarios</button>` : '';
+    return `<article class="bw-social-card"><div class="bw-post-head"><div class="bw-post-title">${post.title}</div><div class="bw-post-meta">${post.author ? post.author + ' · ' : ''}${new Date(post.date + 'T00:00:00').toLocaleDateString('es-CO')}</div></div>${adminActions}<div class="bw-post-body">${post.content || ''}</div>${apVideoEmbedHtml(post.videoLink)}<div class="bw-reactions-row"><button class="bw-react-btn ${myReaction==='like'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','like')">👍 ${apSocialReactionCount(section, post, 'like')}</button><button class="bw-react-btn ${myReaction==='love'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','love')">❤️ ${apSocialReactionCount(section, post, 'love')}</button><button class="bw-react-btn ${myReaction==='clap'?'active':''}" onclick="apSetPostReaction('${section}','${post.id}','clap')">👏 ${apSocialReactionCount(section, post, 'clap')}</button>${deleteReactionBtn}</div><div class="bw-comments-wrap"><div class="bw-comments-list">${commentsPreview}</div><div class="bw-comment-form"><input id="bwCommentInput-${section}-${post.id}" class="form-input" placeholder="Escribe un comentario..."><button class="btn btn-sm btn-outline" onclick="apAddPostComment('${section}','${post.id}')">Comentar</button>${deleteCommentBtn}</div></div></article>`;
 }
 function apRenderSocialFeed(section, title, actionButtonsHtml) {
     const cfg = apGetFeedConfig(section);
@@ -2605,7 +3363,7 @@ function apRenderSocialFeed(section, title, actionButtonsHtml) {
     const totalPages = Math.max(1, Math.ceil(posts.length / cfg.pageSize));
     const safePage = Math.min(Math.max(1, cfg.page), totalPages);
     const chunk = posts.slice((safePage - 1) * cfg.pageSize, safePage * cfg.pageSize);
-    const adminButtons = apCanCreateWellnessPost()
+    const adminButtons = apCanCreateWellnessPost(section)
         ? `<button class="btn btn-sm btn-outline" onclick="apOpenWellbeingPostModal('${section}','post','')">Nueva publicación</button><button class="btn btn-sm btn-outline" onclick="apOpenWellbeingPostModal('${section}','article','')">Nuevo artículo</button>`
         : '';
     return `<div class="card"><div class="card-header"><span class="card-title">${title}</span><div style="display:flex;gap:8px;flex-wrap:wrap">${actionButtonsHtml || ''}${adminButtons}<button class="btn btn-sm btn-outline" onclick="apOpenWellnessSection('')">Volver</button></div></div><div class="card-body"><div class="bw-feed-toolbar"><input class="form-input" placeholder="Buscar publicaciones..." value="${cfg.query}" oninput="apSetFeedConfig('${section}',{query:this.value,page:1});apOpenWellnessSection('${section}')"><select class="form-input" onchange="apSetFeedConfig('${section}',{sort:this.value,page:1});apOpenWellnessSection('${section}')"><option value="recent" ${cfg.sort==='recent'?'selected':''}>Más reciente</option><option value="old" ${cfg.sort==='old'?'selected':''}>Más antiguo</option></select></div><div class="bw-social-feed">${chunk.length ? chunk.map(p => apRenderPostCard(section, p)).join('') : '<div style="font-size:13px;color:var(--text-muted)">No hay publicaciones para estos filtros.</div>'}</div><div class="bw-pagination"><span style="font-size:12px;color:var(--text-muted)">Página ${safePage} de ${totalPages}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="apSetFeedConfig('${section}',{page:${safePage - 1}});apOpenWellnessSection('${section}')">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="apSetFeedConfig('${section}',{page:${safePage + 1}});apOpenWellnessSection('${section}')">Siguiente</button></div></div></div></div>`;
@@ -2701,67 +3459,93 @@ function apRenderWellnessSection(section) {
     }
 }
 
+let psychologyAvailabilityCache = null;
+let psychologyAppointmentsCache = [];
+
+async function apLoadPsychologyAvailability() {
+    try {
+        const data = await tryFetch('/api/psychology/availability');
+        psychologyAvailabilityCache = data && typeof data === 'object' ? data : {};
+    } catch (e) {
+        psychologyAvailabilityCache = {};
+    }
+}
+
+async function apLoadPsychologyAppointments() {
+    try {
+        const data = await tryFetch('/api/student/psychology/appointments');
+        psychologyAppointmentsCache = Array.isArray(data) ? data : [];
+    } catch (e) {
+        psychologyAppointmentsCache = [];
+    }
+}
+
+function apPsychGetProfessionals() {
+    const cfg = psychologyAvailabilityCache || {};
+    const professionals = cfg.professionals || apCatalogList('psychologists') || [];
+    return professionals;
+}
+
 function apPsychModalRefreshSlots() {
-    const profId = (document.getElementById('psyModalProfessional') || {}).value;
+    const profName = (document.getElementById('psyModalProfessional') || {}).value;
     const date = (document.getElementById('psyModalDate') || {}).value;
     const slotSel = document.getElementById('psyModalSlot');
     if (!slotSel) return;
-    const psychologists = apCatalogList('psychologists');
-    const prof = psychologists.find(p => p.id === profId) || psychologists[0];
-    const dateInfo = prof && prof.dates ? prof.dates.find(d => d.date === date) : null;
+    const cfg = psychologyAvailabilityCache || {};
+    const dates = cfg.dates || {};
+    const profDates = dates[profName] || [];
+    const dateInfo = profDates.find(d => d.date === date);
     const slots = (dateInfo && dateInfo.slots && dateInfo.slots.length) ? dateInfo.slots : ['Sin disponibilidad'];
     slotSel.innerHTML = slots.map(s => `<option value="${s}">${s}</option>`).join('');
 }
-function apOpenPsychAppointmentModal() {
+
+async function apOpenPsychAppointmentModal() {
+    await apLoadPsychologyAvailability();
+    const professionals = apPsychGetProfessionals();
+    const profOptions = professionals.map(p => `<option value="${p.name || p.id}">${p.name} — ${p.specialty || ''}</option>`).join('');
     document.getElementById('modalTitle').textContent = 'Agendar cita psicológica';
-    const psychologists = apCatalogList('psychologists');
-    document.getElementById('modalBody').innerHTML = `<div class="form-group"><label class="form-label">Psicóloga</label><select id="psyModalProfessional" class="form-input" onchange="apPsychModalRefreshSlots()">${psychologists.map(p => `<option value="${p.id}">${p.name} — ${p.specialty}</option>`).join('')}</select></div><div class="form-row"><div class="form-group"><label class="form-label">Fecha disponible</label><input type="date" id="psyModalDate" class="form-input" onchange="apPsychModalRefreshSlots()"></div><div class="form-group"><label class="form-label">Hora</label><select id="psyModalSlot" class="form-input"></select></div></div><div class="form-group"><label class="form-label">Motivo de la consulta</label>${buildStudentRichEditorHtml('psyModalReasonEditor',120)}</div><button class="btn btn-primary" onclick="apSubmitPsychAppointment()">Agendar cita</button>`;
-    const first = psychologists[0];
+    document.getElementById('modalBody').innerHTML = `<div class="form-group"><label class="form-label">Psicóloga</label><select id="psyModalProfessional" class="form-input" onchange="apPsychModalRefreshSlots()">${profOptions}</select></div><div class="form-row"><div class="form-group"><label class="form-label">Fecha disponible</label><input type="date" id="psyModalDate" class="form-input" onchange="apPsychModalRefreshSlots()"></div><div class="form-group"><label class="form-label">Hora</label><select id="psyModalSlot" class="form-input"></select></div></div><div class="form-group"><label class="form-label">Motivo de la consulta</label>${buildStudentRichEditorHtml('psyModalReasonEditor',120)}</div><button class="btn btn-primary" onclick="apSubmitPsychAppointment()">Agendar cita</button>`;
+    const firstProf = professionals[0];
+    const cfg = psychologyAvailabilityCache || {};
+    const dates = cfg.dates || {};
+    const profDates = firstProf ? (dates[firstProf.name || firstProf.id] || []) : [];
     const dateInput = document.getElementById('psyModalDate');
-    if (first && dateInput && first.dates.length) dateInput.value = first.dates[0].date;
+    if (firstProf && dateInput && profDates.length) dateInput.value = profDates[0].date;
     apPsychModalRefreshSlots();
     srtSetModalSize('xl');
     document.getElementById('modalBackdrop').classList.add('show');
 }
+
 async function apSubmitPsychAppointment() {
-    const profId = (document.getElementById('psyModalProfessional') || {}).value;
+    const profName = (document.getElementById('psyModalProfessional') || {}).value;
     const date = (document.getElementById('psyModalDate') || {}).value;
     const slot = (document.getElementById('psyModalSlot') || {}).value;
     const reason = srtGetHtml('psyModalReasonEditor');
-    if (!profId || !date || !slot || slot === 'Sin disponibilidad' || !reason) { showToast('Completa profesional, fecha, hora y motivo.', 'error'); return; }
-    const prof = apCatalogList('psychologists').find(p => p.id === profId);
-    const state = apGetWellnessState();
-    let savedInBackend = false;
+    if (!profName || !date || !slot || slot === 'Sin disponibilidad' || !reason) { showToast('Completa profesional, fecha, hora y motivo.', 'error'); return; }
     try {
-        await apCreateWellbeingRequest({
-            studentId: currentStudent ? currentStudent.id : null,
-            moduleType: 'PSYCHOLOGY',
-            title: WELLBEING_REQUEST_TITLES.PSYCH_APPOINTMENT,
-            message: apStripHtmlToText(reason),
-            scheduledAt: date + 'T' + slot + ':00',
-            payload: {
-                professionalId: profId,
-                professionalName: prof ? prof.name : 'Psicología',
-                slot,
-                reasonHtml: reason
-            }
+        await postJson('/api/student/psychology/appointments', {
+            professionalName: profName,
+            appointmentDate: date,
+            slot,
+            reason: apStripHtmlToText(reason)
         });
-        savedInBackend = true;
-        await apSyncWellnessStateFromBackend('psychology');
+        closeModal();
+        showToast('Cita psicológica agendada', 'success');
+        await apLoadPsychologyAppointments();
+        apOpenWellnessSection('psychology');
     } catch (e) {
-        state.psychAppointments.push({ id: 'pa-' + Date.now(), professionalId: profId, professionalName: prof ? prof.name : 'Psicología', date, slot, reason, status: 'pendiente', createdAt: new Date().toISOString() });
-        apSaveWellnessState(state);
+        showToast((e && e.message) ? e.message : 'No se pudo agendar la cita', 'error');
     }
-    closeModal();
-    showToast(savedInBackend ? 'Cita psicológica agendada' : 'Cita guardada localmente (sin conexión backend)', 'success');
-    apOpenWellnessSection('psychology');
 }
-function apOpenPsychHistoryModal() {
-    const state = apGetWellnessState();
+
+async function apOpenPsychHistoryModal() {
+    await apLoadPsychologyAppointments();
+    const appointments = psychologyAppointmentsCache || [];
     document.getElementById('modalTitle').textContent = 'Mis citas psicológicas';
-    document.getElementById('modalBody').innerHTML = `<div class="bw-mini-list">${state.psychAppointments.length ? state.psychAppointments.slice().reverse().map(a => {
-        const s = apWellbeingStatusUi(a.statusRaw || a.status);
-        return `<div class="bw-mini-item"><strong>${a.professionalName}</strong><span>${a.date} · ${a.slot}</span><span class="badge ${s.cls}">${s.text}</span>${a.resolutionComment ? `<span style="font-size:12px;color:var(--text-muted)">Resolución: ${a.resolutionComment}</span>` : ''}</div>`;
+    document.getElementById('modalBody').innerHTML = `<div class="bw-mini-list">${appointments.length ? appointments.slice().reverse().map(a => {
+        const statusMap = { SCHEDULED: { text: 'Agendada', cls: 'badge-gold' }, COMPLETED: { text: 'Completada', cls: 'badge-success' }, CANCELLED: { text: 'Cancelada', cls: 'badge-error' } };
+        const s = statusMap[a.status] || { text: a.status, cls: 'badge-navy' };
+        return `<div class="bw-mini-item"><strong>${a.professionalName}</strong><span>${a.appointmentDate} · ${a.slot}</span><span class="badge ${s.cls}">${s.text}</span>${a.resolutionComment ? `<span style="font-size:12px;color:var(--text-muted)">Resolución: ${a.resolutionComment}</span>` : ''}</div>`;
     }).join('') : '<div style="font-size:12.5px;color:var(--text-muted)">Sin citas registradas.</div>'}</div>`;
     srtSetModalSize('lg');
     document.getElementById('modalBackdrop').classList.add('show');
@@ -2909,6 +3693,10 @@ async function saveProfile() {
 async function loadStudentSubmissions(courseId) {
     const sid = currentStudent ? currentStudent.id : null;
     if (!sid || !courseId) return;
+    // Clear existing cache entries for this student to avoid stale grades
+    Object.keys(activitySubmissionCache).forEach(key => {
+        if (String(key).startsWith(String(sid) + '_')) delete activitySubmissionCache[key];
+    });
     const data = await tryFetch('/api/activity-submissions/student/' + sid);
     if (!Array.isArray(data)) return;
     for (const sub of data) {
@@ -2927,6 +3715,25 @@ async function loadStudentSubmissions(courseId) {
             id: sub.id
         };
     }
+}
+
+async function refreshStudentSubmission(actId) {
+    const sid = currentStudent ? currentStudent.id : null;
+    if (!sid || !actId) return;
+    const data = await tryFetch('/api/activity-submissions/activity/' + actId + '/student/' + sid + '?_t=' + Date.now());
+    if (!data || !data.id) return;
+    activitySubmissionCache[sid + '_' + actId] = {
+        submitted: true,
+        submittedAt: data.submittedAt,
+        comment: data.comment || '',
+        files: Array.isArray(data.files) ? data.files : [],
+        graded: data.grade != null,
+        grade: data.grade != null ? parseFloat(data.grade) : undefined,
+        feedback: data.feedback || '',
+        gradedAt: data.gradedAt,
+        isLate: !!data.isLate,
+        id: data.id
+    };
 }
 
 async function loadStudentExamAttempts(courseId) {
@@ -3437,6 +4244,7 @@ async function init() {
         authHeader = '';
         setDate();
         refreshAdminFormsFromStorage();
+        await loadEvalFormsFromBackend();
         const me = await tryFetch('/api/auth/me');
         if (!me || !me.id) {
             window.location.href = '/login?role=student&redirect=/student-dashboard';
@@ -3470,6 +4278,10 @@ async function init() {
             currentStudent = { id: 0, studentCode: 'ACCESO-ADMIN' };
         }
         await apLoadWellnessContentFromBackend().catch(() => {});
+        try {
+            const gp = await tryFetch('/api/config/grade-policy');
+            if (gp && gp.value) studentSchedulePolicy = { ...studentSchedulePolicy, ...JSON.parse(gp.value) };
+        } catch (e) {}
         document.getElementById('sidebarUserName').textContent    = currentUser.name;
         document.getElementById('sidebarStudentCode').textContent = currentStudent.studentCode;
         await loadOverview();
@@ -3494,6 +4306,34 @@ const btnJoinCourseCodeStudent = document.getElementById('btnJoinCourseCodeStude
 if (btnJoinCourseCodeStudent) btnJoinCourseCodeStudent.addEventListener('click', openStudentJoinCourseModal);
 const btnReloadStudentCourses = document.getElementById('btnReloadStudentCourses');
 if (btnReloadStudentCourses) btnReloadStudentCourses.addEventListener('click', forceReloadStudentCourses);
+
+window.addEventListener('focus', () => {
+    if (currentPersonalType === 'grades' && currentStudent && currentStudent.id) {
+        tryFetch('/api/grades/student/' + currentStudent.id + '?_t=' + Date.now()).then(grData => {
+            if (Array.isArray(grData)) grades = grData;
+            const content = document.getElementById('personalSubContent');
+            if (content && currentPersonalType === 'grades') {
+                const freshCourses = enrollments.map(e => e.course).filter(Boolean);
+                content.innerHTML = apGradesHtml(freshCourses);
+                apInitGrades();
+            }
+        });
+    }
+    const courseView = document.getElementById('courseView');
+    if (courseView && courseView.classList.contains('show') && currentCourse && currentCourse.id && currentStudent && currentStudent.id) {
+        const anyEditing = Object.keys(activitySubmissionCache).some(k => activitySubmissionCache[k].editing);
+        if (!anyEditing) {
+            const openIds = getOpenStudentCardIds();
+            loadStudentSubmissions(currentCourse.id).then(() => {
+                renderUnit(currentUnitIdx, { skipPersist: true });
+                openIds.forEach(cid => {
+                    const cel = document.getElementById(cid);
+                    if (cel) cel.classList.add('open');
+                });
+            });
+        }
+    }
+});
 
 /* ═══════════════════════════════════════════════════════════════════════════
    EXAM TAKER FUNCTIONS

@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
@@ -17,22 +18,27 @@ public class CertificateController {
     private final CertificateService certificateService;
 
     @GetMapping
+    @PreAuthorize("hasAnyAuthority('ROLE_ADMIN','ROLE_ADMINISTRADOR','PORTAL_ADMIN')")
     public ResponseEntity<List<CertificateResponse>> findAll() {
         return ResponseEntity.ok(certificateService.findAll());
     }
     @GetMapping("/{id}")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CertificateResponse> findById(@PathVariable Integer id) {
         return ResponseEntity.ok(certificateService.findById(id));
     }
     @GetMapping("/student/{studentId}")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<CertificateResponse>> findByStudent(@PathVariable Integer studentId) {
         return ResponseEntity.ok(certificateService.findByStudentId(studentId));
     }
     @PostMapping
+    @PreAuthorize("hasAnyAuthority('ROLE_ADMIN','ROLE_ADMINISTRADOR','PORTAL_ADMIN')")
     public ResponseEntity<CertificateResponse> save(@Valid @RequestBody CertificateRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(certificateService.save(request));
     }
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasAnyAuthority('ROLE_ADMIN','ROLE_ADMINISTRADOR','PORTAL_ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable Integer id) {
         certificateService.delete(id);
         return ResponseEntity.noContent().build();

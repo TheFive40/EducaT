@@ -133,6 +133,7 @@
                         <div class="card-body" id="activeGradingModel">Cargando...</div>
                     </div>
                 </div>
+                <div id="adminEvaluationReportOverview" style="margin-top:14px"></div>
             </section>
 
             <section class="section-panel" id="panel-cursos">
@@ -827,6 +828,17 @@
                             </select>
                         </div>
                         <button class="btn btn-teal" id="btnSaveGrading">Guardar política</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Periodos de corte</span></div>
+                    <div class="card-body">
+                        <div class="alert alert-info">Configura las fechas de inicio, cierre y habilitación para que los docentes puedan cerrar notas de cada corte.</div>
+                        <div id="cutPeriodsList"></div>
+                        <button class="btn btn-outline" id="btnAddCutPeriod" style="margin-top:8px">Agregar periodo</button>
+                        <div style="margin-top:16px">
+                            <button class="btn btn-teal" id="btnSaveCutPeriods">Guardar periodos</button>
+                        </div>
                     </div>
                 </div>
                 <div class="card">

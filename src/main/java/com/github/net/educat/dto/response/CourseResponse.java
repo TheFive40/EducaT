@@ -15,4 +15,5 @@ public class CourseResponse {
     private LocalTime defaultEndTime;
     private String scheduleWarning;
     private TeacherResponse teacher;
+    private String cutConfigJson;
 }

@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,6 +33,7 @@ public class WellbeingPublicationServiceImpl implements WellbeingPublicationServ
             "psychology", "sports", "art", "orientation", "medical", "scholarships"
     );
     private static final Set<String> VALID_TYPES = Set.of("post", "article");
+    private static final Set<String> VALID_STATUSES = Set.of("PUBLISHED", "PENDING", "REJECTED", "DRAFT");
 
     private final WellbeingPublicationRepository publicationRepository;
     private final InstitutionSettingsRepository institutionSettingsRepository;
@@ -46,7 +48,17 @@ public class WellbeingPublicationServiceImpl implements WellbeingPublicationServ
     }
 
     @Override
-    public WellbeingPublicationResponse createPublication(WellbeingPublicationRequest request) {
+    @Transactional(readOnly = true)
+    public List<WellbeingPublicationResponse> findPendingPublications() {
+        return publicationRepository.findByStatusOrderByRequestedAtDesc("PENDING").stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Override
+    public WellbeingPublicationResponse createPublication(WellbeingPublicationRequest request, boolean publishDirectly) {
+        String status = publishDirectly ? "PUBLISHED" : "PENDING";
+        LocalDateTime now = LocalDateTime.now();
         WellbeingPublication entity = normalizeForSave(
                 WellbeingPublication.builder()
                         .section(normalizeSection(request.getSection()))
@@ -57,6 +69,10 @@ public class WellbeingPublicationServiceImpl implements WellbeingPublicationServ
                         .content(normalizeOptional(request.getContent()))
                         .videoLink(normalizeOptional(request.getVideoLink()))
                         .reactionsJson(defaultReactionsJson())
+                        .status(status)
+                        .requestedBy(normalizeOptional(request.getRequestedBy()))
+                        .requestedAt(now)
+                        .autoPublishAt(publishDirectly ? null : now.plusHours(24))
                         .build()
         );
         return toResponse(publicationRepository.save(entity));
@@ -88,9 +104,27 @@ public class WellbeingPublicationServiceImpl implements WellbeingPublicationServ
     }
 
     @Override
+    public WellbeingPublicationResponse reviewPublication(String id, String status, String reviewedBy, String resolutionComment) {
+        Integer entityId = parseId(id);
+        WellbeingPublication publication = publicationRepository.findById(entityId)
+                .orElseThrow(() -> new EntityNotFoundException("Wellbeing publication not found: " + id));
+        String normalizedStatus = normalizeStatus(status);
+        publication.setStatus(normalizedStatus);
+        publication.setReviewedBy(normalizeOptional(reviewedBy));
+        publication.setReviewedAt(LocalDateTime.now());
+        publication.setResolutionComment(normalizeOptional(resolutionComment));
+        if ("PUBLISHED".equals(normalizedStatus)) {
+            publication.setAutoPublishAt(null);
+        }
+        return toResponse(publicationRepository.save(publication));
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public StudentWellbeingContentResponse getStudentContent() {
-        List<WellbeingPublicationResponse> all = findAllPublications();
+        List<WellbeingPublicationResponse> all = findAllPublications().stream()
+                .filter(item -> "PUBLISHED".equals(item.getStatus()))
+                .toList();
         Map<String, List<WellbeingPublicationResponse>> postsBySection = emptyGroupedPublications();
         Map<String, List<WellbeingPublicationResponse>> articlesBySection = emptyGroupedPublications();
 
@@ -111,6 +145,19 @@ public class WellbeingPublicationServiceImpl implements WellbeingPublicationServ
                 .build();
     }
 
+    @Override
+    @Transactional
+    public void autoPublishOverdue() {
+        LocalDateTime now = LocalDateTime.now();
+        List<WellbeingPublication> overdue = publicationRepository.findByStatusAndAutoPublishAtBefore("PENDING", now);
+        for (WellbeingPublication pub : overdue) {
+            pub.setStatus("PUBLISHED");
+            pub.setAutoPublishAt(null);
+            pub.setResolutionComment("Publicada automaticamente tras 24h sin revision.");
+            publicationRepository.save(pub);
+        }
+    }
+
     private WellbeingPublicationResponse toResponse(WellbeingPublication entity) {
         Map<String, Integer> reactions = parseReactions(entity.getReactionsJson());
         return WellbeingPublicationResponse.builder()
@@ -123,6 +170,13 @@ public class WellbeingPublicationServiceImpl implements WellbeingPublicationServ
                 .content(entity.getContent())
                 .videoLink(entity.getVideoLink())
                 .reactions(reactions)
+                .status(entity.getStatus())
+                .requestedBy(entity.getRequestedBy())
+                .requestedAt(entity.getRequestedAt())
+                .reviewedBy(entity.getReviewedBy())
+                .reviewedAt(entity.getReviewedAt())
+                .resolutionComment(entity.getResolutionComment())
+                .autoPublishAt(entity.getAutoPublishAt())
                 .build();
     }
 
@@ -152,6 +206,14 @@ public class WellbeingPublicationServiceImpl implements WellbeingPublicationServ
         String normalized = normalizeOptional(value).toLowerCase(Locale.ROOT);
         if (!VALID_TYPES.contains(normalized)) {
             throw new IllegalArgumentException("Invalid wellbeing publication type: " + value);
+        }
+        return normalized;
+    }
+
+    private String normalizeStatus(String value) {
+        String normalized = normalizeOptional(value).toUpperCase(Locale.ROOT);
+        if (!VALID_STATUSES.contains(normalized)) {
+            throw new IllegalArgumentException("Invalid wellbeing publication status: " + value);
         }
         return normalized;
     }

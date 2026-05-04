@@ -8,9 +8,12 @@ import java.util.List;
 
 public interface WellbeingPublicationService {
     List<WellbeingPublicationResponse> findAllPublications();
-    WellbeingPublicationResponse createPublication(WellbeingPublicationRequest request);
+    List<WellbeingPublicationResponse> findPendingPublications();
+    WellbeingPublicationResponse createPublication(WellbeingPublicationRequest request, boolean publishDirectly);
     WellbeingPublicationResponse updatePublication(String id, WellbeingPublicationRequest request);
     void deletePublication(String id);
+    WellbeingPublicationResponse reviewPublication(String id, String status, String reviewedBy, String resolutionComment);
     StudentWellbeingContentResponse getStudentContent();
+    void autoPublishOverdue();
 }
 

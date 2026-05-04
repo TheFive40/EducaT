@@ -75,4 +75,18 @@ public class ConfigServiceImpl implements ConfigService {
         institutionSettingsRepository.save(settings);
         return ConfigResponse.builder().key("assignmentRules").value(settings.getAssignmentRulesJson()).build();
     }
+
+    @Override @Transactional(readOnly = true)
+    public ConfigResponse getCutPeriods() {
+        InstitutionSettings settings = getOrCreateSettings();
+        return ConfigResponse.builder().key("cutPeriods").value(settings.getCutPeriodsJson()).build();
+    }
+
+    @Override
+    public ConfigResponse saveCutPeriods(String periods) {
+        InstitutionSettings settings = getOrCreateSettings();
+        settings.setCutPeriodsJson(periods);
+        institutionSettingsRepository.save(settings);
+        return ConfigResponse.builder().key("cutPeriods").value(settings.getCutPeriodsJson()).build();
+    }
 }

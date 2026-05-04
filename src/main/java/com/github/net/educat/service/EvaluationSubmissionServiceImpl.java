@@ -13,6 +13,7 @@ import com.github.net.educat.mapper.StudentMapper;
 import com.github.net.educat.repository.CourseRepository;
 import com.github.net.educat.repository.EvaluationSubmissionRepository;
 import com.github.net.educat.repository.StudentRepository;
+import com.github.net.educat.repository.TeacherRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -36,6 +37,7 @@ public class EvaluationSubmissionServiceImpl implements EvaluationSubmissionServ
     private final EvaluationSubmissionRepository evaluationSubmissionRepository;
     private final StudentRepository studentRepository;
     private final CourseRepository courseRepository;
+    private final TeacherRepository teacherRepository;
     private final StudentMapper studentMapper;
     private final CourseMapper courseMapper;
     private final ObjectMapper objectMapper;
@@ -227,5 +229,47 @@ public class EvaluationSubmissionServiceImpl implements EvaluationSubmissionServ
         } catch (Exception ex) {
             return Collections.emptyMap();
         }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<EvaluationSubmissionResponse> findTeacherEvaluationsAboutMe(Integer teacherUserId, Integer courseId, Pageable pageable) {
+        com.github.net.educat.domain.Teacher teacher = teacherRepository.findByUserId(teacherUserId)
+                .orElseThrow(() -> new EntityNotFoundException("Teacher not found for user: " + teacherUserId));
+        Integer teacherId = teacher.getId();
+
+        Specification<EvaluationSubmission> spec = (root, query, cb) -> cb.conjunction();
+        spec = spec.and((root, query, cb) -> cb.equal(root.get("evaluationType"), "EVAL"));
+        spec = spec.and((root, query, cb) -> cb.equal(root.get("course").get("teacher").get("id"), teacherId));
+        if (courseId != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("course").get("id"), courseId));
+        }
+        spec = spec.and((root, query, cb) -> cb.or(
+                cb.isTrue(root.get("submitted")),
+                cb.and(cb.isNull(root.get("submitted")), cb.isNotNull(root.get("submittedAt")))
+        ));
+
+        return evaluationSubmissionRepository.findAll(spec, pageable).map(this::toResponse);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<EvaluationSubmissionResponse> findEvaluationReport(Integer courseId, Integer teacherId, String evaluationType, Pageable pageable) {
+        Specification<EvaluationSubmission> spec = (root, query, cb) -> cb.conjunction();
+        if (courseId != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("course").get("id"), courseId));
+        }
+        if (teacherId != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("course").get("teacher").get("id"), teacherId));
+        }
+        if (evaluationType != null && !evaluationType.isBlank()) {
+            String normalized = normalizeEvaluationType(evaluationType);
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("evaluationType"), normalized));
+        }
+        spec = spec.and((root, query, cb) -> cb.or(
+                cb.isTrue(root.get("submitted")),
+                cb.and(cb.isNull(root.get("submitted")), cb.isNotNull(root.get("submittedAt")))
+        ));
+        return evaluationSubmissionRepository.findAll(spec, pageable).map(this::toResponse);
     }
 }

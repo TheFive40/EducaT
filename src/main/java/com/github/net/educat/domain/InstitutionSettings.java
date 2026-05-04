@@ -25,4 +25,8 @@ public class InstitutionSettings {
     private String wellbeingCatalogJson;
     @Column(name = "assignment_rules_json", columnDefinition = "TEXT")
     private String assignmentRulesJson;
+    @Column(name = "cut_periods_json", columnDefinition = "TEXT")
+    private String cutPeriodsJson;
+    @Column(name = "psychology_availability_json", columnDefinition = "TEXT")
+    private String psychologyAvailabilityJson;
 }

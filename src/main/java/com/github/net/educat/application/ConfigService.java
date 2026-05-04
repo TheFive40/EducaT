@@ -11,4 +11,6 @@ public interface ConfigService {
     ConfigResponse saveWellbeingCatalog(String catalog);
     ConfigResponse getAssignmentRules();
     ConfigResponse saveAssignmentRules(String rules);
+    ConfigResponse getCutPeriods();
+    ConfigResponse saveCutPeriods(String periods);
 }

@@ -16,7 +16,7 @@ public class Certificate {
     private Student student;
     @Column(nullable = false)
     private String name;
-    @Column(name = "file_path")
+    @Column(name = "file_path", columnDefinition = "TEXT")
     private String filePath;
     @Column(name = "issued_at")
     private LocalDate issuedAt;

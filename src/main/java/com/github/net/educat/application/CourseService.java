@@ -17,4 +17,5 @@ public interface CourseService {
     CourseJoinByCodeResponse joinByCode(CourseJoinByCodeRequest request);
     List<CourseResponse> findByCurrentUser(Integer userId);
     List<Object> getStudentsInCourse(Integer courseId);
+    CourseResponse updateCutConfig(Integer id, String cutConfigJson);
 }

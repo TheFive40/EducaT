@@ -75,6 +75,30 @@ public class EvaluationSubmissionController {
         return ResponseEntity.ok(evaluationSubmissionService.findById(id));
     }
 
+    // Teacher: see evaluations about themselves
+    @GetMapping("/api/teacher/my-evaluations")
+    public ResponseEntity<Page<EvaluationSubmissionResponse>> findMyEvaluations(
+            @RequestParam(required = false) Integer courseId,
+            Pageable pageable,
+            Principal principal
+    ) {
+        User user = resolveUser(principal);
+        return ResponseEntity.ok(evaluationSubmissionService.findTeacherEvaluationsAboutMe(user.getId(), courseId, pageable));
+    }
+
+    // Admin: evaluation report
+    @GetMapping("/api/admin/evaluation-report")
+    public ResponseEntity<Page<EvaluationSubmissionResponse>> findEvaluationReport(
+            @RequestParam(required = false) Integer courseId,
+            @RequestParam(required = false) Integer teacherId,
+            @RequestParam(required = false) String evaluationType,
+            Pageable pageable,
+            Principal principal
+    ) {
+        User user = resolveUser(principal);
+        return ResponseEntity.ok(evaluationSubmissionService.findEvaluationReport(courseId, teacherId, evaluationType, pageable));
+    }
+
     @DeleteMapping("/api/evaluation-submissions/{id}")
     public ResponseEntity<Void> delete(@PathVariable Integer id) {
         evaluationSubmissionService.delete(id);

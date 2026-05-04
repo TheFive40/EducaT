@@ -9,6 +9,8 @@ let currentUnitIdx = 0;
 let currentSubmissionsActivityId = null;
 let teacherForumReplyPanels = {};
 let teacherEvaluationById = {};
+let teacherMyEvaluationsById = {};
+let evalModalState = { page: 1, pageSize: 5, keys: [], obj: {}, byId: {}, evaluationType: '' };
 let teacherStudents = [];
 let teacherGrades = [];
 let teacherActivities = [];
@@ -16,6 +18,7 @@ let teacherExams = [];
 let teacherSchedules = [];
 let teacherAbsenceReportsCache = [];
 let teacherGuides = [];
+let teacherCutPeriods = [];
 let currentEffectiveAccess = null;
 let currentEffectivePermissions = [];
 
@@ -95,8 +98,35 @@ const storageService = buildRuntimeStore();
 const sessionService = buildRuntimeStore();
 const GRADE_SCALE_MAX = 10;
 const DEFAULT_FORUM_PARTICIPATION_GRADE = 4.0;
-const TEACHER_EVAL_REVIEWS_KEY = 'educat_teacher_eval_report_reviews';
+const TEACHER_HIDDEN_EVALS_KEY = 'educat_teacher_hidden_evaluations';
 const ADMIN_DELEGATED_TEACHER_COURSES_PREFIX = 'educat_admin_delegate_teacher_courses_';
+
+function readHiddenEvaluations() {
+    try {
+        const raw = storageService.getItem(TEACHER_HIDDEN_EVALS_KEY) || '[]';
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveHiddenEvaluations(ids) {
+    storageService.setItem(TEACHER_HIDDEN_EVALS_KEY, JSON.stringify(Array.isArray(ids) ? ids : []));
+}
+
+function hideEvaluationForTeacher(id) {
+    const hidden = readHiddenEvaluations();
+    const sid = String(id);
+    if (!hidden.includes(sid)) {
+        hidden.push(sid);
+        saveHiddenEvaluations(hidden);
+    }
+}
+
+function isEvaluationHiddenForTeacher(id) {
+    return readHiddenEvaluations().includes(String(id));
+}
 const tableUiState = {
     grades: { page: 1, pageSize: 8, query: '', summaryPage: 1, summaryPageSize: 8 },
     students: { page: 1, pageSize: 8 },
@@ -104,6 +134,7 @@ const tableUiState = {
     wellbeing: { page: 1, pageSize: 5, query: '', status: 'all', module: 'all' },
     evalReports: { page: 1, pageSize: 6, query: '', type: 'all', submitted: 'all', courseId: 'all' },
     attendanceSummary: { page: 1, pageSize: 8, query: '' },
+    myEvaluations: { page: 1, pageSize: 5 },
 };
 
 const TEACHER_NAV_STATE_KEY = 'educat_teacher_nav_state_session';
@@ -640,10 +671,6 @@ function canReviewWellbeingAction(action) {
     if (action === 'APPROVED') return approve;
     if (action === 'REJECTED' || action === 'CANCELLED') return reject;
     return approve || reject;
-}
-
-function canModerateEvaluationReports() {
-    return canReviewWellbeingAction('APPROVED') || canReviewWellbeingAction('REJECTED');
 }
 
 function showToast(msg, type = '') {
@@ -1470,29 +1497,101 @@ async function upsertTeacherGradeRecord(courseId, student, grade, description, s
         grade: clampGrade(grade),
         description,
         sourceUnitId,
-        source: 'unit-final'
+        source: 'unit'
     };
-    try {
-        const saved = await postJson('/api/grades', payload);
-        if (saved) {
-            const idx = teacherGrades.findIndex(g => g.course && g.course.id === courseId && g.student && g.student.id === student.id && g.sourceUnitId === sourceUnitId);
-            if (idx >= 0) teacherGrades[idx] = saved;
-            else teacherGrades.push(saved);
-            return;
-        }
-    } catch (e) {}
     const existing = teacherGrades.find(g => g.course && g.course.id === courseId && g.student && g.student.id === student.id && g.sourceUnitId === sourceUnitId);
+    try {
+        if (existing && existing.id) {
+            const res = await apiFetch('/api/grades/' + existing.id, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    ...payload,
+                    activityId: existing.activityId || null,
+                    source: existing.source || 'unit'
+                })
+            });
+            if (res && res.ok) {
+                const saved = await res.json();
+                Object.assign(existing, saved || {});
+                return;
+            }
+        } else {
+            const saved = await postJson('/api/grades', payload);
+            if (saved) {
+                const idx = teacherGrades.findIndex(g => g.course && g.course.id === courseId && g.student && g.student.id === student.id && g.sourceUnitId === sourceUnitId);
+                if (idx >= 0) teacherGrades[idx] = saved;
+                else teacherGrades.push(saved);
+                return;
+            }
+        }
+    } catch (e) {
+        console.error('Error upsertTeacherGradeRecord:', e);
+    }
     const fallbackPayload = {
-        id: Date.now() + Math.floor(Math.random() * 1000),
+        id: existing && existing.id ? existing.id : (Date.now() + Math.floor(Math.random() * 1000)),
         student: { id: student.id, studentCode: student.studentCode, user: { name: student.user.name } },
         course: { id: courseId },
         grade: clampGrade(grade),
         description,
         sourceUnitId,
-        source: 'unit-final'
+        source: 'unit'
     };
     if (existing) Object.assign(existing, fallbackPayload);
     else teacherGrades.push(fallbackPayload);
+}
+
+async function upsertCutGradeRecord(courseId, student, grade, cutName) {
+    const payload = {
+        studentId: student.id,
+        courseId,
+        grade: clampGrade(grade),
+        description: cutName,
+        sourceUnitId: null,
+        source: 'cut'
+    };
+    const existing = teacherGrades.find(g =>
+        g.course && g.course.id === courseId &&
+        g.student && g.student.id === student.id &&
+        String(g.source || '').toLowerCase() === 'cut' &&
+        g.description === cutName
+    );
+    try {
+        if (existing && existing.id) {
+            const res = await apiFetch('/api/grades/' + existing.id, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    ...payload,
+                    sourceUnitId: existing.sourceUnitId || null,
+                    source: existing.source || 'cut'
+                })
+            });
+            if (res && res.ok) {
+                const saved = await res.json();
+                Object.assign(existing, saved || {});
+                return;
+            }
+        } else {
+            const saved = await postJson('/api/grades', payload);
+            if (saved) teacherGrades.push(saved);
+            return;
+        }
+    } catch (e) {
+        console.error('Error upsertCutGradeRecord:', e);
+    }
+    // fallback local
+    if (existing) {
+        existing.grade = clampGrade(grade);
+    } else {
+        teacherGrades.push({
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            student: { id: student.id, studentCode: student.studentCode, user: { name: student.user.name } },
+            course: { id: courseId },
+            grade: clampGrade(grade),
+            description: cutName,
+            sourceUnitId: null,
+            source: 'cut'
+        });
+    }
 }
 
 function getStoredCourseActivities(courseId) {
@@ -1545,9 +1644,49 @@ function isSubmissionLate(act, sub) {
     return new Date(sub.submittedAt) > deadline;
 }
 
+async function ensureSubmissionLoaded(studentId, actId) {
+    const key = studentId + '_' + actId;
+    if (runtimeSubmissionsByKey[key] && runtimeSubmissionsByKey[key].id) return;
+    const data = await tryFetch('/api/activity-submissions/activity/' + actId + '/student/' + studentId + '?_t=' + Date.now());
+    if (!data || !data.id) return;
+    runtimeSubmissionsByKey[key] = {
+        submitted: true,
+        submittedAt: data.submittedAt,
+        comment: data.comment || '',
+        files: Array.isArray(data.files) ? data.files : [],
+        graded: data.grade != null,
+        grade: data.grade != null ? parseFloat(data.grade) : undefined,
+        feedback: data.feedback || '',
+        gradedAt: data.gradedAt,
+        isLate: !!data.isLate,
+        id: data.id
+    };
+}
+
 async function saveStudentGrade(studentId, actId, grade, feedback) {
     const act = getActivityById(actId);
     const courseId = act && act.course ? act.course.id : (currentCourse ? currentCourse.id : null);
+
+    // 1) Asegurar que la submission del estudiante este cargada (con su ID real del backend)
+    await ensureSubmissionLoaded(studentId, actId);
+
+    const key = studentId + '_' + actId;
+    const existing = runtimeSubmissionsByKey[key] || {};
+
+    // 2) PRIMERO actualizar la submission directamente en el backend (esto SIEMPRE funciona si tenemos el ID)
+    if (existing.id) {
+        try {
+            await apiFetch('/api/activity-submissions/' + existing.id + '/grade', {
+                method: 'PUT',
+                body: JSON.stringify({ grade: clampGrade(grade), feedback: feedback || '' })
+            });
+        } catch (e) {
+            showToast('Error al actualizar la entrega del estudiante', 'error');
+            throw e;
+        }
+    }
+
+    // 3) Actualizar el grade en la tabla grades
     const payload = {
         studentId,
         courseId,
@@ -1555,30 +1694,44 @@ async function saveStudentGrade(studentId, actId, grade, feedback) {
         grade: clampGrade(grade),
         description: feedback || ''
     };
+    const existingGrade = actId ? teacherGrades.find(g =>
+        g.student && g.student.id === studentId &&
+        g.activityId === actId
+    ) : null;
+
     try {
-        const saved = await postJson('/api/grades', payload);
-        if (saved) teacherGrades.push(saved);
-    } catch (e) {
-        teacherGrades.push({
-            id: Date.now() + Math.floor(Math.random() * 1000),
-            student: teacherStudents.find(s => s.id === studentId) || { id: studentId },
-            course: { id: courseId },
-            activityId: actId || null,
-            grade: clampGrade(grade),
-            description: feedback || ''
-        });
-    }
-    const key = studentId + '_' + actId;
-    const existing = runtimeSubmissionsByKey[key] || {};
-    runtimeSubmissionsByKey[key] = { ...existing, graded: true, grade: clampGrade(grade), feedback: feedback || '', gradedAt: new Date().toISOString() };
-    // Also grade the activity submission if it exists in backend
-    if (existing.id) {
-        try {
-            await apiFetch('/api/activity-submissions/' + existing.id + '/grade', {
+        if (existingGrade && existingGrade.id) {
+            const res = await apiFetch('/api/grades/' + existingGrade.id, {
                 method: 'PUT',
-                body: JSON.stringify({ grade: clampGrade(grade), feedback: feedback || '' })
+                body: JSON.stringify({
+                    ...payload,
+                    sourceUnitId: existingGrade.sourceUnitId || null,
+                    source: existingGrade.source || null
+                })
             });
-        } catch (e) {}
+            if (res && res.ok) {
+                const saved = await res.json();
+                Object.assign(existingGrade, saved || {});
+            } else {
+                const txt = await res.text();
+                throw new Error(txt || 'HTTP ' + res.status);
+            }
+        } else {
+            const saved = await postJson('/api/grades', payload);
+            if (saved) teacherGrades.push(saved);
+        }
+    } catch (e) {
+        showToast('Error al guardar calificación: ' + e.message, 'error');
+        throw e;
+    }
+
+    // 4) Actualizar cache local con la nota nueva
+    runtimeSubmissionsByKey[key] = { ...existing, graded: true, grade: clampGrade(grade), feedback: feedback || '', gradedAt: new Date().toISOString() };
+
+    // 5) Recargar la submission especifica del backend para confirmar
+    await refreshTeacherGrades();
+    if (actId) {
+        await refreshStudentSubmissionForTeacher(studentId, actId);
     }
 }
 
@@ -1631,6 +1784,9 @@ function getGradeSubmissionEntries(gradeRow) {
     const studentId = parseInt((gradeRow && gradeRow.student && gradeRow.student.id) || '0', 10);
     const courseId = parseInt((gradeRow && gradeRow.course && gradeRow.course.id) || '0', 10);
     if (!studentId || !courseId) return [];
+
+    const source = String((gradeRow && gradeRow.source) || '').toLowerCase();
+    if (source === 'cut' || source === 'unit') return [];
 
     const entries = [];
     const seenActs = new Set();
@@ -1731,13 +1887,13 @@ function navigateTo(section, options) {
     document.getElementById('pageSubtitle').style.display = '';
     const titles = {
         overview: ['Resumen', 'Vista general de tu actividad docente'],
-        cursos: ['Mis Cursos', 'Gestión de contenido y unidades'],
-        entregas: ['Entregas', 'Revisión y calificación de trabajos estudiantiles'],
-        calificaciones: ['Calificaciones', 'Registro y gestión de notas'],
+        cursos: ['Mis Cursos', 'Gestion de contenido y unidades'],
+        entregas: ['Entregas', 'Revision y calificacion de trabajos estudiantiles'],
+        calificaciones: ['Calificaciones', 'Registro y gestion de notas'],
         asistencia: ['Control de Asistencia', 'Registro de asistencia por clase'],
-        horarios: ['Horarios', 'Programación de clases'],
-        estudiantes: ['Estudiantes', 'Gestión del estudiantado'],
-        instructivos: ['Instructivos', 'Publica guías para docentes y estudiantes'],
+        horarios: ['Horarios', 'Programacion de clases'],
+        estudiantes: ['Estudiantes', 'Gestion del estudiantado'],
+        instructivos: ['Instructivos', 'Publica guias para docentes y estudiantes'],
         perfil: ['Mi Perfil', 'Datos del docente'],
     };
     if (titles[section]) {
@@ -1767,64 +1923,54 @@ function navigateTo(section, options) {
         });
     }
 }
-async function loadEvalSubmissionsForTeacher() {
-    const slot = document.getElementById('teacherEvaluationOverviewSlot');
-    if (!slot) return;
-    slot.innerHTML = '<div class="card"><div class="card-header"><span class="card-title">Evaluaciones recibidas de estudiantes</span></div><div class="card-body"><div class="loading"><div class="spinner"></div>Cargando evaluaciones...</div></div></div>';
+let teacherEvalQuestionLabelsCache = null;
 
-    const teachersData = await tryFetch('/api/teachers');
-    const teacher = (teachersData || []).find(t => t.user && String(t.user.id) === String(currentUser && currentUser.id));
-    if (!teacher) {
-        slot.innerHTML = '';
-        return;
+async function loadTeacherEvalQuestionLabelsFromBackend() {
+    if (teacherEvalQuestionLabelsCache) return teacherEvalQuestionLabelsCache;
+    const result = { eval: {}, autoeval: {} };
+    try {
+        const evalForms = await tryFetch('/api/evaluation-forms/type/eval');
+        const autoevalForms = await tryFetch('/api/evaluation-forms/type/autoeval');
+        if (evalForms && evalForms.length && evalForms[0].questionsJson) {
+            const questions = JSON.parse(evalForms[0].questionsJson);
+            (Array.isArray(questions) ? questions : []).forEach(q => {
+                const id = String((q && q.id) || '').trim();
+                const text = String((q && q.text) || (q && q.label) || '').trim();
+                if (id && text) result.eval[id] = text;
+            });
+        }
+        if (autoevalForms && autoevalForms.length && autoevalForms[0].questionsJson) {
+            const questions = JSON.parse(autoevalForms[0].questionsJson);
+            (Array.isArray(questions) ? questions : []).forEach(q => {
+                const id = String((q && q.id) || '').trim();
+                const text = String((q && q.text) || (q && q.label) || '').trim();
+                if (id && text) result.autoeval[id] = text;
+            });
+        }
+    } catch (e) {
+        // Fallback a local storage si el backend falla
+        let raw = '';
+        try { raw = storageService.getItem('educat_admin_eval_forms') || ''; } catch (e2) {}
+        if (raw) {
+            try {
+                const parsed = JSON.parse(raw);
+                ['eval', 'autoeval'].forEach(type => {
+                    const questions = Array.isArray(parsed[type]) ? parsed[type] : [];
+                    questions.forEach(q => {
+                        const id = String((q && q.id) || '').trim();
+                        const text = String((q && q.text) || (q && q.label) || '').trim();
+                        if (id && text) result[type][id] = text;
+                    });
+                });
+            } catch (e2) {}
+        }
     }
-
-    const courses = await tryFetch('/api/courses/teacher/' + teacher.id);
-    if (!Array.isArray(courses) || !courses.length) {
-        slot.innerHTML = '';
-        return;
-    }
-
-    const questionLabels = loadTeacherEvalQuestionLabels();
-    const rows = [];
-    for (const course of courses) {
-        const page = await tryFetch(
-            '/api/teacher/evaluation-submissions?courseId=' + course.id +
-            '&evaluationType=EVAL&submitted=true&page=0&size=200'
-        );
-        const items = Array.isArray(page) ? page : ((page && Array.isArray(page.content)) ? page.content : []);
-        items.forEach(sub => {
-            const answers = sub.answers && typeof sub.answers === 'object' ? sub.answers : {};
-            const studentName = sub.student && sub.student.user ? sub.student.user.name : 'Estudiante';
-            rows.push({ courseName: course.name, studentName, answers, submittedAt: sub.submittedAt, evaluationType: String(sub.evaluationType || 'EVAL') });
-        });
-    }
-
-    if (!rows.length) {
-        slot.innerHTML = '<div class="card"><div class="card-header"><span class="card-title">Evaluaciones recibidas de estudiantes</span></div><div class="card-body"><div class="empty-state"><div class="empty-state-title">Sin evaluaciones recibidas</div><div class="empty-state-text">Cuando los estudiantes completen tu evaluación docente, aparecerán aquí.</div></div></div></div>';
-        return;
-    }
-
-    const rowsHtml = rows.map(r => {
-        const date = r.submittedAt ? new Date(r.submittedAt).toLocaleDateString('es-CO') : '—';
-        const labelsById = r.evaluationType === 'AUTOEVAL' ? questionLabels.autoeval : questionLabels.eval;
-        const answersHtml = Object.entries(r.answers).map(([qId, val]) =>
-            '<div style="font-size:12.5px;margin-bottom:4px;padding:4px 0;border-bottom:1px solid rgba(11,31,58,0.05)">' +
-            '<strong style="color:var(--text-muted)">' + htmlEscape(labelsById[qId] || qId) + ':</strong> ' +
-            htmlEscape(String(Array.isArray(val) ? val.join(', ') : (val || '—'))) +
-            '</div>'
-        ).join('');
-        return '<div style="border:1px solid rgba(11,31,58,0.1);border-radius:8px;padding:14px;margin-bottom:10px">' +
-            '<div style="font-weight:600;font-size:13.5px;color:var(--text-dark)">' + htmlEscape(r.studentName) + '</div>' +
-            '<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">' + htmlEscape(r.courseName) + ' · ' + date + '</div>' +
-            answersHtml +
-            '</div>';
-    }).join('');
-
-    slot.innerHTML = '<div class="card"><div class="card-header"><span class="card-title">Evaluaciones recibidas de estudiantes</span><span class="badge badge-navy">' + rows.length + '</span></div><div class="card-body">' + rowsHtml + '</div></div>';
+    teacherEvalQuestionLabelsCache = result;
+    return result;
 }
 
 function loadTeacherEvalQuestionLabels() {
+    if (teacherEvalQuestionLabelsCache) return teacherEvalQuestionLabelsCache;
     const result = { eval: {}, autoeval: {} };
     let raw = '';
     try {
@@ -1866,11 +2012,13 @@ async function loadOverview() {
     const studentsData = await tryFetch('/api/students');
     const gradesData = await tryFetch('/api/grades');
     const schedulesData = await tryFetch('/api/schedules/teacher/' + (currentTeacher ? currentTeacher.id : 0));
+    const cutPeriodsData = await tryFetch('/api/config/cut-periods');
     teacherActivities = Array.isArray(actividades) ? actividades.slice() : [];
     teacherExams = Array.isArray(examenes) ? examenes.slice() : [];
     teacherStudents = Array.isArray(studentsData) ? studentsData.slice() : [];
     teacherGrades = Array.isArray(gradesData) ? gradesData.slice() : [];
     teacherSchedules = Array.isArray(schedulesData) ? schedulesData.slice() : [];
+    teacherCutPeriods = (cutPeriodsData && cutPeriodsData.value) ? (JSON.parse(cutPeriodsData.value) || []) : [];
     const pending = getPendingSubmissionsCount();
     document.getElementById('statCursos').textContent = teacherCourses.length;
     document.getElementById('statEstudiantes').textContent = teacherCourses.reduce((s, c) => s + (c.studentsCount || 0), 0);
@@ -1935,7 +2083,6 @@ ${diff !== null ? `<span style="font-size:11px;font-weight:700;color:${col};flex
     }).join('') || '<div style="color:var(--text-muted);font-size:13px">Sin evaluaciones programadas.</div>';
 
     initTeacherModerationOverview(teacherCourses || []);
-    loadEvalSubmissionsForTeacher();
 }
 
 async function loadCursos() {
@@ -2098,8 +2245,6 @@ function loadEntregas() {
     renderEntregasList();
 }
 
-const _loadedActivitySubmissions = new Set();
-
 async function renderEntregasList() {
     const cId = parseInt(document.getElementById('subCourseFilter').value) || 0;
     const aId = parseInt(document.getElementById('subActivityFilter').value) || 0;
@@ -2188,16 +2333,16 @@ async function quickGrade(actId, studentId) {
     if (!input) return;
     const val = parseFloat(input.value);
     if (isNaN(val) || val < 0 || val > 10) { showToast('Ingresa una nota válida entre 0 y 10', 'error'); return; }
-    await saveStudentGrade(studentId, actId, val, '');
-    showToast('Calificación guardada', 'success');
-    await renderEntregasList();
+    try {
+        await saveStudentGrade(studentId, actId, val, '');
+        showToast('Calificación guardada', 'success');
+        await renderEntregasList();
+    } catch (e) {}
 }
 
 async function loadActivitySubmissions(actId) {
     if (!actId) return;
-    if (_loadedActivitySubmissions.has(actId)) return;
-    _loadedActivitySubmissions.add(actId);
-    const data = await tryFetch('/api/activity-submissions/activity/' + actId);
+    const data = await tryFetch('/api/activity-submissions/activity/' + actId + '?_t=' + Date.now());
     if (!Array.isArray(data)) return;
     for (const sub of data) {
         const sid = sub.student ? sub.student.id : null;
@@ -2216,6 +2361,24 @@ async function loadActivitySubmissions(actId) {
             id: sub.id
         };
     }
+}
+
+async function refreshStudentSubmissionForTeacher(studentId, actId) {
+    const data = await tryFetch('/api/activity-submissions/activity/' + actId + '/student/' + studentId + '?_t=' + Date.now());
+    if (!data || !data.id) return;
+    const key = studentId + '_' + actId;
+    runtimeSubmissionsByKey[key] = {
+        submitted: true,
+        submittedAt: data.submittedAt,
+        comment: data.comment || '',
+        files: Array.isArray(data.files) ? data.files : [],
+        graded: data.grade != null,
+        grade: data.grade != null ? parseFloat(data.grade) : undefined,
+        feedback: data.feedback || '',
+        gradedAt: data.gradedAt,
+        isLate: !!data.isLate,
+        id: data.id
+    };
 }
 
 function openActivitySubmissions(actId, courseIdFallback, defaultFilter, options) {
@@ -2409,9 +2572,11 @@ async function saveGradeFromView(actId, studentId) {
     if (!gradeInput) return;
     const val = parseFloat(gradeInput.value);
     if (isNaN(val) || val < 0 || val > 10) { showToast('Ingresa una nota válida entre 0 y 10', 'error'); return; }
-    await saveStudentGrade(studentId, actId, val, feedbackInput ? feedbackInput.value.trim() : '');
-    showToast('Calificación guardada', 'success');
-    renderSubmissionsList();
+    try {
+        await saveStudentGrade(studentId, actId, val, feedbackInput ? feedbackInput.value.trim() : '');
+        showToast('Calificación guardada', 'success');
+        renderSubmissionsList();
+    } catch (e) {}
 }
 
 function openGradeModal(actId, studentId) {
@@ -2451,11 +2616,13 @@ async function saveGradeModal(actId, studentId) {
     const val = parseFloat(document.getElementById('mGradeVal').value);
     const fb = document.getElementById('mGradeFb').value.trim();
     if (isNaN(val) || val < 0 || val > 10) { showToast('Ingresa una nota válida entre 0 y 10', 'error'); return; }
-    await saveStudentGrade(studentId, actId, val, fb);
-    closeModal();
-    showToast('Calificación guardada', 'success');
-    if (document.getElementById('submissionsView').classList.contains('show')) renderSubmissionsList();
-    else await renderEntregasList();
+    try {
+        await saveStudentGrade(studentId, actId, val, fb);
+        closeModal();
+        showToast('Calificación guardada', 'success');
+        if (document.getElementById('submissionsView').classList.contains('show')) renderSubmissionsList();
+        else await renderEntregasList();
+    } catch (e) {}
 }
 
 async function applyMassGrade() {
@@ -2465,7 +2632,12 @@ async function applyMassGrade() {
     let count = 0;
     for (const s of teacherStudents) {
         const sub = getStudentSubmission(s.id, currentSubmissionsActivityId);
-        if (sub && sub.submitted && !sub.graded) { await saveStudentGrade(s.id, currentSubmissionsActivityId, val, fb); count++; }
+        if (sub && sub.submitted && !sub.graded) {
+            try {
+                await saveStudentGrade(s.id, currentSubmissionsActivityId, val, fb);
+                count++;
+            } catch (e) {}
+        }
     }
     closeModal();
     showToast(count + ' entregas calificadas', 'success');
@@ -2476,11 +2648,27 @@ async function loadCalificaciones() {
     const sel = document.getElementById('gradeCourseFilter');
     const courses = teacherCourses || [];
     sel.innerHTML = '<option value="">Selecciona un curso</option>' + courses.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-    sel.onchange = () => { tableUiState.grades.page = 1; renderGrades(parseInt(sel.value)); };
+    sel.onchange = () => { tableUiState.grades.page = 1; updateGradeCutFilter(parseInt(sel.value)); renderGrades(parseInt(sel.value)); };
     document.getElementById('gradesSummaryBar').style.display = 'none';
 }
 
+function updateGradeCutFilter(courseId) {
+    const cutSel = document.getElementById('gradeCutFilter');
+    if (!cutSel) return;
+    if (!courseId) { cutSel.style.display = 'none'; return; }
+    const today = new Date().toISOString().slice(0, 10);
+    let currentCutName = '';
+    const options = (teacherCutPeriods || []).map(cp => {
+        const selected = (cp.startDate <= today && cp.endDate >= today) ? 'selected' : '';
+        if (selected) currentCutName = cp.name;
+        return `<option value="${htmlEscape(cp.name)}" ${selected}>${htmlEscape(cp.name)} (${cp.startDate || ''} - ${cp.endDate || ''})</option>`;
+    }).join('');
+    cutSel.innerHTML = `<option value="">${currentCutName ? 'Corte: ' + htmlEscape(currentCutName) : 'Corte actual'}</option>` + options;
+    cutSel.style.display = (teacherCutPeriods || []).length ? '' : 'none';
+}
+
 async function renderGrades(courseId) {
+    updateGradeCutFilter(courseId);
     const container = document.getElementById('calificacionesContainer');
     const toolbar = document.getElementById('gradesToolbar');
     const state = tableUiState.grades;
@@ -2520,9 +2708,9 @@ async function renderGrades(courseId) {
     state.page = safePage;
     const chunk = courseGrades.slice((safePage - 1) * state.pageSize, safePage * state.pageSize);
 
-    // Build unit-final summary
+    // Build unit summary
     const units = getUnits(courseId) || [];
-    const unitFinalGrades = teacherGrades.filter(g => g.course && g.course.id === courseId && g.source === 'unit-final');
+    const unitFinalGrades = teacherGrades.filter(g => g.course && g.course.id === courseId && g.source === 'unit');
     const studentsInSummary = [...new Map(unitFinalGrades.map(g => [g.student.id, g.student])).values()];
     let summaryHtml = '';
     if (units.length && studentsInSummary.length) {
@@ -2546,6 +2734,24 @@ async function renderGrades(courseId) {
     } else if (units.length) {
         summaryHtml = `<div style="margin-top:28px"><div style="font-size:14px;font-weight:700;margin-bottom:12px;color:var(--text-dark)">Definitivas por unidad</div><div class="empty-state" style="padding:16px"><div class="empty-state-text">Aún no se han cerrado unidades en este curso.</div></div></div>`;
     }
+
+    // Build cuts summary
+    const cutGrades = teacherGrades.filter(g => g.course && g.course.id === courseId && g.source === 'cut');
+    const studentsInCuts = [...new Map(cutGrades.map(g => [g.student.id, g.student])).values()];
+    let cutsHtml = '';
+    if (cutGrades.length && studentsInCuts.length) {
+        const cutNames = [...new Set(cutGrades.map(g => g.description).filter(Boolean))];
+        const cutCols = cutNames.map(cn => `<th style="font-size:12px;color:var(--text-muted);font-weight:600;text-align:center">${cn}</th>`).join('');
+        const cutRows = studentsInCuts.map(st => {
+            const cells = cutNames.map(cn => {
+                const cg = cutGrades.find(g => g.student && g.student.id === st.id && g.description === cn);
+                return `<td style="font-size:13px;text-align:center">${cg ? parseFloat(cg.grade).toFixed(1) : '<span style="color:var(--text-muted)">—</span>'}</td>`;
+            }).join('');
+            return `<tr><td style="font-size:13px"><strong>${st.user.name}</strong></td>${cells}</tr>`;
+        }).join('');
+        cutsHtml = `<div style="margin-top:28px"><div style="font-size:14px;font-weight:700;margin-bottom:12px;color:var(--text-dark)">Definitivas por corte</div><table><thead><tr><th style="text-align:left">Estudiante</th>${cutCols}</tr></thead><tbody>${cutRows}</tbody></table></div>`;
+    }
+    summaryHtml += cutsHtml;
 
     container.innerHTML = `<table><thead><tr><th>Código</th><th>Estudiante</th><th>Actividad</th><th>Calificación</th><th>Barra</th><th>Descripción</th><th>Archivos</th><th>Acciones</th></tr></thead><tbody>` +
         chunk.map(g => {
@@ -2604,6 +2810,166 @@ function changeSummaryPage(delta, courseId) {
     renderGrades(courseId);
 }
 
+async function openFinalizeCutModal(courseId) {
+    const course = teacherCourses.find(c => c.id === courseId);
+    if (!course) { showToast('Curso no encontrado', 'error'); return; }
+    const units = getUnits(courseId) || [];
+    if (!units.length) { showToast('Este curso no tiene unidades', 'error'); return; }
+
+    let cutConfig = {};
+    try { cutConfig = JSON.parse(course.cutConfigJson || '{}'); } catch (e) { cutConfig = {}; }
+
+    const assignedUnitIds = new Set();
+    Object.values(cutConfig).forEach(arr => arr.forEach(id => assignedUnitIds.add(id)));
+
+    let existingCutsHtml = '';
+    const cutNames = Object.keys(cutConfig);
+    if (cutNames.length) {
+        existingCutsHtml = `<div style="margin-bottom:16px"><div style="font-size:13px;font-weight:600;margin-bottom:8px">Cortes existentes</div>` +
+            cutNames.map(cutName => {
+                const unitNames = (cutConfig[cutName] || []).map(uid => {
+                    const u = units.find(x => x.id === uid);
+                    return u ? (u.name || `Unidad ${uid}`) : `Unidad ${uid}`;
+                }).join(', ');
+                return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(11,31,58,0.06)">
+                    <div><strong>${htmlEscape(cutName)}</strong><div style="font-size:12px;color:var(--text-muted)">${htmlEscape(unitNames)}</div></div>
+                    <button class="btn btn-sm btn-danger" onclick="deleteCut(${courseId}, '${cutName.replace(/'/g, "\\'")}')">Eliminar</button>
+                </div>`;
+            }).join('') + `</div>`;
+    }
+
+    const availableUnits = units.filter(u => !assignedUnitIds.has(u.id));
+    const unitCheckboxes = availableUnits.map(u => `
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" class="cut-unit-checkbox" value="${u.id}">
+            ${htmlEscape(u.name || 'Unidad ' + u.id)}
+        </label>
+    `).join('');
+
+    // Build enabled cut options from configured periods
+    const today = new Date().toISOString().slice(0, 10);
+    const configuredCuts = (teacherCutPeriods || []).filter(cp => {
+        if (!cp.name) return false;
+        if (cutConfig[cp.name]) return false; // already created
+        if (cp.enabledFrom && cp.enabledFrom > today) return false; // not enabled yet
+        return true;
+    });
+    const cutOptions = configuredCuts.map(cp => `<option value="${htmlEscape(cp.name)}">${htmlEscape(cp.name)} (${cp.startDate || ''} - ${cp.endDate || ''})</option>`).join('');
+
+    const cutSelect = configuredCuts.length
+        ? `<select class="form-input" id="cutNameSelect"><option value="">Selecciona un corte</option>${cutOptions}</select>`
+        : `<div style="font-size:12px;color:var(--text-muted)">No hay cortes habilitados para cierre en este momento.</div>`;
+
+    const html = `
+        <div class="form-group">
+            <label class="form-label">Corte a cerrar</label>
+            ${cutSelect}
+        </div>
+        <div class="form-group">
+            <label class="form-label">Unidades a incluir</label>
+            ${availableUnits.length ? unitCheckboxes : '<div style="font-size:12px;color:var(--text-muted)">Todas las unidades ya están asignadas a cortes.</div>'}
+        </div>
+        ${existingCutsHtml}
+        <button class="btn btn-teal" style="width:100%" onclick="saveCut(${courseId})" ${configuredCuts.length ? '' : 'disabled'}>Guardar corte</button>
+    `;
+    openModal('Finalizar corte', html);
+}
+
+async function saveCut(courseId) {
+    const nameInput = document.getElementById('cutNameSelect');
+    const name = (nameInput && nameInput.value || '').trim();
+    if (!name) { showToast('Selecciona un corte', 'error'); return; }
+
+    const checkboxes = document.querySelectorAll('.cut-unit-checkbox:checked');
+    const selectedUnitIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+    if (!selectedUnitIds.length) { showToast('Selecciona al menos una unidad', 'error'); return; }
+
+    const course = teacherCourses.find(c => c.id === courseId);
+    if (!course) { showToast('Curso no encontrado', 'error'); return; }
+
+    let cutConfig = {};
+    try { cutConfig = JSON.parse(course.cutConfigJson || '{}'); } catch (e) { cutConfig = {}; }
+    if (cutConfig[name]) { showToast('Ya existe un corte con ese nombre', 'error'); return; }
+
+    const studentsData = await tryFetch('/api/courses/' + courseId + '/students');
+    const students = Array.isArray(studentsData) ? studentsData : [];
+    if (!students.length) { showToast('No hay estudiantes en este curso', 'error'); return; }
+
+    let createdCount = 0;
+    for (const student of students) {
+        let sum = 0;
+        const count = selectedUnitIds.length;
+        for (const uid of selectedUnitIds) {
+            const ug = teacherGrades.find(g => g.course && g.course.id === courseId && g.student && g.student.id === student.id && g.source === 'unit' && g.sourceUnitId === uid);
+            sum += ug ? parseFloat(ug.grade || 0) : 0;
+        }
+        const avg = sum / count;
+        const payload = {
+            studentId: student.id,
+            courseId,
+            grade: clampGrade(avg),
+            description: name,
+            sourceUnitId: null,
+            source: 'cut'
+        };
+        try {
+            await postJson('/api/grades', payload);
+            createdCount++;
+        } catch (e) {
+            // continue
+        }
+    }
+
+    cutConfig[name] = selectedUnitIds;
+    const patchPayload = { cutConfigJson: JSON.stringify(cutConfig) };
+    try {
+        const res = await apiFetch('/api/courses/' + courseId + '/cut-config', { method: 'PATCH', body: JSON.stringify(patchPayload) });
+        if (res && res.ok) {
+            course.cutConfigJson = patchPayload.cutConfigJson;
+            showToast(`Corte guardado. Calificaciones creadas: ${createdCount}`, 'success');
+            closeModal();
+            const freshGrades = await tryFetch('/api/grades');
+            if (Array.isArray(freshGrades)) teacherGrades = freshGrades.slice();
+            renderGrades(courseId);
+        } else {
+            showToast('Error guardando configuración de corte', 'error');
+        }
+    } catch (e) {
+        showToast('Error guardando configuración de corte', 'error');
+    }
+}
+
+async function deleteCut(courseId, cutName) {
+    const course = teacherCourses.find(c => c.id === courseId);
+    if (!course) return;
+
+    // Delete associated cut grades
+    const cutGradesToDelete = teacherGrades.filter(g => g.course && g.course.id === courseId && g.source === 'cut' && g.description === cutName);
+    for (const g of cutGradesToDelete) {
+        try { await apiFetch('/api/grades/' + g.id, { method: 'DELETE', headers: {} }); } catch (e) {}
+    }
+    teacherGrades = teacherGrades.filter(g => !(g.course && g.course.id === courseId && g.source === 'cut' && g.description === cutName));
+
+    let cutConfig = {};
+    try { cutConfig = JSON.parse(course.cutConfigJson || '{}'); } catch (e) { cutConfig = {}; }
+    delete cutConfig[cutName];
+    const patchPayload = { cutConfigJson: JSON.stringify(cutConfig) };
+    try {
+        const res = await apiFetch('/api/courses/' + courseId + '/cut-config', { method: 'PATCH', body: JSON.stringify(patchPayload) });
+        if (res && res.ok) {
+            course.cutConfigJson = patchPayload.cutConfigJson;
+            await refreshTeacherGrades();
+            showToast('Corte eliminado', 'success');
+            closeModal();
+            renderGrades(courseId);
+        } else {
+            showToast('Error eliminando corte', 'error');
+        }
+    } catch (e) {
+        showToast('Error eliminando corte', 'error');
+    }
+}
+
 function editGrade(gradeId, courseId) {
     const g = teacherGrades.find(x => x.id === gradeId);
     if (!g) return;
@@ -2611,6 +2977,11 @@ function editGrade(gradeId, courseId) {
         <div class="form-group"><label class="form-label">Calificación (0-10)</label><input type="number" class="form-input" id="mGrade" min="0" max="10" step="0.1" value="${g.grade}"></div>
         <div class="form-group"><label class="form-label">Descripción</label><textarea class="form-input" id="mGradeDesc">${g.description || ''}</textarea></div>
         <button class="btn btn-teal" style="width:100%" onclick="saveGradeEdit(${gradeId},${courseId})">Guardar cambios</button>`);
+}
+
+async function refreshTeacherGrades() {
+    const fresh = await tryFetch('/api/grades?_t=' + Date.now());
+    if (Array.isArray(fresh)) teacherGrades = fresh.slice();
 }
 
 async function saveGradeEdit(gradeId, courseId) {
@@ -2625,6 +2996,8 @@ async function saveGradeEdit(gradeId, courseId) {
                 studentId: (g.student || {}).id,
                 courseId: ((g.course || {}).id),
                 activityId: g.activityId || null,
+                sourceUnitId: g.sourceUnitId || null,
+                source: g.source || null,
                 grade: val,
                 description: desc
             })
@@ -2640,18 +3013,30 @@ async function saveGradeEdit(gradeId, courseId) {
         g.grade = val;
         g.description = desc;
     }
+    await refreshTeacherGrades();
+    // Recargar la submission especifica para mostrar el valor REAL del backend
+    if (g && g.student && g.student.id && g.activityId) {
+        await refreshStudentSubmissionForTeacher(g.student.id, g.activityId);
+    }
     closeModal(); renderGrades(courseId); showToast('Calificación actualizada', 'success');
 }
 
 function deleteGrade(gradeId, courseId) {
-    openConfirmModal('Eliminar calificación', '¿Eliminar esta calificación?', () => {
+    openConfirmModal('Eliminar calificación', '¿Eliminar esta calificación?', async () => {
+        const g = teacherGrades.find(x => x.id === gradeId);
+        const syncKey = g && g.student && g.student.id && g.activityId ? (g.student.id + '_' + g.activityId) : null;
         const idx = teacherGrades.findIndex(x => x.id === gradeId);
-        apiFetch('/api/grades/' + gradeId, { method: 'DELETE', headers: {} })
-            .finally(() => {
-                if (idx >= 0) teacherGrades.splice(idx, 1);
-                renderGrades(courseId);
-                showToast('Calificación eliminada');
-            });
+        try { await apiFetch('/api/grades/' + gradeId, { method: 'DELETE', headers: {} }); } catch (e) {}
+        if (idx >= 0) teacherGrades.splice(idx, 1);
+        if (syncKey && runtimeSubmissionsByKey[syncKey]) {
+            runtimeSubmissionsByKey[syncKey].graded = false;
+            delete runtimeSubmissionsByKey[syncKey].grade;
+            delete runtimeSubmissionsByKey[syncKey].gradedAt;
+            delete runtimeSubmissionsByKey[syncKey].feedback;
+        }
+        await refreshTeacherGrades();
+        renderGrades(courseId);
+        showToast('Calificación eliminada');
     }, 'Eliminar');
 }
 
@@ -2693,6 +3078,7 @@ async function loadAsistencia() {
 }
 
 function initTeacherModerationOverview(courses) {
+    // Solicitudes de bienestar estudiantil
     ensureTeacherWellbeingCard();
     const wellbeingModuleSel = document.getElementById('wellbeingModuleFilter');
     if (wellbeingModuleSel) wellbeingModuleSel.onchange = () => { tableUiState.wellbeing.module = wellbeingModuleSel.value || 'all'; tableUiState.wellbeing.page = 1; renderTeacherWellbeingRequests(); };
@@ -2702,6 +3088,23 @@ function initTeacherModerationOverview(courses) {
     if (wellbeingSearchInput) wellbeingSearchInput.oninput = () => { tableUiState.wellbeing.query = wellbeingSearchInput.value || ''; tableUiState.wellbeing.page = 1; renderTeacherWellbeingRequests(); };
     renderTeacherWellbeingRequests();
 
+    // Solicitudes de publicacion de bienestar
+    ensureTeacherPublicationRequestsCard();
+    renderTeacherPublicationRequests();
+
+    // Citas de psicologia
+    if (canViewPsychologyAppointments()) {
+        ensureTeacherPsychologyAppointmentsCard();
+        renderTeacherPsychologyAppointments();
+    }
+
+    // Mi evaluacion profesoral
+    if (canViewMyEvaluationReport()) {
+        ensureTeacherMyEvaluationCard();
+        renderTeacherMyEvaluations();
+    }
+
+    // Reportes de evaluacion
     ensureTeacherEvaluationReportsCard();
     const evalTypeSel = document.getElementById('evalTypeFilter');
     if (evalTypeSel) evalTypeSel.onchange = () => { tableUiState.evalReports.type = evalTypeSel.value || 'all'; tableUiState.evalReports.page = 1; renderTeacherEvaluationReports(); };
@@ -4315,17 +4718,20 @@ function saveUnitFinalizeConfig(courseId, unitId, cfg) {
     storageService.setItem('educat_unit_finalize_cfg_' + courseId + '_' + unitId, JSON.stringify(cfg || {}));
 }
 
-function getScoreByCategory(ctx, student, examScoresByExam) {
-    const activities = ctx.acts.map(a => {
+function getScoreByCategory(ctx, student, examScoresByExam, excludedItems) {
+    const excluded = new Set(excludedItems || []);
+    const activities = ctx.acts.filter(a => !excluded.has('A_' + a.id)).map(a => {
+        // 1) Fuente primaria: teacherGrades (siempre la mas reciente, incluido despues de subir reporte)
+        const gradeRec = teacherGrades.find(g => g.activityId === a.id && g.student && g.student.id === student.id);
+        if (gradeRec && gradeRec.grade != null) return clampGrade(gradeRec.grade);
+        // 2) Fallback a submission cache
         const sub = getStudentSubmission(student.id, a.id);
         if (sub && sub.submitted && sub.graded) return clampGrade(sub.grade);
-        // Fallback: buscar calificación guardada en teacherGrades para esta actividad
-        const gradeRec = teacherGrades.find(g => g.activityId === a.id && g.student && g.student.id === student.id);
-        return gradeRec ? clampGrade(gradeRec.grade) : 0;
+        return 0;
     });
-    const exams = ctx.exams.map(ex => clampGrade((examScoresByExam[ex.id] || {})[student.id] || 0));
-    const forumsReal = ctx.realForums.map(f => clampGrade((f.participantGrades || {})[student.id] || 0));
-    const glossary = ctx.realGlossaries.map(g => clampGrade((g.participantGrades || {})[student.id] || 0));
+    const exams = ctx.exams.filter(ex => !excluded.has('E_' + ex.id)).map(ex => clampGrade((examScoresByExam[ex.id] || {})[student.id] || 0));
+    const forumsReal = ctx.realForums.filter(f => !excluded.has('F_' + f.id)).map(f => clampGrade((f.participantGrades || {})[student.id] || 0));
+    const glossary = ctx.realGlossaries.filter(g => !excluded.has('G_' + g.id)).map(g => clampGrade((g.participantGrades || {})[student.id] || 0));
     return {
         activities,
         exams,
@@ -4339,7 +4745,8 @@ function getScoreByCategory(ctx, student, examScoresByExam) {
 }
 
 function computeStudentUnitResult(ctx, student, examScoresByExam, cfg) {
-    const score = getScoreByCategory(ctx, student, examScoresByExam || {});
+    const excluded = new Set(cfg.excludedItems || []);
+    const score = getScoreByCategory(ctx, student, examScoresByExam || {}, cfg.excludedItems || []);
     const mode = cfg.mode || 'category-global';
     const globalWeights = cfg.globalWeights || { activities: 50, exams: 30, forums: 10, glossary: 10 };
     const itemWeights = cfg.itemWeights || {};
@@ -4350,14 +4757,14 @@ function computeStudentUnitResult(ctx, student, examScoresByExam, cfg) {
         const arr = [...score.activities, ...score.exams, ...score.forumsReal, ...score.glossary];
         base = arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
     } else if (mode === 'item-individual') {
-        ctx.acts.forEach(a => {
-            const sub = getStudentSubmission(student.id, a.id);
-            const v = (sub && sub.submitted && sub.graded) ? clampGrade(sub.grade) : 0;
+        ctx.acts.filter(a => !excluded.has('A_' + a.id)).forEach(a => {
+            const gradeRec = teacherGrades.find(g => g.activityId === a.id && g.student && g.student.id === student.id);
+            const v = gradeRec && gradeRec.grade != null ? clampGrade(gradeRec.grade) : 0;
             base += ((itemWeights['A_' + a.id] || 0) / 100) * v;
         });
-        ctx.exams.forEach(ex => { base += ((itemWeights['E_' + ex.id] || 0) / 100) * clampGrade((examScoresByExam[ex.id] || {})[student.id] || 0); });
-        ctx.realForums.forEach(f => { base += ((itemWeights['F_' + f.id] || 0) / 100) * clampGrade((f.participantGrades || {})[student.id] || 0); });
-        ctx.realGlossaries.forEach(g => { base += ((itemWeights['G_' + g.id] || 0) / 100) * clampGrade((g.participantGrades || {})[student.id] || 0); });
+        ctx.exams.filter(ex => !excluded.has('E_' + ex.id)).forEach(ex => { base += ((itemWeights['E_' + ex.id] || 0) / 100) * clampGrade((examScoresByExam[ex.id] || {})[student.id] || 0); });
+        ctx.realForums.filter(f => !excluded.has('F_' + f.id)).forEach(f => { base += ((itemWeights['F_' + f.id] || 0) / 100) * clampGrade((f.participantGrades || {})[student.id] || 0); });
+        ctx.realGlossaries.filter(g => !excluded.has('G_' + g.id)).forEach(g => { base += ((itemWeights['G_' + g.id] || 0) / 100) * clampGrade((g.participantGrades || {})[student.id] || 0); });
     } else {
         base =
             score.avgActivities * ((globalWeights.activities || 0) / 100) +
@@ -4388,6 +4795,32 @@ function getEffectiveFinalizeMode(adminCfg, cfg) {
     return cfg.mode || adminCfg.selectedMethod || 'category-global';
 }
 
+function persistFinalizeConfig() {
+    if (!finalizeUnitState || finalizeUnitState.unitIdx === undefined || !currentCourse) return;
+    const ctx = getFinalizeUnitContext(finalizeUnitState.unitIdx);
+    const modeEl = document.getElementById('mFinalizeMode');
+    const tasksEl = document.getElementById('mUnitWeightTasks');
+    const examsEl = document.getElementById('mUnitWeightExam');
+    const forumsEl = document.getElementById('mUnitWeightForum');
+    const glossEl = document.getElementById('mUnitWeightGlossary');
+    const reportCb = document.getElementById('mIncludeFinalInReport');
+    const storedCfg = getUnitFinalizeConfig(currentCourse.id, ctx.unit.id);
+    const newCfg = {
+        ...storedCfg,
+        mode: (modeEl && modeEl.value) ? modeEl.value : (storedCfg.mode || 'category-global'),
+        globalWeights: {
+            activities: (tasksEl && tasksEl.value !== '') ? clampPercent(tasksEl.value) : ((storedCfg.globalWeights || {}).activities != null ? storedCfg.globalWeights.activities : 50),
+            exams: (examsEl && examsEl.value !== '') ? clampPercent(examsEl.value) : ((storedCfg.globalWeights || {}).exams != null ? storedCfg.globalWeights.exams : 30),
+            forums: (forumsEl && forumsEl.value !== '') ? clampPercent(forumsEl.value) : ((storedCfg.globalWeights || {}).forums != null ? storedCfg.globalWeights.forums : 10),
+            glossary: (glossEl && glossEl.value !== '') ? clampPercent(glossEl.value) : ((storedCfg.globalWeights || {}).glossary != null ? storedCfg.globalWeights.glossary : 10)
+        },
+        itemWeights: { ...(finalizeUnitState.itemWeightCache || storedCfg.itemWeights || {}) },
+        excludedItems: finalizeUnitState.excludedItems || storedCfg.excludedItems || [],
+        reportIncludeFinal: reportCb ? reportCb.checked : (storedCfg.reportIncludeFinal !== false)
+    };
+    saveUnitFinalizeConfig(currentCourse.id, ctx.unit.id, newCfg);
+}
+
 function toggleFinalizeWeightAreas() {
     if (!finalizeUnitState) return;
     const mode = (document.getElementById('mFinalizeMode') || {}).value || 'category-global';
@@ -4400,30 +4833,45 @@ function toggleFinalizeWeightAreas() {
 }
 
 function readFinalizeExamScores(ctx) {
+    const stored = getUnitExamScores(currentCourse.id, ctx.unit.id);
     const map = {};
     ctx.exams.forEach(ex => {
         map[ex.id] = {};
         teacherStudents.forEach(st => {
-            map[ex.id][st.id] = clampGrade((document.getElementById('mUnitExam-' + ex.id + '-' + st.id) || {}).value);
+            const input = document.getElementById('mUnitExam-' + ex.id + '-' + st.id);
+            if (input) {
+                map[ex.id][st.id] = clampGrade(input.value);
+            } else {
+                map[ex.id][st.id] = clampGrade((stored[ex.id] || {})[st.id] || 0);
+            }
         });
     });
     return map;
 }
 
 function readFinalizeConfig(ctx, adminCfg) {
-    const requestedMode = (document.getElementById('mFinalizeMode') || {}).value || 'category-global';
+    const storedCfg = getUnitFinalizeConfig(currentCourse.id, ctx.unit.id);
+    const modeEl = document.getElementById('mFinalizeMode');
+    const requestedMode = (modeEl && modeEl.value) ? modeEl.value : (storedCfg.mode || 'category-global');
     const mode = getEffectiveFinalizeMode(adminCfg, { mode: requestedMode });
-    const cfg = { mode, globalWeights: {}, itemWeights: {} };
-    cfg.globalWeights.activities = clampPercent((document.getElementById('mUnitWeightTasks') || {}).value);
-    cfg.globalWeights.exams = clampPercent((document.getElementById('mUnitWeightExam') || {}).value);
-    cfg.globalWeights.forums = clampPercent((document.getElementById('mUnitWeightForum') || {}).value);
-    cfg.globalWeights.glossary = clampPercent((document.getElementById('mUnitWeightGlossary') || {}).value);
-    const cached = (finalizeUnitState && finalizeUnitState.itemWeightCache) ? finalizeUnitState.itemWeightCache : {};
+    const cfg = { mode, globalWeights: {}, itemWeights: {}, excludedItems: [] };
+    const storedGlobal = storedCfg.globalWeights || { activities: 50, exams: 30, forums: 10, glossary: 10 };
+    const tasksEl = document.getElementById('mUnitWeightTasks');
+    cfg.globalWeights.activities = (tasksEl && tasksEl.value !== '') ? clampPercent(tasksEl.value) : storedGlobal.activities;
+    const examsEl = document.getElementById('mUnitWeightExam');
+    cfg.globalWeights.exams = (examsEl && examsEl.value !== '') ? clampPercent(examsEl.value) : storedGlobal.exams;
+    const forumsEl = document.getElementById('mUnitWeightForum');
+    cfg.globalWeights.forums = (forumsEl && forumsEl.value !== '') ? clampPercent(forumsEl.value) : storedGlobal.forums;
+    const glossEl = document.getElementById('mUnitWeightGlossary');
+    cfg.globalWeights.glossary = (glossEl && glossEl.value !== '') ? clampPercent(glossEl.value) : storedGlobal.glossary;
+    const cached = (finalizeUnitState && finalizeUnitState.itemWeightCache) ? finalizeUnitState.itemWeightCache : (storedCfg.itemWeights || {});
     Object.keys(cached).forEach(k => { cfg.itemWeights[k] = clampPercent(cached[k]); });
     ctx.acts.forEach(a => { cfg.itemWeights['A_' + a.id] = cfg.itemWeights['A_' + a.id] !== undefined ? cfg.itemWeights['A_' + a.id] : 0; });
     ctx.exams.forEach(ex => { cfg.itemWeights['E_' + ex.id] = cfg.itemWeights['E_' + ex.id] !== undefined ? cfg.itemWeights['E_' + ex.id] : 0; });
     ctx.realForums.forEach(f => { cfg.itemWeights['F_' + f.id] = cfg.itemWeights['F_' + f.id] !== undefined ? cfg.itemWeights['F_' + f.id] : 0; });
     ctx.realGlossaries.forEach(g => { cfg.itemWeights['G_' + g.id] = cfg.itemWeights['G_' + g.id] !== undefined ? cfg.itemWeights['G_' + g.id] : 0; });
+    if (finalizeUnitState && Array.isArray(finalizeUnitState.excludedItems)) cfg.excludedItems = finalizeUnitState.excludedItems.slice();
+    else if (Array.isArray(storedCfg.excludedItems)) cfg.excludedItems = storedCfg.excludedItems.slice();
     return cfg;
 }
 
@@ -4457,6 +4905,76 @@ function getFinalizeItemEntries(ctx) {
         foros: ctx.realForums.map(f => ({ key: 'F_' + f.id, label: 'Foro: ' + f.title })),
         glosarios: ctx.realGlossaries.map(g => ({ key: 'G_' + g.id, label: 'Glosario: ' + g.title }))
     };
+}
+
+function getAllFinalizeIncludeEntries(ctx) {
+    const entries = [];
+    if (ctx.acts.length) entries.push({ key: 'CAT_ACTIVITIES', label: 'Todas las actividades / talleres', isCategory: true });
+    ctx.acts.forEach(a => entries.push({ key: 'A_' + a.id, label: 'Taller: ' + a.title }));
+    if (ctx.exams.length) entries.push({ key: 'CAT_EXAMS', label: 'Todos los parciales', isCategory: true });
+    ctx.exams.forEach(ex => entries.push({ key: 'E_' + ex.id, label: 'Parcial: ' + ex.title }));
+    if (ctx.realForums.length) entries.push({ key: 'CAT_FORUMS', label: 'Todos los foros', isCategory: true });
+    ctx.realForums.forEach(f => entries.push({ key: 'F_' + f.id, label: 'Foro: ' + f.title }));
+    if (ctx.realGlossaries.length) entries.push({ key: 'CAT_GLOSSARY', label: 'Todos los glosarios', isCategory: true });
+    ctx.realGlossaries.forEach(g => entries.push({ key: 'G_' + g.id, label: 'Glosario: ' + g.title }));
+    return entries;
+}
+
+function renderFinalizeIncludePage() {
+    if (!finalizeUnitState || finalizeUnitState.unitIdx === undefined) return;
+    const ctx = getFinalizeUnitContext(finalizeUnitState.unitIdx);
+    const all = getAllFinalizeIncludeEntries(ctx);
+    const pageSize = 6;
+    const totalPages = Math.max(1, Math.ceil(all.length / pageSize));
+    finalizeUnitState.includePage = Math.min(Math.max(1, finalizeUnitState.includePage || 1), totalPages);
+    const chunk = all.slice((finalizeUnitState.includePage - 1) * pageSize, finalizeUnitState.includePage * pageSize);
+    const host = document.getElementById('mFinalizeIncludeRows');
+    if (!host) return;
+    const excluded = new Set(finalizeUnitState.excludedItems || []);
+    host.innerHTML = chunk.length ? chunk.map(entry => {
+        const checked = !excluded.has(entry.key);
+        const style = entry.isCategory ? 'font-weight:600;background:rgba(11,31,58,0.04);padding:6px 8px;border-radius:6px' : 'padding:4px 8px';
+        return `<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;margin-bottom:4px;${style}">
+            <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleFinalizeIncludeItem('${entry.key.replace(/'/g, "\\'")}', this.checked)">
+            ${htmlEscape(entry.label)}
+        </label>`;
+    }).join('') : '<div style="font-size:12.5px;color:var(--text-muted)">No hay ítems configurados.</div>';
+    const pageLbl = document.getElementById('mIncludePageLbl');
+    if (pageLbl) pageLbl.textContent = `Página ${finalizeUnitState.includePage} de ${totalPages}`;
+    const prev = document.getElementById('mIncludePrevBtn');
+    const next = document.getElementById('mIncludeNextBtn');
+    if (prev) prev.disabled = finalizeUnitState.includePage <= 1;
+    if (next) next.disabled = finalizeUnitState.includePage >= totalPages;
+}
+
+function changeFinalizeIncludePage(delta) {
+    finalizeUnitState.includePage = (finalizeUnitState.includePage || 1) + delta;
+    renderFinalizeIncludePage();
+}
+
+function toggleFinalizeIncludeItem(key, checked) {
+    if (!finalizeUnitState) return;
+    const excluded = new Set(finalizeUnitState.excludedItems || []);
+    const ctx = getFinalizeUnitContext(finalizeUnitState.unitIdx);
+    const categoryMap = {
+        'CAT_ACTIVITIES': ctx.acts.map(a => 'A_' + a.id),
+        'CAT_EXAMS': ctx.exams.map(ex => 'E_' + ex.id),
+        'CAT_FORUMS': ctx.realForums.map(f => 'F_' + f.id),
+        'CAT_GLOSSARY': ctx.realGlossaries.map(g => 'G_' + g.id)
+    };
+    const keys = categoryMap[key] || [key];
+    keys.forEach(k => {
+        if (checked) excluded.delete(k);
+        else excluded.add(k);
+    });
+    // Also track the category checkbox state itself so it toggles correctly
+    if (categoryMap[key]) {
+        if (checked) excluded.delete(key);
+        else excluded.add(key);
+    }
+    finalizeUnitState.excludedItems = Array.from(excluded);
+    renderFinalizeIncludePage();
+    recalcFinalizeUnitPreview();
 }
 
 function saveVisibleItemWeightInputs() {
@@ -4512,7 +5030,8 @@ function openFinalizeUnitModal(unitIdx) {
     const itemWeights = storedCfg.itemWeights || {};
     const modeLocked = !adminCfg.allowTeacherCustom || !!adminCfg.forcedModel;
     const reportDefault = storedCfg.reportIncludeFinal !== false;
-    finalizeUnitState = { unitIdx, unitId: ctx.unit.id, itemWeightCache: { ...itemWeights }, itemPage: 1 };
+    const excludedItems = Array.isArray(storedCfg.excludedItems) ? storedCfg.excludedItems.slice() : [];
+    finalizeUnitState = { unitIdx, unitId: ctx.unit.id, itemWeightCache: { ...itemWeights }, itemPage: 1, excludedItems, includePage: 1, studentPage: 1, studentsPerPage: 10 };
     openModal('Finalizar unidad — ' + ctx.unit.name, `
         <div style="font-size:13px;color:var(--text-body);line-height:1.65;margin-bottom:12px">Esta acción calcula y registra la nota final de la unidad por estudiante. Las actividades no enviadas o no calificadas cuentan como <strong>0.0</strong>.</div>
         <div class="form-group" style="margin-bottom:10px">
@@ -4552,31 +5071,36 @@ function openFinalizeUnitModal(unitIdx) {
             <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="mIncludeFinalInReport" ${reportDefault ? 'checked' : ''}> Incluir columna de definitiva en el reporte Excel</label>
         </div>
         <div id="mFinalizeWeightWarning" style="display:none;font-size:12px;color:var(--error);margin-bottom:10px"></div>
+        <div style="margin-bottom:12px">
+            <div style="font-size:12px;font-weight:600;margin-bottom:6px">Ítems a incluir en el cierre</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                <span id="mIncludePageLbl" style="font-size:12px;color:var(--text-muted)">Página 1 de 1</span>
+            </div>
+            <div id="mFinalizeIncludeRows" style="max-height:170px;overflow:auto;border:1px solid rgba(11,31,58,0.08);border-radius:8px;padding:8px 10px"></div>
+            <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px"><button id="mIncludePrevBtn" class="btn btn-sm btn-outline" onclick="changeFinalizeIncludePage(-1)">Anterior</button><button id="mIncludeNextBtn" class="btn btn-sm btn-outline" onclick="changeFinalizeIncludePage(1)">Siguiente</button></div>
+        </div>
         <div style="max-height:48vh;overflow:auto;border:1px solid rgba(11,31,58,0.08);border-radius:10px">
-            <table style="margin:0"><thead><tr><th>Estudiante</th><th>Prom. talleres</th><th>Prom. parciales</th><th>Prom. foros</th><th>Glosario</th><th>Bonificación</th><th>Nota final</th></tr></thead><tbody>
-                ${teacherStudents.map(st => `<tr>
-                    <td><div style="font-size:13px;font-weight:600">${st.user.name}</div><div style="font-size:11px;color:var(--text-muted)">${st.studentCode}</div></td>
-                    <td id="mResTasks-${st.id}">0.0</td>
-                    <td>
-                        <div id="mResExams-${st.id}" style="font-size:12px;font-weight:700;margin-bottom:6px">0.0</div>
-                        <div style="display:grid;gap:6px;min-width:150px">
-                        ${ctx.exams.length ? ctx.exams.map(ex => `<input title="${ex.title}" id="mUnitExam-${ex.id}-${st.id}" class="form-input" type="number" min="0" max="${GRADE_SCALE_MAX}" step="0.1" value="${fmtGrade(((examScores[ex.id] || {})[st.id]) || 0)}" oninput="recalcFinalizeUnitPreview()" style="padding:4px 7px;font-size:12px">`).join('') : '<span style="font-size:12px;color:var(--text-muted)">—</span>'}
-                        </div>
-                    </td>
-                    <td id="mResForums-${st.id}">0.0</td>
-                    <td id="mResGloss-${st.id}">0.0</td>
-                    <td id="mResBonus-${st.id}">+0.0</td>
-                    <td id="mResFinal-${st.id}"><span class="badge badge-success">0.0</span></td>
-                </tr>`).join('')}
-            </tbody></table>
+            <table style="margin:0"><thead><tr><th>Estudiante</th><th>Prom. talleres</th><th>Prom. parciales</th><th>Prom. foros</th><th>Glosario</th><th>Bonificación</th><th>Nota final</th></tr></thead><tbody id="mFinalizeStudentsBody"></tbody></table>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:8px;flex-wrap:wrap">
+            <span id="mStudentPageLbl" style="font-size:12px;color:var(--text-muted)">Página 1 de 1</span>
+            <button id="mStudentPrevBtn" class="btn btn-sm btn-outline" onclick="changeFinalizeStudentPage(-1)">Anterior</button>
+            <button id="mStudentNextBtn" class="btn btn-sm btn-outline" onclick="changeFinalizeStudentPage(1)">Siguiente</button>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
             <div id="mFinalizeAvg" style="font-size:12px;color:var(--text-muted)"></div>
-            <div style="display:flex;gap:8px"><button class="btn btn-outline" onclick="generateUnitReport()">Generar reporte</button><button class="btn btn-teal" onclick="finalizeUnitApply()">Finalizar unidad</button></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn btn-outline" onclick="generateUnitReport()">Generar reporte</button>
+                <button class="btn btn-outline" onclick="downloadGradeTemplate()">Descargar plantilla</button>
+                <button class="btn btn-outline" onclick="openUploadReportModal()">Subir reporte</button>
+                <button class="btn btn-teal" onclick="finalizeUnitApply()">Finalizar unidad</button>
+            </div>
         </div>
     `, { size: 'xl' });
     toggleFinalizeWeightAreas();
     renderFinalizeItemPage();
+    renderFinalizeIncludePage();
+    renderFinalizeStudentTable();
     recalcFinalizeUnitPreview();
 }
 
@@ -4616,6 +5140,46 @@ function recalcFinalizeUnitPreview() {
     });
     const avgEl = document.getElementById('mFinalizeAvg');
     if (avgEl) avgEl.textContent = cfg.mode === 'none' ? 'Modo manual: sin definitiva automática.' : ('Promedio del curso (unidad): ' + fmtGrade(teacherStudents.length ? sumFinal / teacherStudents.length : 0));
+    persistFinalizeConfig();
+}
+
+function renderFinalizeStudentTable() {
+    if (!finalizeUnitState) return;
+    const tbody = document.getElementById('mFinalizeStudentsBody');
+    if (!tbody) return;
+    const page = finalizeUnitState.studentPage || 1;
+    const perPage = finalizeUnitState.studentsPerPage || 10;
+    const start = (page - 1) * perPage;
+    const end = start + perPage;
+    const pageStudents = teacherStudents.slice(start, end);
+    tbody.innerHTML = pageStudents.map(st => `<tr>
+        <td><div style="font-size:13px;font-weight:600">${st.user.name}</div><div style="font-size:11px;color:var(--text-muted)">${st.studentCode}</div></td>
+        <td id="mResTasks-${st.id}">0.0</td>
+        <td id="mResExams-${st.id}">0.0</td>
+        <td id="mResForums-${st.id}">0.0</td>
+        <td id="mResGloss-${st.id}">0.0</td>
+        <td id="mResBonus-${st.id}">+0.0</td>
+        <td id="mResFinal-${st.id}"><span class="badge badge-success">0.0</span></td>
+    </tr>`).join('');
+    const totalPages = Math.max(1, Math.ceil(teacherStudents.length / perPage));
+    const lbl = document.getElementById('mStudentPageLbl');
+    if (lbl) lbl.textContent = `Página ${page} de ${totalPages} (${teacherStudents.length} estudiantes)`;
+    const prevBtn = document.getElementById('mStudentPrevBtn');
+    const nextBtn = document.getElementById('mStudentNextBtn');
+    if (prevBtn) prevBtn.disabled = page <= 1;
+    if (nextBtn) nextBtn.disabled = page >= totalPages;
+}
+
+function changeFinalizeStudentPage(delta) {
+    if (!finalizeUnitState) return;
+    const perPage = finalizeUnitState.studentsPerPage || 10;
+    const totalPages = Math.max(1, Math.ceil(teacherStudents.length / perPage));
+    let page = (finalizeUnitState.studentPage || 1) + delta;
+    if (page < 1) page = 1;
+    if (page > totalPages) page = totalPages;
+    finalizeUnitState.studentPage = page;
+    renderFinalizeStudentTable();
+    recalcFinalizeUnitPreview();
 }
 
 async function finalizeUnitApply() {
@@ -5712,6 +6276,7 @@ async function createGrade(courseId) {
     } catch (e) {
         teacherGrades.push({ id: Date.now(), student: { id: sId, studentCode: student ? student.studentCode : '—', user: { name: student ? student.user.name : '—' } }, course: { id: courseId }, grade: val, description: desc });
     }
+    await refreshTeacherGrades();
     closeModal(); renderGrades(courseId); showToast('Calificación registrada', 'success');
 }
 
@@ -6137,6 +6702,367 @@ async function updateWellbeingRequestStatus(requestId, status) {
     renderTeacherWellbeingRequests();
 }
 
+function canReviewPublicationRequests() {
+    return isCurrentUserAdmin() || hasAnyPermission(['bienestar.revisar-solicitudes-publicacion']);
+}
+
+function canManagePsychologyAppointments() {
+    return isCurrentUserAdmin() || hasAnyPermission(['bienestar.psicologia.gestionar-citas']);
+}
+
+function canViewPsychologyAppointments() {
+    return isCurrentUserAdmin() || hasAnyPermission(['bienestar.psicologia.gestionar-citas', 'bienestar.psicologia.ver-citas']);
+}
+
+function ensureTeacherPsychologyAppointmentsCard() {
+    const slot = document.getElementById('teacherPsychologyAppointmentsSlot');
+    if (!slot || document.getElementById('teacherPsychologyAppointmentsContainer')) return;
+    slot.innerHTML = `
+        <div class="card" style="margin-top:14px">
+            <div class="card-header">
+                <span class="card-title">Citas de Psicologia</span>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <input class="form-input" id="psychApptSearchInput" placeholder="Filtrar por estudiante o psicologo" style="min-width:260px">
+                    ${canManagePsychologyAppointments() ? `<button class="btn btn-sm btn-teal" onclick="apOpenPsychAvailabilityModal()">Configurar disponibilidad</button>` : ''}
+                </div>
+            </div>
+            <div class="card-body" id="teacherPsychologyAppointmentsContainer">
+                <div class="empty-state" style="padding:24px 0">
+                    <div class="empty-state-title">Sin citas</div>
+                    <div class="empty-state-text">Aun no hay citas de psicologia registradas.</div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+async function renderTeacherPsychologyAppointments() {
+    ensureTeacherPsychologyAppointmentsCard();
+    const container = document.getElementById('teacherPsychologyAppointmentsContainer');
+    if (!container) return;
+    if (!canViewPsychologyAppointments()) {
+        container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin acceso</div><div class="empty-state-text">No cuentas con permisos para ver citas de psicologia.</div></div>';
+        return;
+    }
+    const searchEl = document.getElementById('psychApptSearchInput');
+    const query = ((searchEl ? searchEl.value : '') || '').trim().toLowerCase();
+    if (searchEl) searchEl.oninput = () => renderTeacherPsychologyAppointments();
+    try {
+        const items = await tryFetch('/api/teacher/psychology/appointments') || [];
+        let filtered = items;
+        if (query) {
+            filtered = items.filter(r => {
+                const student = String(r.studentName || '').toLowerCase();
+                const prof = String(r.professionalName || '').toLowerCase();
+                return student.includes(query) || prof.includes(query);
+            });
+        }
+        if (!filtered.length) {
+            container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin citas</div><div class="empty-state-text">No hay citas de psicologia registradas.</div></div>';
+            return;
+        }
+        const statusMap = { SCHEDULED: { text: 'Agendada', cls: 'badge-gold' }, COMPLETED: { text: 'Completada', cls: 'badge-success' }, CANCELLED: { text: 'Cancelada', cls: 'badge-error' } };
+        container.innerHTML = filtered.map(r => {
+            const s = statusMap[r.status] || { text: r.status, cls: 'badge-navy' };
+            const actions = canManagePsychologyAppointments() && r.status === 'SCHEDULED'
+                ? `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-sm btn-success-outline" onclick="updatePsychAppointmentStatus(${r.id},'COMPLETED')">Completar</button><button class="btn btn-sm btn-danger" onclick="updatePsychAppointmentStatus(${r.id},'CANCELLED')">Cancelar</button></div>`
+                : '';
+            return `<div class="card" style="margin-bottom:14px"><div class="card-header" style="padding:14px 18px"><div><div style="font-size:14px;font-weight:700">${escapeHtml(r.studentName || 'Estudiante')} <span style="font-size:11px;color:var(--text-muted);font-weight:500">${r.appointmentDate} · ${r.slot}</span></div><div style="font-size:12px;color:var(--text-muted);margin-top:2px">${escapeHtml(r.professionalName || '—')}</div></div><span class="badge ${s.cls}">${s.text}</span></div><div class="card-body" style="padding:16px 18px"><div style="font-size:13px;line-height:1.65;color:var(--text-body)">${escapeHtml(r.reason || 'Sin motivo registrado')}</div>${actions}</div></div>`;
+        }).join('');
+    } catch (e) {
+        container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Error</div><div class="empty-state-text">No se pudieron cargar las citas de psicologia.</div></div>';
+    }
+}
+
+async function updatePsychAppointmentStatus(id, status) {
+    if (!canManagePsychologyAppointments()) { showToast('Sin permisos', 'error'); return; }
+    const res = await apiFetch('/api/teacher/psychology/appointments/' + id + '/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status, resolutionComment: '' })
+    });
+    if (!res || !res.ok) { showToast('No se pudo actualizar', 'error'); return; }
+    showToast(status === 'COMPLETED' ? 'Cita completada' : 'Cita cancelada', 'success');
+    renderTeacherPsychologyAppointments();
+}
+
+async function apOpenPsychAvailabilityModal() {
+    if (!canManagePsychologyAppointments()) { showToast('Sin permisos', 'error'); return; }
+    const config = await tryFetch('/api/psychology/availability') || {};
+    const professionals = (config.professionals || []).map(p => p.name || '').filter(Boolean);
+    document.getElementById('modalTitle').textContent = 'Configurar disponibilidad de psicologia';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="form-group"><label class="form-label">Psicologos (uno por linea: Nombre | Especialidad)</label><textarea id="psychAvailProfessionals" class="form-input" rows="3" placeholder="Dra. Laura Sanchez | Ansiedad y manejo emocional">${escapeHtml((config.professionals || []).map(p => (p.name || '') + (p.specialty ? ' | ' + p.specialty : '')).join('\n'))}</textarea></div>
+        <div class="form-group"><label class="form-label">Fechas y horarios (JSON)</label><textarea id="psychAvailDates" class="form-input" rows="6" placeholder='{"Dra. Laura Sanchez": [{"date":"2026-04-14","slots":["08:00","09:00"]}]}'>${escapeHtml(JSON.stringify(config.dates || {}, null, 2))}</textarea></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+            <button class="btn btn-primary" onclick="apSavePsychAvailability()">Guardar</button>
+        </div>
+    `;
+    document.getElementById('modalBackdrop').classList.add('show');
+}
+
+async function apSavePsychAvailability() {
+    const profsRaw = String((document.getElementById('psychAvailProfessionals') || {}).value || '').trim();
+    const datesRaw = String((document.getElementById('psychAvailDates') || {}).value || '').trim();
+    const professionals = profsRaw.split('\n').map(line => {
+        const parts = line.split('|').map(x => x.trim());
+        return { name: parts[0] || '', specialty: parts[1] || '' };
+    }).filter(p => p.name);
+    let dates = {};
+    try { dates = datesRaw ? JSON.parse(datesRaw) : {}; } catch (e) { showToast('JSON de fechas invalido', 'error'); return; }
+    try {
+        const res = await apiFetch('/api/admin/psychology/availability', {
+            method: 'PUT',
+            body: JSON.stringify({ professionals, dates })
+        });
+        if (!res || !res.ok) throw new Error('Error');
+        closeModal();
+        showToast('Disponibilidad guardada', 'success');
+    } catch (e) {
+        showToast('No se pudo guardar la disponibilidad', 'error');
+    }
+}
+
+function canViewMyEvaluationReport() {
+    return isCurrentUserAdmin() || hasAnyPermission(['evaluacion.ver-reporte-docente']);
+}
+
+function ensureTeacherMyEvaluationCard() {
+    const slot = document.getElementById('teacherMyEvaluationSlot');
+    if (!slot || document.getElementById('teacherMyEvaluationContainer')) return;
+    slot.innerHTML = `
+        <div class="card" style="margin-top:14px">
+            <div class="card-header">
+                <span class="card-title">Mi Evaluacion Profesoral</span>
+            </div>
+            <div class="card-body" id="teacherMyEvaluationContainer">
+                <div class="empty-state" style="padding:24px 0">
+                    <div class="empty-state-title">Sin evaluaciones</div>
+                    <div class="empty-state-text">Aun no hay evaluaciones profesorales registradas.</div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+async function renderTeacherMyEvaluations() {
+    ensureTeacherMyEvaluationCard();
+    const container = document.getElementById('teacherMyEvaluationContainer');
+    if (!container) return;
+    if (!canViewMyEvaluationReport()) {
+        container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin acceso</div><div class="empty-state-text">No cuentas con permisos para ver tu evaluacion profesoral.</div></div>';
+        return;
+    }
+    try {
+        const page = await tryFetch('/api/teacher/my-evaluations?page=0&size=200');
+        const items = Array.isArray(page) ? page : (page && Array.isArray(page.content) ? page.content : []);
+        if (!items.length) {
+            container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin evaluaciones</div><div class="empty-state-text">Aun no recibes evaluaciones profesorales.</div></div>';
+            return;
+        }
+        teacherMyEvaluationsById = {};
+        items.forEach(it => { if (it && it.id !== undefined && it.id !== null) teacherMyEvaluationsById[String(it.id)] = it; });
+
+        const visibleItems = items.filter(it => !isEvaluationHiddenForTeacher(it.id));
+
+        const evalItems = visibleItems.filter(x => String((x || {}).evaluationType || '').toUpperCase() === 'EVAL');
+        const labels = await loadTeacherEvalQuestionLabelsFromBackend();
+        const averages = {};
+        const counts = {};
+        evalItems.forEach(item => {
+            const answers = item.answers || {};
+            Object.entries(answers).forEach(([k, v]) => {
+                const num = parseFloat(v);
+                if (!isNaN(num)) {
+                    counts[k] = (counts[k] || 0) + 1;
+                    averages[k] = (averages[k] || 0) + num;
+                }
+            });
+        });
+        const avgHtml = Object.keys(averages).length
+            ? `<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:1px;margin-bottom:8px">Promedios por pregunta</div><div style="display:flex;flex-wrap:wrap;gap:8px">${Object.entries(averages).map(([k, sum]) => {
+                const label = labels.eval[k] || (k || '').replace(/_/g, ' ');
+                const avg = (sum / (counts[k] || 1)).toFixed(1);
+                return `<div style="background:var(--cream);border:1px solid rgba(11,31,58,0.08);border-radius:8px;padding:8px 12px;font-size:12.5px"><strong>${escapeHtml(label)}</strong>: ${avg}</div>`;
+            }).join('')}</div></div>`
+            : '';
+
+        const state = tableUiState.myEvaluations;
+        const totalPages = Math.max(1, Math.ceil(visibleItems.length / state.pageSize));
+        const safePage = Math.min(Math.max(1, state.page), totalPages);
+        state.page = safePage;
+        const pageItems = visibleItems.slice((safePage - 1) * state.pageSize, safePage * state.pageSize);
+
+        const listHtml = pageItems.map(r => {
+            const courseName = ((r.course || {}).name) || 'Curso';
+            const studentName = ((r.student || {}).name) || 'Estudiante';
+            const studentCode = ((r.student || {}).studentCode) || '';
+            const submittedAt = r.submittedAt ? new Date(r.submittedAt).toLocaleString('es-CO') : '';
+            const answerCount = Object.keys(r.answers || {}).length;
+            const hasId = r.id !== undefined && r.id !== null;
+            return `<div class="card" style="margin-bottom:14px">
+                <div class="card-header" style="padding:14px 18px">
+                    <div>
+                        <div style="font-size:14px;font-weight:700">${escapeHtml(courseName)}</div>
+                        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Evaluado por ${escapeHtml(studentName)} ${studentCode ? `<span style="font-size:11px;color:var(--text-muted);font-weight:500">${escapeHtml(studentCode)}</span>` : ''} · ${submittedAt}</div>
+                    </div>
+                </div>
+                <div class="card-body" style="padding:16px 18px">
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${answerCount} respuesta(s)</div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        ${hasId ? `<button class="btn btn-sm btn-outline" onclick="openMyEvaluationDetail(${r.id})">Ver mas</button>` : ''}
+                        ${hasId ? `<button class="btn btn-sm btn-danger" onclick="hideEvaluationForTeacher(${r.id}); renderTeacherMyEvaluations(); showToast('Evaluacion oculta para ti','success');">Ocultar</button>` : '<span style="font-size:12px;color:var(--text-muted)">Sin ID</span>'}
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+
+        const pagerHtml = `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;flex-wrap:wrap">
+            <span style="font-size:12px;color:var(--text-muted)">Mostrando ${(safePage - 1) * state.pageSize + 1}-${Math.min(safePage * state.pageSize, visibleItems.length)} de ${visibleItems.length}</span>
+            <div style="display:flex;gap:6px">
+                <button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="changeMyEvaluationsPage(-1)">Anterior</button>
+                <button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="changeMyEvaluationsPage(1)">Siguiente</button>
+            </div>
+        </div>`;
+
+        container.innerHTML = avgHtml + listHtml + pagerHtml;
+    } catch (e) {
+        container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Error</div><div class="empty-state-text">No se pudieron cargar las evaluaciones.</div></div>';
+    }
+}
+
+async function openMyEvaluationDetail(submissionId) {
+    try {
+        const item = teacherMyEvaluationsById[String(submissionId)] || null;
+        if (!item) {
+            showToast('No se pudo cargar el detalle de la evaluacion', 'error');
+            return;
+        }
+        await openEvaluationSubmissionDetail(item);
+    } catch (e) {
+        console.error(e);
+        showToast('Error al abrir el detalle', 'error');
+    }
+}
+
+function confirmHideMyEvaluation(submissionId) {
+    openConfirmModal('Ocultar evaluacion', 'Esta evaluacion se ocultara de tu vista, pero seguira disponible para los administradores.', () => {
+        hideEvaluationForTeacher(submissionId);
+        renderTeacherMyEvaluations();
+        showToast('Evaluacion oculta', 'success');
+    }, 'Ocultar');
+}
+
+function changeMyEvaluationsPage(delta) {
+    tableUiState.myEvaluations.page += delta;
+    renderTeacherMyEvaluations();
+}
+
+function ensureTeacherPublicationRequestsCard() {
+    const slot = document.getElementById('teacherPublicationRequestsOverviewSlot');
+    if (!slot || document.getElementById('teacherPublicationRequestsContainer')) return;
+    slot.innerHTML = `
+        <div class="card" style="margin-top:14px">
+            <div class="card-header">
+                <span class="card-title">Publicaciones de Bienestar pendientes de revision</span>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <input class="form-input" id="publicationRequestSearchInput" placeholder="Filtrar por titulo o autor" style="min-width:260px">
+                </div>
+            </div>
+            <div class="card-body" id="teacherPublicationRequestsContainer">
+                <div class="empty-state" style="padding:24px 0">
+                    <div class="empty-state-title">Sin solicitudes</div>
+                    <div class="empty-state-text">Aun no hay solicitudes de publicacion de bienestar pendientes.</div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+async function renderTeacherPublicationRequests() {
+    ensureTeacherPublicationRequestsCard();
+    const container = document.getElementById('teacherPublicationRequestsContainer');
+    if (!container) return;
+    if (!canReviewPublicationRequests()) {
+        container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin acceso</div><div class="empty-state-text">No cuentas con permisos para revisar solicitudes de publicacion.</div></div>';
+        return;
+    }
+    const searchEl = document.getElementById('publicationRequestSearchInput');
+    const query = ((searchEl ? searchEl.value : '') || '').trim().toLowerCase();
+    if (searchEl) {
+        searchEl.oninput = () => { renderTeacherPublicationRequests(); };
+    }
+    try {
+        const items = await tryFetch('/api/teacher/wellbeing/publications/pending') || [];
+        let filtered = items;
+        if (query) {
+            filtered = items.filter(r => {
+                const title = String(r.title || '').toLowerCase();
+                const author = String(r.author || '').toLowerCase();
+                const requestedBy = String(r.requestedBy || '').toLowerCase();
+                return title.includes(query) || author.includes(query) || requestedBy.includes(query);
+            });
+        }
+        if (!filtered.length) {
+            container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin solicitudes</div><div class="empty-state-text">No hay solicitudes de publicacion pendientes.</div></div>';
+            return;
+        }
+        container.innerHTML = filtered.map((r) => {
+            const requestedAt = r.requestedAt ? new Date(r.requestedAt).toLocaleString('es-CO') : '—';
+            const autoPublishAt = r.autoPublishAt ? new Date(r.autoPublishAt).toLocaleString('es-CO') : '';
+            const sectionLabel = {
+                psychology: 'Psicologia',
+                sports: 'Deportes',
+                art: 'Arte y Cultura',
+                orientation: 'Orientacion',
+                medical: 'Salud',
+                scholarships: 'Becas'
+            }[r.section] || r.section;
+            return `<div class="card" style="margin-bottom:14px">
+                <div class="card-header" style="padding:14px 18px">
+                    <div>
+                        <div style="font-size:14px;font-weight:700">${escapeHtml(r.title || 'Sin titulo')}</div>
+                        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${sectionLabel} · Solicitada por ${escapeHtml(r.requestedBy || '—')} · ${requestedAt}</div>
+                    </div>
+                    <span class="badge badge-gold">Pendiente</span>
+                </div>
+                <div class="card-body" style="padding:16px 18px">
+                    <div style="font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;margin-bottom:6px">Autor</div>
+                    <div style="font-size:13px;line-height:1.65;color:var(--text-body);background:var(--cream);border-radius:8px;padding:10px 12px;border:1px solid rgba(11,31,58,0.06)">${escapeHtml(r.author || '—')}</div>
+                    <div style="font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;margin:12px 0 6px">Contenido</div>
+                    <div style="font-size:13px;line-height:1.65;color:var(--text-body);background:#fff;border-radius:8px;padding:10px 12px;border:1px solid rgba(11,31,58,0.08);max-height:200px;overflow:auto">${r.content || 'Sin contenido'}</div>
+                    ${autoPublishAt ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted)"><strong>Publicacion automatica:</strong> ${autoPublishAt}</div>` : ''}
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+                        <button class="btn btn-sm btn-success-outline" onclick="updatePublicationRequestStatus('${r.id}','APPROVED')">Aprobar</button>
+                        <button class="btn btn-sm btn-danger" onclick="updatePublicationRequestStatus('${r.id}','REJECTED')">Rechazar</button>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Error</div><div class="empty-state-text">No se pudieron cargar las solicitudes de publicacion.</div></div>';
+    }
+}
+
+async function updatePublicationRequestStatus(publicationId, status) {
+    const normalized = String(status || '').toUpperCase();
+    if (!['APPROVED', 'REJECTED'].includes(normalized)) return;
+    if (!canReviewPublicationRequests()) {
+        showToast('No tienes permisos para revisar solicitudes de publicacion', 'error');
+        return;
+    }
+    const res = await apiFetch('/api/teacher/wellbeing/publications/' + publicationId + '/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: normalized, resolutionComment: '' })
+    });
+    if (!res || !res.ok) {
+        showToast('No se pudo actualizar el estado de la solicitud', 'error');
+        return;
+    }
+    showToast(normalized === 'APPROVED' ? 'Publicacion aprobada' : 'Publicacion rechazada', 'success');
+    renderTeacherPublicationRequests();
+}
+
 function ensureTeacherEvaluationReportsCard() {
     const slot = document.getElementById('teacherEvaluationOverviewSlot');
     if (!slot || document.getElementById('teacherEvaluationReportsContainer')) return;
@@ -6177,17 +7103,42 @@ function ensureTeacherEvaluationReportsCard() {
     `;
 }
 
-function renderEvaluationAnswersFull(answers, evaluationType) {
+function renderEvaluationAnswersFull(answers, evaluationType, labels) {
     const obj = answers && typeof answers === 'object' ? answers : {};
     const keys = Object.keys(obj);
-    if (!keys.length) return '<div style="font-size:12px;color:var(--text-muted)">Sin respuestas registradas.</div>';
-    const labels = loadTeacherEvalQuestionLabels();
-    const byId = String(evaluationType || '').toUpperCase() === 'AUTOEVAL' ? labels.autoeval : labels.eval;
-    return keys.map((k, idx) => {
+    if (!keys.length) return '<div style="padding:20px;text-align:center;color:var(--text-muted)">Sin respuestas registradas.</div>';
+    const allLabels = labels || loadTeacherEvalQuestionLabels() || { eval: {}, autoeval: {} };
+    const byId = String(evaluationType || '').toUpperCase() === 'AUTOEVAL' ? allLabels.autoeval : allLabels.eval;
+    let html = '<div style="display:flex;flex-direction:column;gap:10px">';
+    for (let i = 0; i < keys.length; i++) {
+        const k = keys[i];
         const raw = obj[k];
         const value = Array.isArray(raw) ? raw.join(', ') : (typeof raw === 'object' ? JSON.stringify(raw, null, 2) : String(raw || '—'));
-        return `<div style="padding:10px 0;border-bottom:${idx === keys.length - 1 ? 'none' : '1px solid rgba(11,31,58,0.08)'}"><div style="font-size:12px;color:var(--text-muted);font-weight:700">${htmlEscape(byId[k] || k)}</div><div style="font-size:13px;color:var(--text-body);margin-top:4px;white-space:pre-wrap">${htmlEscape(value)}</div></div>`;
-    }).join('');
+        const label = htmlEscape(byId[k] || k);
+        const valStr = htmlEscape(value);
+        const numVal = parseFloat(raw);
+        let valueHtml = '';
+        if (!isNaN(numVal) && String(raw).trim() !== '') {
+            let badgeColor = 'rgba(11,31,58,0.06)';
+            let textColor = 'var(--text-body)';
+            if (numVal >= 8) { badgeColor = 'rgba(39,174,96,0.10)'; textColor = 'var(--success)'; }
+            else if (numVal >= 6) { badgeColor = 'rgba(200,150,46,0.10)'; textColor = 'var(--gold)'; }
+            else if (numVal >= 1) { badgeColor = 'rgba(192,57,43,0.10)'; textColor = 'var(--error)'; }
+            valueHtml = '<span style="display:inline-block;background:' + badgeColor + ';color:' + textColor + ';border:1px solid ' + textColor + ';border-radius:20px;padding:3px 12px;font-size:13px;font-weight:700">' + valStr + '</span>';
+        } else if (String(raw).toLowerCase() === 'si' || String(raw).toLowerCase() === 'sí') {
+            valueHtml = '<span style="display:inline-block;background:rgba(39,174,96,0.10);color:var(--success);border:1px solid var(--success);border-radius:20px;padding:3px 12px;font-size:13px;font-weight:700">Sí</span>';
+        } else if (String(raw).toLowerCase() === 'no') {
+            valueHtml = '<span style="display:inline-block;background:rgba(192,57,43,0.10);color:var(--error);border:1px solid var(--error);border-radius:20px;padding:3px 12px;font-size:13px;font-weight:700">No</span>';
+        } else {
+            valueHtml = '<span style="font-size:14px;color:var(--text-body);line-height:1.6;white-space:pre-wrap">' + valStr + '</span>';
+        }
+        html += '<div style="background:#fff;border:1px solid rgba(11,31,58,0.08);border-radius:10px;padding:14px 16px">' +
+            '<div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:0.8px;margin-bottom:6px">' + label + '</div>' +
+            '<div>' + valueHtml + '</div>' +
+        '</div>';
+    }
+    html += '</div>';
+    return html;
 }
 
 function getEvalTypeLabel(evalType) {
@@ -6201,93 +7152,141 @@ function getEvalSubmittedBadge(submitted) {
     return submitted ? '<span class="badge badge-success">Enviada</span>' : '<span class="badge badge-gold">Borrador</span>';
 }
 
-function readEvaluationModerationState() {
-    try {
-        const raw = JSON.parse(storageService.getItem(TEACHER_EVAL_REVIEWS_KEY) || '{}');
-        return raw && typeof raw === 'object' ? raw : {};
-    } catch (e) {
-        return {};
-    }
-}
-
-function saveEvaluationModerationState(state) {
-    storageService.setItem(TEACHER_EVAL_REVIEWS_KEY, JSON.stringify(state && typeof state === 'object' ? state : {}));
-}
-
-function getEvaluationModerationBadge(review) {
-    const status = String((review || {}).status || '').toUpperCase();
-    if (status === 'APPROVED') return '<span class="badge badge-success">Aprobado</span>';
-    if (status === 'REJECTED') return '<span class="badge badge-error">Declinado</span>';
-    return '<span class="badge badge-gold">Pendiente de revisión</span>';
-}
-
-function moderateEvaluationSubmission(submissionId, status) {
-    const normalized = String(status || '').toUpperCase();
-    if (normalized !== 'APPROVED' && normalized !== 'REJECTED') return;
-    if (!canReviewWellbeingAction(normalized)) {
-        showToast('No tienes permisos para moderar reportes', 'error');
-        return;
-    }
-    const state = readEvaluationModerationState();
-    state[String(submissionId)] = {
-        status: normalized,
-        reviewerId: (currentUser && currentUser.id) || null,
-        reviewerName: (currentUser && currentUser.name) || 'Docente',
-        reviewedAt: new Date().toISOString()
-    };
-    saveEvaluationModerationState(state);
-    showToast(normalized === 'APPROVED' ? 'Reporte aprobado' : 'Reporte declinado', 'success');
-    renderTeacherEvaluationReports();
-}
-
-function renderEvaluationAnswersPreview(answers) {
+function renderEvaluationAnswersPreview(answers, evaluationType, labels) {
     const obj = answers && typeof answers === 'object' ? answers : {};
     const keys = Object.keys(obj);
     if (!keys.length) return '<div style="font-size:12px;color:var(--text-muted)">Sin respuestas registradas.</div>';
+    const allLabels = labels || loadTeacherEvalQuestionLabels() || { eval: {}, autoeval: {} };
+    const byId = String(evaluationType || '').toUpperCase() === 'AUTOEVAL' ? allLabels.autoeval : allLabels.eval;
     const take = keys.slice(0, 4);
     const rows = take.map(k => {
         const raw = obj[k];
         const val = Array.isArray(raw) ? raw.join(', ') : (typeof raw === 'object' ? JSON.stringify(raw) : String(raw));
-        return `<div style="font-size:12px;color:var(--text-body);margin-bottom:4px"><strong>${k}:</strong> ${val.length > 120 ? val.slice(0, 117) + '...' : val}</div>`;
+        const label = byId[k] || k;
+        return `<div style="font-size:12px;color:var(--text-body);margin-bottom:4px"><strong>${htmlEscape(label)}:</strong> ${val.length > 120 ? val.slice(0, 117) + '...' : htmlEscape(val)}</div>`;
     }).join('');
     const more = keys.length > take.length ? `<div style="font-size:11px;color:var(--text-muted)">+${keys.length - take.length} respuesta(s) más</div>` : '';
     return rows + more;
 }
 
-function openEvaluationSubmissionDetail(item) {
-    const studentName = ((item.student || {}).name) || 'Estudiante';
-    const courseName = ((item.course || {}).name) || 'Curso';
-    const type = getEvalTypeLabel(item.evaluationType);
-    const submittedAt = item.submittedAt ? new Date(item.submittedAt).toLocaleString('es-CO') : '—';
-    const answers = item.answers && typeof item.answers === 'object' ? item.answers : {};
-    const answersHtml = renderEvaluationAnswersFull(answers, item.evaluationType);
-    openModal('Detalle de evaluación', `
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${studentName} · ${courseName} · ${type} · ${submittedAt}</div>
-        <div style="background:#f7f8fb;border:1px solid rgba(11,31,58,0.08);border-radius:8px;padding:12px;max-height:58vh;overflow:auto">${answersHtml}</div>
-    `, { size: 'xl' });
+function buildEvalAnswerCard(raw, label, valStr) {
+    const numVal = parseFloat(raw);
+    let valueHtml = '';
+    if (!isNaN(numVal) && String(raw).trim() !== '') {
+        let badgeColor = 'rgba(11,31,58,0.06)';
+        let textColor = 'var(--text-body)';
+        if (numVal >= 8) { badgeColor = 'rgba(39,174,96,0.10)'; textColor = 'var(--success)'; }
+        else if (numVal >= 6) { badgeColor = 'rgba(200,150,46,0.10)'; textColor = 'var(--gold)'; }
+        else if (numVal >= 1) { badgeColor = 'rgba(192,57,43,0.10)'; textColor = 'var(--error)'; }
+        valueHtml = '<span style="display:inline-block;background:' + badgeColor + ';color:' + textColor + ';border:1px solid ' + textColor + ';border-radius:20px;padding:3px 12px;font-size:13px;font-weight:700">' + valStr + '</span>';
+    } else if (String(raw).toLowerCase() === 'si' || String(raw).toLowerCase() === 'sí') {
+        valueHtml = '<span style="display:inline-block;background:rgba(39,174,96,0.10);color:var(--success);border:1px solid var(--success);border-radius:20px;padding:3px 12px;font-size:13px;font-weight:700">Sí</span>';
+    } else if (String(raw).toLowerCase() === 'no') {
+        valueHtml = '<span style="display:inline-block;background:rgba(192,57,43,0.10);color:var(--error);border:1px solid var(--error);border-radius:20px;padding:3px 12px;font-size:13px;font-weight:700">No</span>';
+    } else {
+        valueHtml = '<span style="font-size:14px;color:var(--text-body);line-height:1.6;white-space:pre-wrap">' + valStr + '</span>';
+    }
+    return '<div style="background:#fff;border:1px solid rgba(11,31,58,0.08);border-radius:10px;padding:14px 16px">' +
+        '<div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:0.8px;margin-bottom:6px">' + label + '</div>' +
+        '<div>' + valueHtml + '</div>' +
+    '</div>';
 }
 
-function openEvaluationSubmissionDetailById(submissionId) {
-    const item = teacherEvaluationById[String(submissionId)] || null;
-    if (!item) {
-        showToast('No se pudo cargar el detalle del reporte', 'error');
-        return;
+function renderEvalModalPage() {
+    const s = evalModalState;
+    const start = (s.page - 1) * s.pageSize;
+    const end = start + s.pageSize;
+    const pageKeys = s.keys.slice(start, end);
+    let html = '<div style="display:flex;flex-direction:column;gap:10px">';
+    for (let i = 0; i < pageKeys.length; i++) {
+        const k = pageKeys[i];
+        const raw = s.obj[k];
+        const value = Array.isArray(raw) ? raw.join(', ') : (typeof raw === 'object' ? JSON.stringify(raw, null, 2) : String(raw || '—'));
+        const label = htmlEscape(s.byId[k] || k);
+        const valStr = htmlEscape(value);
+        html += buildEvalAnswerCard(raw, label, valStr);
     }
-    openEvaluationSubmissionDetail(item);
+    html += '</div>';
+
+    const totalPages = Math.max(1, Math.ceil(s.keys.length / s.pageSize));
+    const pagerHtml = '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;gap:8px;flex-wrap:wrap">' +
+        '<span style="font-size:12px;color:var(--text-muted)">Mostrando ' + (start + 1) + '-' + Math.min(end, s.keys.length) + ' de ' + s.keys.length + ' respuestas</span>' +
+        '<div style="display:flex;gap:6px">' +
+            '<button class="btn btn-sm btn-outline" ' + (s.page === 1 ? 'disabled' : '') + ' onclick="changeEvalModalPage(-1)">Anterior</button>' +
+            '<button class="btn btn-sm btn-outline" ' + (s.page === totalPages ? 'disabled' : '') + ' onclick="changeEvalModalPage(1)">Siguiente</button>' +
+        '</div>' +
+    '</div>';
+
+    const container = document.getElementById('evalModalAnswersContainer');
+    const pager = document.getElementById('evalModalPager');
+    if (container) container.innerHTML = html;
+    if (pager) pager.innerHTML = pagerHtml;
 }
 
-async function deleteEvaluationSubmission(submissionId) {
-    const res = await apiFetch('/api/teacher/evaluation-submissions/' + submissionId, { method: 'DELETE' });
-    if (!res || !res.ok) {
-        showToast('No se pudo eliminar el reporte', 'error');
-        return;
+function changeEvalModalPage(delta) {
+    const totalPages = Math.max(1, Math.ceil(evalModalState.keys.length / evalModalState.pageSize));
+    const newPage = Math.min(Math.max(1, evalModalState.page + delta), totalPages);
+    if (newPage === evalModalState.page) return;
+    evalModalState.page = newPage;
+    renderEvalModalPage();
+}
+
+async function openEvaluationSubmissionDetail(item) {
+    try {
+        const labels = await loadTeacherEvalQuestionLabelsFromBackend();
+        const studentName = String(((item.student || {}).name) || 'Estudiante');
+        const studentCode = String(((item.student || {}).studentCode) || '');
+        const courseName = String(((item.course || {}).name) || 'Curso');
+        const type = getEvalTypeLabel(item.evaluationType);
+        const submittedAt = item.submittedAt ? new Date(item.submittedAt).toLocaleString('es-CO') : '—';
+        const answers = item.answers && typeof item.answers === 'object' ? item.answers : {};
+        const keys = Object.keys(answers);
+        const allLabels = labels || loadTeacherEvalQuestionLabels() || { eval: {}, autoeval: {} };
+        const byId = String(item.evaluationType || '').toUpperCase() === 'AUTOEVAL' ? allLabels.autoeval : allLabels.eval;
+
+        evalModalState = { page: 1, pageSize: 5, keys: keys, obj: answers, byId: byId, evaluationType: item.evaluationType };
+
+        const initials = studentName.split(' ').filter(Boolean).slice(0,2).map(w => w[0]).join('').toUpperCase();
+        const isAuto = String(item.evaluationType || '').toUpperCase() === 'AUTOEVAL';
+        const badgeBg = isAuto ? 'rgba(200,150,46,0.15)' : 'rgba(0,150,136,0.15)';
+        const badgeColor = isAuto ? 'var(--gold)' : 'var(--teal)';
+
+        const html = '<div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;padding:16px;background:linear-gradient(135deg,#0B1F3A,#1A3A6B);border-radius:12px;color:#fff">' +
+            '<div style="width:48px;height:48px;border-radius:50%;background:rgba(200,150,46,0.2);border:2px solid rgba(200,150,46,0.4);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff;flex-shrink:0">' + htmlEscape(initials) + '</div>' +
+            '<div style="flex:1;min-width:0">' +
+                '<div style="font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + htmlEscape(studentName) + (studentCode ? ' <span style="font-size:12px;font-weight:500;opacity:0.8">' + htmlEscape(studentCode) + '</span>' : '') + '</div>' +
+                '<div style="font-size:12.5px;opacity:0.85;margin-top:3px">' + htmlEscape(courseName) + ' &middot; ' + submittedAt + '</div>' +
+            '</div>' +
+            '<span style="display:inline-block;background:' + badgeBg + ';color:' + badgeColor + ';border-radius:20px;padding:4px 12px;font-size:11px;font-weight:700;flex-shrink:0">' + type + '</span>' +
+        '</div>' +
+        '<div id="evalModalAnswersContainer" style="background:#f7f8fb;border:1px solid rgba(11,31,58,0.08);border-radius:12px;padding:16px;max-height:52vh;overflow:auto"></div>' +
+        '<div id="evalModalPager"></div>';
+
+        openModal('Detalle de evaluacion', html, { size: 'xl' });
+        renderEvalModalPage();
+    } catch (e) {
+        console.error('Error en openEvaluationSubmissionDetail:', e);
+        showToast('Error al abrir el detalle de la evaluacion', 'error');
     }
-    showToast('Reporte eliminado', 'success');
-    renderTeacherEvaluationReports();
+}
+
+async function openEvaluationSubmissionDetailById(submissionId) {
+    try {
+        const item = teacherEvaluationById[String(submissionId)] || null;
+        if (!item) {
+            showToast('No se pudo cargar el detalle del reporte', 'error');
+            return;
+        }
+        await openEvaluationSubmissionDetail(item);
+    } catch (e) {
+        console.error(e);
+        showToast('Error al abrir el detalle', 'error');
+    }
 }
 
 async function renderTeacherEvaluationReports() {
     ensureTeacherEvaluationReportsCard();
+    await loadTeacherEvalQuestionLabelsFromBackend();
     const state = tableUiState.evalReports;
     const container = document.getElementById('teacherEvaluationReportsContainer');
     if (!container) return;
@@ -6327,22 +7326,23 @@ async function renderTeacherEvaluationReports() {
 
     teacherEvaluationById = {};
     items.forEach(it => { if (it && it.id !== undefined && it.id !== null) teacherEvaluationById[String(it.id)] = it; });
-    const reviewState = readEvaluationModerationState();
 
-    const submittedCount = items.filter(x => !!x.submitted).length;
-    const draftCount = Math.max(0, items.length - submittedCount);
-    const evalCount = items.filter(x => String((x || {}).evaluationType || '').toUpperCase() === 'EVAL').length;
-    const autoevalCount = items.filter(x => String((x || {}).evaluationType || '').toUpperCase() === 'AUTOEVAL').length;
+    const visibleItems = items.filter(it => !isEvaluationHiddenForTeacher(it.id));
+
+    const submittedCount = visibleItems.filter(x => !!x.submitted).length;
+    const draftCount = Math.max(0, visibleItems.length - submittedCount);
+    const evalCount = visibleItems.filter(x => String((x || {}).evaluationType || '').toUpperCase() === 'EVAL').length;
+    const autoevalCount = visibleItems.filter(x => String((x || {}).evaluationType || '').toUpperCase() === 'AUTOEVAL').length;
     if (summaryEl) {
-        summaryEl.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap"><span class="badge badge-navy">Total: ${items.length}</span><span class="badge badge-success">Enviadas: ${submittedCount}</span><span class="badge badge-gold">Borradores: ${draftCount}</span><span class="badge badge-navy">Eval docente: ${evalCount}</span><span class="badge badge-navy">Autoeval: ${autoevalCount}</span></div>`;
+        summaryEl.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap"><span class="badge badge-navy">Total: ${visibleItems.length}</span><span class="badge badge-success">Enviadas: ${submittedCount}</span><span class="badge badge-gold">Borradores: ${draftCount}</span><span class="badge badge-navy">Eval docente: ${evalCount}</span><span class="badge badge-navy">Autoeval: ${autoevalCount}</span></div>`;
     }
 
-    const totalPages = Math.max(1, Math.ceil(items.length / state.pageSize));
+    const totalPages = Math.max(1, Math.ceil(visibleItems.length / state.pageSize));
     const safePage = Math.min(Math.max(1, state.page), totalPages);
     state.page = safePage;
-    const pageItems = items.slice((safePage - 1) * state.pageSize, safePage * state.pageSize);
+    const pageItems = visibleItems.slice((safePage - 1) * state.pageSize, safePage * state.pageSize);
 
-    if (!items.length) {
+    if (!visibleItems.length) {
         container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin reportes</div><div class="empty-state-text">No hay reportes para los filtros seleccionados.</div></div>';
         return;
     }
@@ -6352,15 +7352,9 @@ async function renderTeacherEvaluationReports() {
         const studentCode = (r.student || {}).studentCode || '';
         const courseName = (r.course || {}).name || 'Curso';
         const typeLabel = getEvalTypeLabel(r.evaluationType);
-        const submittedAt = r.submittedAt ? new Date(r.submittedAt).toLocaleString('es-CO') : 'Sin fecha de envío';
+        const submittedAt = r.submittedAt ? new Date(r.submittedAt).toLocaleString('es-CO') : 'Sin fecha de envio';
         const answers = r.answers && typeof r.answers === 'object' ? r.answers : {};
         const answerCount = Object.keys(answers).length;
-        const review = reviewState[String(r.id)] || null;
-        const canApprove = canReviewWellbeingAction('APPROVED');
-        const canReject = canReviewWellbeingAction('REJECTED');
-        const reviewDetails = review && review.reviewedAt
-            ? `<div style="font-size:11px;color:var(--text-muted);margin-top:8px">${review.status === 'APPROVED' ? 'Aprobado' : 'Declinado'} por ${htmlEscape(review.reviewerName || 'revisor')} el ${new Date(review.reviewedAt).toLocaleString('es-CO')}</div>`
-            : '';
         return `<div class="card" style="margin-bottom:12px">
             <div class="card-header" style="padding:14px 18px">
                 <div>
@@ -6371,18 +7365,13 @@ async function renderTeacherEvaluationReports() {
             </div>
             <div class="card-body" style="padding:16px 18px">
                 <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${submittedAt} · ${answerCount} respuesta(s)</div>
-                <div style="background:#fff;border-radius:8px;padding:10px 12px;border:1px solid rgba(11,31,58,0.08)">${renderEvaluationAnswersPreview(answers)}</div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-                    <button class="btn btn-sm btn-outline" onclick="openEvaluationSubmissionDetailById(${r.id})">Ver detalle</button>
-                    ${canApprove ? `<button class="btn btn-sm btn-success-outline" onclick="moderateEvaluationSubmission(${r.id},'APPROVED')">Aceptar</button>` : ''}
-                    ${canReject ? `<button class="btn btn-sm btn-danger" onclick="moderateEvaluationSubmission(${r.id},'REJECTED')">Declinar</button>` : ''}
-                    ${(!canApprove && !canReject) ? '<span style="font-size:12px;color:var(--text-muted);display:flex;align-items:center">Solo lectura</span>' : ''}
+                    <button class="btn btn-sm btn-outline" onclick="openEvaluationSubmissionDetailById(${r.id})">Ver mas</button>
+                    <button class="btn btn-sm btn-danger" onclick="hideEvaluationForTeacher(${r.id}); renderTeacherEvaluationReports(); showToast('Evaluacion oculta para ti','success');">Ocultar</button>
                 </div>
-                <div style="margin-top:8px">${getEvaluationModerationBadge(review)}</div>
-                ${reviewDetails}
             </div>
         </div>`;
-    }).join('') + `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;flex-wrap:wrap"><span style="font-size:12px;color:var(--text-muted)">Mostrando ${(safePage - 1) * state.pageSize + 1}-${Math.min(safePage * state.pageSize, items.length)} de ${items.length}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="changeEvaluationReportsPage(-1)">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="changeEvaluationReportsPage(1)">Siguiente</button></div></div>`;
+    }).join('') + `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;flex-wrap:wrap"><span style="font-size:12px;color:var(--text-muted)">Mostrando ${(safePage - 1) * state.pageSize + 1}-${Math.min(safePage * state.pageSize, visibleItems.length)} de ${visibleItems.length}</span><div style="display:flex;gap:6px"><button class="btn btn-sm btn-outline" ${safePage===1?'disabled':''} onclick="changeEvaluationReportsPage(-1)">Anterior</button><button class="btn btn-sm btn-outline" ${safePage===totalPages?'disabled':''} onclick="changeEvaluationReportsPage(1)">Siguiente</button></div></div>`;
 }
 
 function changeEvaluationReportsPage(delta) {
@@ -6524,6 +7513,12 @@ document.getElementById('btnNewGrade').addEventListener('click', () => {
 
 document.getElementById('btnExportGrades').addEventListener('click', exportGrades);
 
+document.getElementById('btnCloseCut').addEventListener('click', () => {
+    const courseId = parseInt(document.getElementById('gradeCourseFilter').value);
+    if (!courseId) { showToast('Selecciona un curso primero', 'error'); return; }
+    openFinalizeCutModal(courseId);
+});
+
 document.getElementById('btnNewSchedule').addEventListener('click', () => {
     const courses = teacherCourses.length ? teacherCourses : [];
     openModal('Nuevo Horario', `
@@ -6565,5 +7560,414 @@ if (btnJoinCourseCodeTeacher) btnJoinCourseCodeTeacher.addEventListener('click',
 window.addEventListener('storage', () => {
     // backend-only: sin sincronización por storage del navegador.
 });
+
+window.addEventListener('focus', () => {
+    if (currentCourse && currentCourse.id) {
+        const anyEditing = Object.keys(runtimeSubmissionsByKey).some(k => runtimeSubmissionsByKey[k].editing);
+        if (!anyEditing) {
+            refreshTeacherGrades().then(() => {
+                if (document.getElementById('submissionsView').classList.contains('show') && currentSubmissionsActivityId) {
+                    loadActivitySubmissions(currentSubmissionsActivityId).then(renderSubmissionsList);
+                }
+                if (document.getElementById('courseView').classList.contains('show')) {
+                    renderUnit(currentUnitIdx, { skipPersist: true });
+                }
+            });
+        }
+    }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   IMPORTAR / EXPORTAR CALIFICACIONES DESDE EXCEL
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function getStudentActivityGrade(studentId, actId) {
+    // 1) Intentar desde submissions cargadas
+    const sub = getStudentSubmission(studentId, actId);
+    if (sub && sub.submitted && sub.graded) return clampGrade(sub.grade);
+    // 2) Fallback: buscar en teacherGrades
+    const g = teacherGrades.find(gr => gr.student && gr.student.id === studentId && gr.activityId === actId);
+    if (g && g.grade != null) return clampGrade(g.grade);
+    return '';
+}
+
+function makeXlsxCell(value, style) {
+    const cell = { v: value, t: typeof value === 'number' ? 'n' : 's' };
+    if (style) cell.s = style;
+    return cell;
+}
+
+async function downloadGradeTemplate() {
+    if (typeof XLSX === 'undefined') { showToast('Libreria XLSX no disponible. Recarga la pagina.', 'error'); return; }
+    if (!finalizeUnitState || finalizeUnitState.unitIdx === undefined) { showToast('Abre primero el modal de finalizar unidad.', 'error'); return; }
+    const ctx = getFinalizeUnitContext(finalizeUnitState.unitIdx);
+    const exportForums = (ctx.forums || []).filter(f => ((f.grading || {}).type || 'none') === 'real');
+    const exportGlossaries = (ctx.glossaries || []).filter(g => ((g.grading || {}).type || 'none') === 'real');
+
+    // Precargar submissions de todas las actividades de la unidad para tener notas reales
+    await Promise.all(ctx.acts.map(a => loadActivitySubmissions(a.id)));
+
+    const headers = ['Estudiante', 'Codigo'];
+    const colMeta = [];
+    ctx.acts.forEach(a => { headers.push(a.title); colMeta.push({ type: 'act', id: a.id }); });
+    ctx.exams.forEach(e => { headers.push(e.title); colMeta.push({ type: 'exam', id: e.id }); });
+    exportForums.forEach(f => { headers.push(f.title); colMeta.push({ type: 'forum', id: f.id }); });
+    exportGlossaries.forEach(g => { headers.push(g.title); colMeta.push({ type: 'glossary', id: g.id }); });
+    headers.push('Definitiva Unidad');
+    colMeta.push({ type: 'definitiva', id: null });
+
+    const examScores = readFinalizeExamScores(ctx);
+    const adminCfg = getAdminGradingConfig();
+    const cfg = readFinalizeConfig(ctx, adminCfg);
+
+    // ============================================================
+    // ESTILOS PROFESIONALES PARA EXCEL
+    // ============================================================
+    const bThin  = { style: 'thin',  color: { rgb: 'FFD0D0D0' } };
+    const bMed   = { style: 'medium', color: { rgb: 'FF1E6B74' } };
+    const bGold  = { style: 'medium', color: { rgb: 'FFC8962E' } };
+
+    // Helper para crear estilo de celda
+    const mkSt = (opts) => ({
+        font:    { name: 'Calibri', sz: 11, color: { rgb: 'FF2D3748' }, ...opts.font },
+        fill:    opts.fill    || { patternType: 'none' },
+        alignment: { horizontal: 'center', vertical: 'center', wrapText: true, ...opts.align },
+        border:  opts.border  || { top: bThin, bottom: bThin, left: bThin, right: bThin },
+        numFmt:  opts.numFmt  || undefined
+    });
+
+    // Encabezado principal (fila 0)
+    const hdrMain = mkSt({
+        font: { bold: true, color: { rgb: 'FFFFFFFF' }, sz: 12, name: 'Calibri' },
+        fill: { fgColor: { rgb: 'FF1E6B74' }, patternType: 'solid' },
+        border: { top: bMed, bottom: bMed, left: bThin, right: bThin }
+    });
+    const hdrMainFirst = mkSt({
+        font: { bold: true, color: { rgb: 'FFFFFFFF' }, sz: 12, name: 'Calibri' },
+        fill: { fgColor: { rgb: 'FF1E6B74' }, patternType: 'solid' },
+        border: { top: bMed, bottom: bMed, left: bMed, right: bThin }
+    });
+
+    // Sub-encabezados por categoria (fila 1)
+    const catAct = mkSt({
+        font: { bold: true, color: { rgb: 'FFFFFFFF' }, sz: 10, name: 'Calibri' },
+        fill: { fgColor: { rgb: 'FF2D8A8F' }, patternType: 'solid' }
+    });
+    const catExam = mkSt({
+        font: { bold: true, color: { rgb: 'FFFFFFFF' }, sz: 10, name: 'Calibri' },
+        fill: { fgColor: { rgb: 'FF8B4513' }, patternType: 'solid' }
+    });
+    const catForum = mkSt({
+        font: { bold: true, color: { rgb: 'FFFFFFFF' }, sz: 10, name: 'Calibri' },
+        fill: { fgColor: { rgb: 'FF4A6FA5' }, patternType: 'solid' }
+    });
+    const catGloss = mkSt({
+        font: { bold: true, color: { rgb: 'FFFFFFFF' }, sz: 10, name: 'Calibri' },
+        fill: { fgColor: { rgb: 'FF6B8E23' }, patternType: 'solid' }
+    });
+    const catDef = mkSt({
+        font: { bold: true, color: { rgb: 'FFFFFFFF' }, sz: 10, name: 'Calibri' },
+        fill: { fgColor: { rgb: 'FFC8962E' }, patternType: 'solid' },
+        border: { top: bMed, bottom: bMed, left: bThin, right: bGold }
+    });
+
+    // Datos
+    const dataWhite = mkSt({ font: { sz: 11 } });
+    const dataAlt   = mkSt({ font: { sz: 11 }, fill: { fgColor: { rgb: 'FFF0F7F8' }, patternType: 'solid' } });
+    const dataNumW  = mkSt({ font: { sz: 11 }, numFmt: '0.0' });
+    const dataNumA  = mkSt({ font: { sz: 11 }, fill: { fgColor: { rgb: 'FFF0F7F8' }, patternType: 'solid' }, numFmt: '0.0' });
+    const dataDefW  = mkSt({
+        font: { bold: true, sz: 11, color: { rgb: 'FF8B6914' } },
+        fill: { fgColor: { rgb: 'FFFFF8E7' }, patternType: 'solid' },
+        numFmt: '0.0',
+        border: { top: bThin, bottom: bThin, left: bThin, right: bGold }
+    });
+    const dataDefA  = mkSt({
+        font: { bold: true, sz: 11, color: { rgb: 'FF8B6914' } },
+        fill: { fgColor: { rgb: 'FFFFF0D6' }, patternType: 'solid' },
+        numFmt: '0.0',
+        border: { top: bThin, bottom: bThin, left: bThin, right: bGold }
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = {};
+    const totalRows = teacherStudents.length + 2; // +2 por fila de titulo y fila de categorias
+    const range = { s: { c: 0, r: 0 }, e: { c: headers.length - 1, r: totalRows - 1 } };
+
+    // ===== FILA 0: Titulos de columnas =====
+    headers.forEach((h, i) => {
+        const isFirst = i === 0;
+        ws[XLSX.utils.encode_cell({ c: i, r: 0 })] = makeXlsxCell(h, isFirst ? hdrMainFirst : hdrMain);
+    });
+
+    // ===== FILA 1: Categorias de columnas =====
+    const catRow = [];
+    catRow.push({ text: 'INFO', style: catAct });
+    catRow.push({ text: 'INFO', style: catAct });
+    ctx.acts.forEach(() => catRow.push({ text: 'TALLERES', style: catAct }));
+    ctx.exams.forEach(() => catRow.push({ text: 'PARCIALES', style: catExam }));
+    exportForums.forEach(() => catRow.push({ text: 'FOROS', style: catForum }));
+    exportGlossaries.forEach(() => catRow.push({ text: 'GLOSARIOS', style: catGloss }));
+    catRow.push({ text: 'DEFINITIVA', style: catDef });
+
+    catRow.forEach((c, i) => {
+        ws[XLSX.utils.encode_cell({ c: i, r: 1 })] = makeXlsxCell(c.text, c.style);
+    });
+
+    // ===== FILAS DE DATOS =====
+    teacherStudents.forEach((st, rIdx) => {
+        const row = rIdx + 2;
+        const isAlt = rIdx % 2 === 1;
+        const nmStyle  = isAlt ? dataAlt  : dataWhite;
+        const codeStyle = isAlt ? dataAlt  : dataWhite;
+        const numStyle = isAlt ? dataNumA : dataNumW;
+        const defStyle = isAlt ? dataDefA : dataDefW;
+
+        let definitiva = '';
+        if (cfg.mode !== 'none') {
+            const r = computeStudentUnitResult(ctx, st, examScores, cfg);
+            definitiva = clampGrade(r.final);
+        }
+
+        ws[XLSX.utils.encode_cell({ c: 0, r: row })] = makeXlsxCell(st.user.name, nmStyle);
+        ws[XLSX.utils.encode_cell({ c: 1, r: row })] = makeXlsxCell(st.studentCode || '', codeStyle);
+
+        let colIdx = 2;
+        ctx.acts.forEach(a => {
+            const val = getStudentActivityGrade(st.id, a.id);
+            ws[XLSX.utils.encode_cell({ c: colIdx, r: row })] = makeXlsxCell(val === '' ? '' : val, numStyle);
+            colIdx++;
+        });
+        ctx.exams.forEach(e => {
+            const val = clampGrade((examScores[e.id] || {})[st.id] || 0);
+            ws[XLSX.utils.encode_cell({ c: colIdx, r: row })] = makeXlsxCell(val, numStyle);
+            colIdx++;
+        });
+        exportForums.forEach(f => {
+            const val = getForumReportValue(f, st.id);
+            ws[XLSX.utils.encode_cell({ c: colIdx, r: row })] = makeXlsxCell(val, numStyle);
+            colIdx++;
+        });
+        exportGlossaries.forEach(g => {
+            const val = getGlossaryReportValue(g, st.id);
+            ws[XLSX.utils.encode_cell({ c: colIdx, r: row })] = makeXlsxCell(val, numStyle);
+            colIdx++;
+        });
+        ws[XLSX.utils.encode_cell({ c: colIdx, r: row })] = makeXlsxCell(definitiva === '' ? '' : definitiva, defStyle);
+    });
+
+    ws['!ref'] = XLSX.utils.encode_range(range);
+    ws['!cols'] = headers.map((_, i) => ({ wch: i < 2 ? 28 : (i === headers.length - 1 ? 18 : 32) }));
+    ws['!rows'] = [{ hpt: 32 }, { hpt: 24 }].concat(teacherStudents.map(() => ({ hpt: 22 })));
+
+    // Congelar paneles (filas 0 y 1)
+    ws['!freeze'] = { xSplit: 2, ySplit: 2, topLeftCell: 'C3', activePane: 'bottomRight' };
+
+    // Auto-filter
+    ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { c: 0, r: 0 }, e: { c: headers.length - 1, r: 0 } }) };
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Calificaciones');
+    XLSX.writeFile(wb, 'plantilla_calificaciones.xlsx', { bookType: 'xlsx', type: 'array' });
+    showToast('Plantilla descargada con notas actuales', 'success');
+}
+
+function openUploadReportModal() {
+    openModal('Subir reporte de calificaciones', `
+        <div style="font-size:13px;color:var(--text-body);margin-bottom:14px;line-height:1.6">
+            Sube un archivo Excel (.xlsx) con las calificaciones. El sistema comparara por <strong>nombre de estudiante</strong> o <strong>codigo</strong> y actualizara las notas de cada actividad, foro y glosario.
+        </div>
+        <div class="form-group">
+            <label class="form-label">Archivo Excel</label>
+            <input type="file" class="form-input" id="uploadGradeFile" accept=".xlsx,.xls" style="padding:8px">
+        </div>
+        <div id="uploadGradeResult" style="margin-top:10px;font-size:12px"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+            <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+            <button class="btn btn-teal" onclick="processUploadedGrades()">Procesar calificaciones</button>
+        </div>
+    `);
+}
+
+async function processUploadedGrades() {
+    const input = document.getElementById('uploadGradeFile');
+    const resultEl = document.getElementById('uploadGradeResult');
+    if (!input || !input.files || !input.files[0]) { showToast('Selecciona un archivo Excel', 'error'); return; }
+    if (typeof XLSX === 'undefined') { showToast('Libreria XLSX no disponible', 'error'); return; }
+    if (!finalizeUnitState || finalizeUnitState.unitIdx === undefined) { showToast('No hay unidad activa', 'error'); return; }
+
+    const ctx = getFinalizeUnitContext(finalizeUnitState.unitIdx);
+    const exportForums = (ctx.forums || []).filter(f => ((f.grading || {}).type || 'none') === 'real');
+    const exportGlossaries = (ctx.glossaries || []).filter(g => ((g.grading || {}).type || 'none') === 'real');
+
+    let buffer;
+    try { buffer = await input.files[0].arrayBuffer(); } catch (e) { showToast('Error leyendo archivo', 'error'); return; }
+    let data;
+    try {
+        const wb = XLSX.read(buffer, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    } catch (e) { showToast('Error parseando Excel: ' + e.message, 'error'); return; }
+
+    if (!data || data.length < 2) { showToast('El archivo esta vacio o no tiene datos', 'error'); return; }
+
+    const headers = data[0].map(h => String(h || '').trim());
+    // Detectar si fila 1 es la fila de categorias de la plantilla (INFO / TALLERES / PARCIALES ...)
+    let startRow = 1;
+    if (data.length > 2) {
+        const row1 = data[1].map(v => String(v || '').trim().toUpperCase());
+        const hasCatRow = row1.some(v => ['INFO','TALLERES','TALLER','PARCIALES','PARCIAL','FOROS','FORO','GLOSARIOS','GLOSARIO','DEFINITIVA'].includes(v));
+        if (hasCatRow) startRow = 2;
+    }
+
+    // Mapear columnas a actividades / examenes / foros / glosarios
+    const colMap = [];
+    for (let i = 2; i < headers.length; i++) {
+        const title = headers[i];
+        const act = ctx.acts.find(a => a.title === title);
+        if (act) { colMap.push({ col: i, type: 'act', id: act.id, label: act.title }); continue; }
+        const exam = ctx.exams.find(e => e.title === title);
+        if (exam) { colMap.push({ col: i, type: 'exam', id: exam.id, label: exam.title }); continue; }
+        const forum = exportForums.find(f => f.title === title);
+        if (forum) { colMap.push({ col: i, type: 'forum', id: forum.id, label: forum.title }); continue; }
+        const glossary = exportGlossaries.find(g => g.title === title);
+        if (glossary) { colMap.push({ col: i, type: 'glossary', id: glossary.id, label: glossary.title }); continue; }
+        colMap.push({ col: i, type: null, id: null, label: title });
+    }
+    const matchedCols = colMap.filter(c => c.type !== null);
+
+    let updatedCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
+    const notFoundNames = [];
+    const notFoundCodes = [];
+
+    for (let r = startRow; r < data.length; r++) {
+        const row = data[r];
+        const studentName = String(row[0] || '').trim();
+        const studentCode = String(row[1] || '').trim();
+        if (!studentName && !studentCode) { skippedCount++; continue; }
+
+        let student = teacherStudents.find(s => s.studentCode === studentCode);
+        if (!student && studentName) {
+            student = teacherStudents.find(s => ((s.user || {}).name || '').trim().toLowerCase() === studentName.toLowerCase());
+        }
+        if (!student) {
+            skippedCount++;
+            if (studentName && studentName.toUpperCase() !== 'ESTUDIANTE') notFoundNames.push(studentName);
+            if (studentCode && studentCode.toUpperCase() !== 'CODIGO') notFoundCodes.push(studentCode);
+            continue;
+        }
+
+        for (const mapping of colMap) {
+            if (!mapping || mapping.type === null) continue;
+            const raw = row[mapping.col];
+            if (raw === '' || raw === null || raw === undefined) continue;
+            const val = parseFloat(raw);
+            if (isNaN(val)) continue;
+
+            try {
+                if (mapping.type === 'act') {
+                    await saveStudentGrade(student.id, mapping.id, val, '');
+                    updatedCount++;
+                } else if (mapping.type === 'forum') {
+                    const forum = exportForums.find(f => f.id === mapping.id);
+                    if (forum) {
+                        ensureForumGradingDefaults(forum);
+                        forum.participantGrades[student.id] = clampGrade(val);
+                        updatedCount++;
+                    }
+                } else if (mapping.type === 'glossary') {
+                    const glossary = exportGlossaries.find(g => g.id === mapping.id);
+                    if (glossary) {
+                        ensureGlossaryDefaults(glossary);
+                        glossary.participantGrades[student.id] = clampGrade(val);
+                        updatedCount++;
+                    }
+                } else if (mapping.type === 'exam') {
+                    // Persistir en storage para que el modal y el sistema lo vean
+                    const storedScores = getUnitExamScores(currentCourse.id, ctx.unit.id);
+                    if (!storedScores[mapping.id]) storedScores[mapping.id] = {};
+                    storedScores[mapping.id][student.id] = clampGrade(val);
+                    saveUnitExamScores(currentCourse.id, ctx.unit.id, storedScores);
+                    // Legacy runtime key (aun usado por algunas vistas)
+                    const key = 'exam_' + currentCourse.id + '_' + ctx.unit.id + '_' + mapping.id + '_' + student.id;
+                    runtimeUnitPartialByKey[key] = clampGrade(val);
+                    updatedCount++;
+                }
+            } catch (e) {
+                errorCount++;
+            }
+        }
+    }
+
+    // Guardar unidades para persistir foros/glosarios
+    if (currentCourse) await saveUnits(currentCourse.id, getUnits(currentCourse.id));
+
+    // --- Calcular y guardar definitiva de unidad (SOLO unidad, NO corte) ---
+    let defUnitSaved = 0;
+    let defError = '';
+    const computedSamples = [];
+    try {
+        const adminCfg = getAdminGradingConfig();
+        const cfg = readFinalizeConfig(ctx, adminCfg);
+        const examScores = getUnitExamScores(currentCourse.id, ctx.unit.id);
+        const err = validateFinalizeConfig(ctx, cfg, adminCfg);
+        if (err) {
+            defError = err;
+        } else if (cfg.mode !== 'none') {
+            for (const st of teacherStudents) {
+                const r = computeStudentUnitResult(ctx, st, examScores, cfg);
+                let description = '';
+                if (cfg.mode === 'simple-average') {
+                    description = `Cierre ${ctx.unit.name}: Promedio simple = ${fmtGrade(r.final)} (Talleres ${fmtGrade(r.avgActivities)}, Parciales ${fmtGrade(r.avgExams)}, Foros ${fmtGrade(r.avgForums)}, Glosarios ${fmtGrade(r.glossaryScore)}, Bonificación ${fmtGrade(r.bonus)}).`;
+                } else if (cfg.mode === 'item-individual') {
+                    description = `Cierre ${ctx.unit.name}: Ponderación por ítem = ${fmtGrade(r.final)} (Bonificación ${fmtGrade(r.bonus)}).`;
+                } else {
+                    const gw = cfg.globalWeights || {};
+                    description = `Cierre ${ctx.unit.name}: Ponderación global (Talleres ${gw.activities || 0}%, Parciales ${gw.exams || 0}%, Foros ${gw.forums || 0}%, Glosarios ${gw.glossary || 0}%) = ${fmtGrade(r.final)} (Bonificación ${fmtGrade(r.bonus)}).`;
+                }
+                await upsertTeacherGradeRecord(currentCourse.id, st, r.final, description, ctx.unit.id);
+                defUnitSaved++;
+                if (computedSamples.length < 3) {
+                    computedSamples.push({ name: st.user.name, tasks: r.avgActivities, exams: r.avgExams, forums: r.avgForums, gloss: r.glossaryScore, bonus: r.bonus, final: r.final });
+                }
+            }
+        }
+    } catch (e) {
+        defError = e.message || 'Error calculando definitivas';
+        console.error('Error actualizando definitivas tras subida:', e);
+    }
+
+    // Refrescar grades desde backend
+    await refreshTeacherGrades();
+
+    // Construir mensaje detallado
+    let html = `<div style="color:var(--success);font-weight:600;margin-bottom:6px">${updatedCount} calificaciones individuales actualizadas.</div>`;
+    if (defUnitSaved > 0) {
+        html += `<div style="color:var(--success)">Definitivas de unidad guardadas: ${defUnitSaved}</div>`;
+        html += `<div style="color:var(--text-muted);font-size:11px;margin-top:4px">Muestra de cálculo: ${computedSamples.map(s => `${s.name}=T${fmtGrade(s.tasks)}/P${fmtGrade(s.exams)}/F${fmtGrade(s.forums)}/G${fmtGrade(s.gloss)}/B${fmtGrade(s.bonus)}→${fmtGrade(s.final)}`).join(' | ')}</div>`;
+    }
+    if (defError) html += `<div style="color:var(--error);margin-top:4px">Definitivas no calculadas: ${htmlEscape(defError)}</div>`;
+    if (skippedCount > 0) html += `<div style="color:var(--text-muted);margin-top:4px">Filas omitidas: ${skippedCount}</div>`;
+    if (notFoundNames.length) html += `<div style="color:var(--error);font-size:11px;margin-top:4px">Estudiantes no encontrados: ${htmlEscape(notFoundNames.slice(0,5).join(', '))}${notFoundNames.length > 5 ? '...' : ''}</div>`;
+    if (matchedCols.length === 0) html += `<div style="color:var(--error);margin-top:4px">No se reconocieron columnas de actividades/examenes/foros/glosarios. Verifica que los titulos coincidan exactamente.</div>`;
+    else html += `<div style="color:var(--text-muted);font-size:11px;margin-top:4px">Columnas reconocidas: ${matchedCols.map(c => c.label).join(', ')}</div>`;
+    if (errorCount > 0) html += `<div style="color:var(--error);margin-top:4px">Errores durante procesamiento: ${errorCount}</div>`;
+
+    if (resultEl) resultEl.innerHTML = html;
+    showToast(`${updatedCount} calificaciones actualizadas. ${defUnitSaved} definitivas de unidad.`, errorCount > 0 || defError ? 'error' : 'success');
+
+    // Refrescar vistas
+    if (finalizeUnitState && finalizeUnitState.unitIdx !== undefined) {
+        recalcFinalizeUnitPreview();
+    }
+    if (document.getElementById('gradesView').classList.contains('show')) {
+        const selectedCourse = parseInt((document.getElementById('gradeCourseFilter') || {}).value || '0');
+        if (selectedCourse === currentCourse.id) renderGrades(currentCourse.id);
+    }
+    if (document.getElementById('courseView').classList.contains('show')) {
+        renderUnit(currentUnitIdx, { skipPersist: true });
+    }
+}
 
 init();

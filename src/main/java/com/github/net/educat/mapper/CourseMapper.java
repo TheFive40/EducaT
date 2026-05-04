@@ -20,6 +20,7 @@ public class CourseMapper {
                 .defaultScheduleDay(course.getDefaultScheduleDay())
                 .defaultStartTime(course.getDefaultStartTime())
                 .defaultEndTime(course.getDefaultEndTime())
+                .cutConfigJson(course.getCutConfigJson())
                 .teacher(course.getTeacher() != null ? teacherMapper.toResponse(course.getTeacher()) : null)
                 .build();
     }
@@ -30,6 +31,7 @@ public class CourseMapper {
                 .defaultScheduleDay(request.getDefaultScheduleDay())
                 .defaultStartTime(request.getDefaultStartTime())
                 .defaultEndTime(request.getDefaultEndTime())
+                .cutConfigJson(request.getCutConfigJson())
                 .build();
     }
 }

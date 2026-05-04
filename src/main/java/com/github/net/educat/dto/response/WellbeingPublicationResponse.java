@@ -23,5 +23,12 @@ public class WellbeingPublicationResponse {
     private String content;
     private String videoLink;
     private Map<String, Integer> reactions;
+    private String status;
+    private String requestedBy;
+    private java.time.LocalDateTime requestedAt;
+    private String reviewedBy;
+    private java.time.LocalDateTime reviewedAt;
+    private String resolutionComment;
+    private java.time.LocalDateTime autoPublishAt;
 }
 

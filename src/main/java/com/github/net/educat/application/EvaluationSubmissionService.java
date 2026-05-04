@@ -16,5 +16,7 @@ public interface EvaluationSubmissionService {
     Page<EvaluationSubmissionResponse> findTeacherSubmissions(Integer teacherId, Integer courseId, Integer studentId, String evaluationType, Boolean submitted, Pageable pageable);
     EvaluationSubmissionResponse gradeSubmission(Integer submissionId, Integer teacherId, Double grade, String feedback);
     Integer getStudentIdByUserId(Integer userId);
+    Page<EvaluationSubmissionResponse> findTeacherEvaluationsAboutMe(Integer teacherUserId, Integer courseId, Pageable pageable);
+    Page<EvaluationSubmissionResponse> findEvaluationReport(Integer courseId, Integer teacherId, String evaluationType, Pageable pageable);
 }
 

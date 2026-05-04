@@ -217,6 +217,9 @@
                 </div>
 
                 <div id="teacherWellbeingOverviewSlot"></div>
+                <div id="teacherPublicationRequestsOverviewSlot"></div>
+                <div id="teacherPsychologyAppointmentsSlot"></div>
+                <div id="teacherMyEvaluationSlot"></div>
                 <div id="teacherEvaluationOverviewSlot"></div>
             </section>
 
@@ -299,9 +302,16 @@
                             <select class="form-input" id="gradeCourseFilter" style="width:auto;padding:7px 12px;font-size:13px">
                                 <option value="">Selecciona un curso</option>
                             </select>
+                            <select class="form-input" id="gradeCutFilter" style="width:auto;padding:7px 12px;font-size:13px;display:none">
+                                <option value="">Corte actual</option>
+                            </select>
                             <button class="btn btn-teal btn-sm" id="btnNewGrade">
                                 <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                                 Agregar Nota
+                            </button>
+                            <button class="btn btn-sm btn-outline" id="btnCloseCut">
+                                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                                Finalizar corte
                             </button>
                             <button class="btn btn-sm btn-outline" id="btnExportGrades">
                                 <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -563,7 +573,8 @@
 
 <div class="toast-container" id="toastContainer"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="/js/api-client.js"></script>
-<script src="/js/teacher-dashboard.js?v=20260418-01"></script>
+<script src="/js/teacher-dashboard.js?v=20260504-01"></script>
 </body>
 </html>
