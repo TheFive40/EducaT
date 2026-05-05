@@ -74,6 +74,13 @@
                 Estudiantes
             </button>
         </div>
+        <div class="nav-group" id="navGroupBienestar" style="display:none">
+            <div class="nav-group-label">Bienestar</div>
+            <button class="nav-item" data-section="bienestar">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
+                Bienestar
+            </button>
+        </div>
         <div class="nav-group">
             <div class="nav-group-label">Personal</div>
             <button class="nav-item" data-section="instructivos">
@@ -216,9 +223,7 @@
                     </div>
                 </div>
 
-                <div id="teacherWellbeingOverviewSlot"></div>
                 <div id="teacherPublicationRequestsOverviewSlot"></div>
-                <div id="teacherPsychologyAppointmentsSlot"></div>
                 <div id="teacherMyEvaluationSlot"></div>
                 <div id="teacherEvaluationOverviewSlot"></div>
             </section>
@@ -418,6 +423,31 @@
                 </div>
             </section>
 
+            <section class="section-panel" id="panel-bienestar">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Psicologia — Citas y Disponibilidad</span>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                            <input class="form-input" id="psychApptSearchInput" placeholder="Filtrar por estudiante o psicologo" style="min-width:220px">
+                            <select class="form-input" id="psychApptStatusFilter" style="width:auto;padding:7px 12px;font-size:13px">
+                                <option value="">Todos los estados</option>
+                                <option value="SCHEDULED">Agendadas</option>
+                                <option value="COMPLETED">Completadas</option>
+                                <option value="CANCELLED">Canceladas</option>
+                            </select>
+                            <button class="btn btn-sm btn-teal" id="btnPsychAvailability" style="display:none">Configurar disponibilidad</button>
+                        </div>
+                    </div>
+                    <div class="card-body" id="teacherBienestarPsychContainer">
+                        <div class="empty-state" style="padding:24px 0">
+                            <div class="empty-state-title">Cargando citas...</div>
+                            <div class="empty-state-text">Un momento por favor.</div>
+                        </div>
+                    </div>
+                    <div id="psychApptPagination" style="padding:14px 22px;border-top:1px solid rgba(11,31,58,0.06);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px"></div>
+                </div>
+            </section>
+
             <section class="section-panel" id="panel-perfil">
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px;max-width:900px">
                     <div class="card" style="margin-bottom:0">
@@ -575,6 +605,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="/js/api-client.js"></script>
-<script src="/js/teacher-dashboard.js?v=20260504-01"></script>
+<script src="/js/teacher-dashboard.js?v=20260504-05"></script>
 </body>
 </html>

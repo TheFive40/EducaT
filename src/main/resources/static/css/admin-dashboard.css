@@ -1439,3 +1439,151 @@ body.builder-fullscreen-mode #panel-formularios > .card {
     }
 }
 
+/* ─── Admin schedule calendar (adapted from student-dashboard) ─── */
+.wcal-root {
+    display: flex;
+    overflow-x: auto;
+    border: 1px solid rgba(11,31,58,0.09);
+    border-radius: var(--radius);
+    background: var(--white);
+    box-shadow: var(--shadow);
+    -webkit-overflow-scrolling: touch;
+}
+.wcal-root::-webkit-scrollbar { height: 4px; }
+.wcal-root::-webkit-scrollbar-thumb { background: rgba(200,150,46,0.35); border-radius: 4px; }
+
+.wcal-time-col {
+    flex-shrink: 0;
+    background: var(--cream);
+    border-right: 1px solid rgba(11,31,58,0.08);
+    position: sticky;
+    left: 0;
+    z-index: 10;
+}
+.wcal-corner {
+    border-bottom: 1px solid rgba(11,31,58,0.08);
+}
+.wcal-time-track {
+    position: relative;
+}
+.wcal-time-label {
+    position: absolute;
+    right: 8px;
+    transform: translateY(-50%);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-light);
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.wcal-grid {
+    flex: 1;
+    display: flex;
+    min-width: 0;
+}
+.wcal-day-col {
+    flex: 1;
+    min-width: 130px;
+    border-right: 1px solid rgba(11,31,58,0.06);
+}
+.wcal-day-col:last-child {
+    border-right: none;
+}
+
+.wcal-day-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 8px 4px;
+    background: var(--cream);
+    border-bottom: 2px solid rgba(11,31,58,0.07);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+}
+.wcal-day-full {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--text-dark);
+}
+.wcal-day-short {
+    display: none;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--text-dark);
+}
+.wcal-day-body {
+    position: relative;
+    width: 100%;
+}
+.wcal-guide {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: rgba(11,31,58,0.055);
+    pointer-events: none;
+}
+
+.wcal-block {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    padding: 5px 7px;
+    border-radius: 0 6px 6px 0;
+    overflow: hidden;
+    cursor: default;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    box-shadow: 0 1px 3px rgba(11,31,58,0.07);
+}
+.wcal-block:hover {
+    transform: translateX(2px) scale(1.01);
+    box-shadow: 0 4px 14px rgba(11,31,58,0.13);
+    filter: brightness(1.03);
+    z-index: 3;
+}
+.wcal-block-name {
+    display: block;
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.wcal-block-time {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-top: 2px;
+    letter-spacing: 0.2px;
+}
+.wcal-block-teacher {
+    display: block;
+    font-size: 10px;
+    color: var(--text-light);
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@media (max-width: 700px) {
+    .wcal-day-col   { min-width: 90px; }
+    .wcal-day-full  { display: none; }
+    .wcal-day-short { display: block; }
+    .wcal-block-name { font-size: 10.5px; }
+}
+@media (max-width: 480px) {
+    .wcal-day-col { min-width: 72px; }
+}
+

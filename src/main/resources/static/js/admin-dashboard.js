@@ -123,6 +123,7 @@ const DEFAULT_ENROLLMENT_FORM_FIELDS = [
     { id: 'studentDoc', section: 'Datos del estudiante', type: 'text', label: 'Documento', placeholder: 'CC / TI / Pasaporte', required: true },
     { id: 'studentBirthDate', section: 'Datos del estudiante', type: 'date', label: 'Fecha de nacimiento', placeholder: '', required: true },
     { id: 'studentGender', section: 'Datos del estudiante', type: 'select', label: 'Genero', placeholder: '', required: true, options: ['Femenino', 'Masculino', 'Otro', 'Prefiero no decirlo'] },
+    { id: 'studentEmail', section: 'Datos del estudiante', type: 'email', label: 'Correo electronico del estudiante', placeholder: 'estudiante@dominio.com', required: true, immutable: true },
     { id: 'level', section: 'Datos academicos', type: 'select', label: 'Nivel academico', placeholder: '', required: true, options: ['Preescolar', 'Primaria', 'Secundaria', 'Media'] },
     { id: 'grade', section: 'Datos academicos', type: 'text', label: 'Grado', placeholder: 'Ej: 6A, 9B, 11', required: true },
     { id: 'studentLastName', section: 'Datos del estudiante', type: 'text', label: 'Apellidos del estudiante', placeholder: 'Apellidos del estudiante', required: true },
@@ -238,6 +239,7 @@ const state = {
         enrollmentReviewSelectedIds: [],
         enrollmentReviewFilteredIds: [],
         enrollmentReviewCurrentPageIds: [],
+        enrollmentSchedulePage: 1,
         enrollmentFormBuilderPage: 1,
         enrollmentFormBuilderPageSize: 6,
         enrollmentFormBuilderDraft: []
@@ -2196,7 +2198,11 @@ function enrollmentStatusLabel(status) {
 }
 
 function readEnrollmentRequestsStorage() {
-    return asArray(readStorage(STORAGE_KEYS.enrollmentRequests, [])).map((item, idx) => {
+    let raw = null;
+    try {
+        raw = localStorage.getItem('educat_enrollment_requests');
+    } catch (e) { raw = null; }
+    return asArray(raw ? JSON.parse(raw) : []).map((item, idx) => {
         const row = asObject(item);
         return {
             ...row,
@@ -2207,13 +2213,21 @@ function readEnrollmentRequestsStorage() {
             academic: asObject(row.academic),
             guardian: asObject(row.guardian),
             review: asObject(row.review),
-            documents: asObject(row.documents)
+            documents: asObject(row.documents),
+            extra: asArray(row.extra),
+            notes: String(row.notes || ''),
+            formConfigSnapshot: asArray(row.formConfigSnapshot)
         };
     });
 }
 
 function saveEnrollmentRequestsStorage(items) {
-    saveStorage(STORAGE_KEYS.enrollmentRequests, asArray(items));
+    try {
+        localStorage.setItem('educat_enrollment_requests', JSON.stringify(asArray(items)));
+    } catch (e) {
+        showToast('No se pudieron guardar los cambios en las solicitudes.', 'error');
+        throw e;
+    }
 }
 
 function setEnrollmentReviewSearch(value) {
@@ -2302,29 +2316,107 @@ function updateEnrollmentRequestsByIds(ids, updater) {
     return changed;
 }
 
-function approveEnrollmentRequests(ids) {
-    const changed = updateEnrollmentRequestsByIds(ids, item => ({
-        ...item,
-        status: 'approved',
-        review: {
-            ...asObject(item.review),
-            decision: 'approved',
-            reason: '',
-            correction: '',
-            reviewedAt: new Date().toISOString()
+async function approveEnrollmentRequests(ids) {
+    const targetIds = asArray(ids).map(String).filter(Boolean);
+    if (!targetIds.length) return showToast('No hay solicitudes seleccionadas', 'error');
+
+    const studentRole = asArray(state.roles).find(r => {
+        const name = String(r.name || '').toUpperCase();
+        return name === 'ESTUDIANTE' || name === 'STUDENT';
+    });
+    if (!studentRole) {
+        return showToast('No se encontró el rol ESTUDIANTE en el sistema. Contacta al administrador.', 'error');
+    }
+    const studentRoleId = studentRole.id;
+
+    const list = readEnrollmentRequestsStorage();
+    const toApprove = list.filter(item => targetIds.has(String(item.id || '')));
+
+    let approvedCount = 0;
+    let createdCount = 0;
+
+    for (const item of toApprove) {
+        const s = asObject(item.student);
+        const g = asObject(item.guardian);
+        const studentEmail = String(s.email || '').trim();
+        const studentName = String(s.name || '').trim();
+        const studentLastName = String(s.lastName || '').trim();
+        const studentDoc = String(s.document || '').trim();
+
+        if (!studentEmail) {
+            showToast(`La solicitud de ${studentName || 'estudiante'} no tiene correo electrónico. No se puede crear el usuario.`, 'error');
+            continue;
         }
-    }));
-    if (!changed) return showToast('No hay solicitudes seleccionadas', 'error');
+
+        try {
+            const existingUser = asArray(state.users).find(u => String(u.email || '').toLowerCase() === studentEmail.toLowerCase());
+            let userId = existingUser ? existingUser.id : null;
+
+            if (!userId) {
+                const userPayload = {
+                    name: `${studentName} ${studentLastName}`.trim() || studentEmail,
+                    email: studentEmail,
+                    password: studentDoc || 'EducaT2024!',
+                    documentId: studentDoc || '',
+                    phone: String(g.phone || '').trim(),
+                    roleId: parseInt(studentRoleId, 10),
+                    status: true
+                };
+                const createdUser = await api('/api/users', { method: 'POST', headers: headers(), body: JSON.stringify(userPayload) });
+                userId = createdUser.id;
+                state.users.push(createdUser);
+            }
+
+            const existingStudent = asArray(state.students).find(st => String(st.user && st.user.id) === String(userId));
+            let studentId = existingStudent ? existingStudent.id : null;
+
+            if (!studentId) {
+                const studentCode = formatStudentCode(getNextStudentCodeSeed() + createdCount);
+                const studentPayload = {
+                    userId: parseInt(userId, 10),
+                    studentCode: studentCode
+                };
+                const createdStudent = await api('/api/students', { method: 'POST', headers: headers(), body: JSON.stringify(studentPayload) });
+                studentId = createdStudent.id;
+                state.students.push(createdStudent);
+                createdCount++;
+            }
+
+            item.status = 'approved';
+            item.review = {
+                ...asObject(item.review),
+                decision: 'approved',
+                reason: '',
+                correction: '',
+                reviewedAt: new Date().toISOString(),
+                studentId: studentId,
+                userId: userId
+            };
+            item.studentId = studentId;
+            item.userId = userId;
+            approvedCount++;
+        } catch (e) {
+            console.error('Error al crear usuario/estudiante:', e);
+            showToast(`Error al procesar solicitud de ${studentName}: ${e.message || 'Error desconocido'}`, 'error');
+        }
+    }
+
+    saveEnrollmentRequestsStorage(list);
     renderEnrollmentReviewSection();
-    showToast('Solicitudes aprobadas: ' + changed, 'success');
+
+    if (approvedCount) {
+        showToast(`Solicitudes aprobadas: ${approvedCount}. Estudiantes creados: ${createdCount}.`, 'success');
+    } else {
+        showToast('No se pudo aprobar ninguna solicitud.', 'error');
+    }
 }
 
-function approveEnrollmentRequest(enrollmentId) {
-    approveEnrollmentRequests([enrollmentId]);
+async function approveEnrollmentRequest(enrollmentId) {
+    await approveEnrollmentRequests([enrollmentId]);
 }
 
-function approveSelectedEnrollmentRequests() {
-    approveEnrollmentRequests(state.ui.enrollmentReviewSelectedIds);
+async function approveSelectedEnrollmentRequests() {
+    await approveEnrollmentRequests(state.ui.enrollmentReviewSelectedIds);
 }
 
 function rejectEnrollmentRequests(ids, reason, correction) {
@@ -2389,9 +2481,10 @@ function rejectSelectedEnrollmentRequests() {
 
 function getEnrollmentReviewDocumentsCount(item) {
     const docs = asObject(item.documents);
-    return ['schoolCertificate', 'guardianIdentityCopy', 'studentIdentityCard', 'healthAffiliationCertificate']
-        .filter(k => !!docs[k])
-        .length;
+    const standard = ['schoolCertificate', 'guardianIdentityCopy', 'studentIdentityCard', 'healthAffiliationCertificate']
+        .filter(k => !!String((docs[k] || {}).name || '').trim()).length;
+    const additional = asArray(docs.additional).filter(a => !!String((a.file || {}).name || '').trim()).length;
+    return standard + additional;
 }
 
 function enrollmentFormatBytes(bytes) {
@@ -2401,43 +2494,186 @@ function enrollmentFormatBytes(bytes) {
     return (value / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
+function openDataUrlViewer(dataUrl, title) {
+    const url = String(dataUrl || '');
+    const isImage = /^data:image\//i.test(url);
+    const isPdf = /^data:application\/pdf/i.test(url);
+    if (!isImage && !isPdf) {
+        return window.open(url, '_blank');
+    }
+    if (isImage) {
+        openModal(escapeHtml(title || 'Vista previa'), `
+            <div style="text-align:center">
+                <img src="${escapeHtml(url)}" style="max-width:100%;max-height:70vh;border-radius:8px;" alt="${escapeHtml(title || '')}">
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+                <a class="btn btn-teal" href="${escapeHtml(url)}" download="${escapeHtml(title || 'adjunto')}">Descargar</a>
+                <button class="btn btn-outline" onclick="closeModal()">Cerrar</button>
+            </div>
+        `);
+    } else {
+        openModal(escapeHtml(title || 'Vista previa PDF'), `
+            <div style="width:100%;height:60vh;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                <iframe src="${escapeHtml(url)}" style="width:100%;height:100%;border:0"></iframe>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+                <a class="btn btn-teal" href="${escapeHtml(url)}" download="${escapeHtml(title || 'adjunto.pdf')}">Descargar</a>
+                <button class="btn btn-outline" onclick="closeModal()">Cerrar</button>
+            </div>
+        `);
+    }
+}
+
 function openEnrollmentAttachmentsModal(enrollmentId) {
     const id = String(enrollmentId || '');
     const item = readEnrollmentRequestsStorage().find(x => String((x || {}).id || '') === id);
     if (!item) return showToast('Solicitud no encontrada', 'error');
     const docs = asObject(item.documents);
-    const rows = [
+
+    const standardDefs = [
         { key: 'schoolCertificate', label: 'Certificado de escolaridad' },
         { key: 'guardianIdentityCopy', label: 'Documento de identidad del acudiente' },
         { key: 'studentIdentityCard', label: 'Tarjeta de identidad' },
         { key: 'healthAffiliationCertificate', label: 'Certificado de afiliación a salud (opcional)' }
-    ].map(def => {
+    ];
+
+    const cards = [];
+
+    standardDefs.forEach(def => {
         const file = asObject(docs[def.key]);
         const hasFile = !!String(file.name || '').trim();
         const hasDataUrl = hasFile && /^data:/i.test(String(file.dataUrl || ''));
-        const meta = hasFile
-            ? `${String(file.type || 'archivo')} · ${enrollmentFormatBytes(file.size)}`
-            : 'No adjunto';
-        const actions = hasDataUrl
-            ? `<a class="btn btn-sm btn-outline" href="${escapeHtml(String(file.dataUrl || ''))}" target="_blank" rel="noopener noreferrer">Abrir</a>
-               <a class="btn btn-sm btn-outline" href="${escapeHtml(String(file.dataUrl || ''))}" download="${escapeHtml(String(file.name || 'adjunto'))}">Descargar</a>`
-            : '<span class="muted">Sin vista previa</span>';
-        return `<tr>
-            <td>${escapeHtml(def.label)}</td>
-            <td>${hasFile ? escapeHtml(String(file.name || '')) : '<span class="muted">No adjunto</span>'}</td>
-            <td>${escapeHtml(meta)}</td>
-            <td style="white-space:nowrap">${actions}</td>
-        </tr>`;
-    }).join('');
+        const meta = hasFile ? `${escapeHtml(String(file.type || 'archivo'))} · ${enrollmentFormatBytes(file.size)}` : 'No adjunto';
 
-    openModal('Adjuntos de matricula', `
-        <div class="table-wrap">
-            <table class="simple-table">
-                <thead><tr><th>Documento</th><th>Archivo</th><th>Detalle</th><th>Acción</th></tr></thead>
-                <tbody>${rows}</tbody>
-            </table>
+        let preview = '';
+        if (hasDataUrl) {
+            const isImage = /^data:image\//i.test(String(file.dataUrl || ''));
+            const isPdf = /^data:application\/pdf/i.test(String(file.dataUrl || ''));
+            if (isImage) {
+                preview = `<div style="height:160px;background:#f6f7f9;border-radius:8px;overflow:hidden;cursor:pointer" onclick="openDataUrlViewer('${escapeJsSingle(String(file.dataUrl || ''))}', '${escapeJsSingle(def.label)}')"><img src="${escapeHtml(String(file.dataUrl || ''))}" style="width:100%;height:100%;object-fit:cover"></div>`;
+            } else if (isPdf) {
+                preview = `<div style="height:160px;background:#f6f7f9;border-radius:8px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer" onclick="openDataUrlViewer('${escapeJsSingle(String(file.dataUrl || ''))}', '${escapeJsSingle(def.label)}')"><svg width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span style="font-size:13px;color:var(--text-dark)">Ver PDF</span></div>`;
+            } else {
+                preview = `<div style="height:160px;background:#f6f7f9;border-radius:8px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer" onclick="openDataUrlViewer('${escapeJsSingle(String(file.dataUrl || ''))}', '${escapeJsSingle(def.label)}')"><svg width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span style="font-size:13px;color:var(--text-dark)">Ver archivo</span></div>`;
+            }
+        } else {
+            preview = `<div style="height:160px;background:#f6f7f9;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text-light);font-size:13px">Sin vista previa</div>`;
+        }
+
+        const actions = hasDataUrl
+            ? `<div style="display:flex;gap:6px;margin-top:10px"><a class="btn btn-sm btn-outline" href="${escapeHtml(String(file.dataUrl || ''))}" download="${escapeHtml(String(file.name || 'adjunto'))}">Descargar</a><button class="btn btn-sm btn-outline" onclick="openDataUrlViewer('${escapeJsSingle(String(file.dataUrl || ''))}', '${escapeJsSingle(def.label)}')">Ver</button></div>`
+            : (hasFile ? `<div style="display:flex;gap:6px;margin-top:10px"><span class="muted" style="font-size:12px">Archivo demasiado grande para vista previa</span></div>` : `<div style="display:flex;gap:6px;margin-top:10px"><span class="muted" style="font-size:12px">No adjunto</span></div>`);
+
+        cards.push(`<div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:#fff">
+            <div style="font-weight:600;font-size:13px;margin-bottom:8px">${escapeHtml(def.label)}</div>
+            ${preview}
+            <div style="margin-top:8px;font-size:12px;color:var(--text-light)">${hasFile ? escapeHtml(String(file.name || '')) + ' · ' + escapeHtml(meta) : escapeHtml(meta)}</div>
+            ${actions}
+        </div>`);
+    });
+
+    asArray(docs.additional).forEach((addItem, idx) => {
+        const file = asObject((addItem || {}).file);
+        const label = String((addItem || {}).label || `Adjunto adicional ${idx + 1}`);
+        const hasFile = !!String(file.name || '').trim();
+        const hasDataUrl = hasFile && /^data:/i.test(String(file.dataUrl || ''));
+        const meta = hasFile ? `${escapeHtml(String(file.type || 'archivo'))} · ${enrollmentFormatBytes(file.size)}` : 'No adjunto';
+
+        let preview = '';
+        if (hasDataUrl) {
+            const isImage = /^data:image\//i.test(String(file.dataUrl || ''));
+            const isPdf = /^data:application\/pdf/i.test(String(file.dataUrl || ''));
+            if (isImage) {
+                preview = `<div style="height:160px;background:#f6f7f9;border-radius:8px;overflow:hidden;cursor:pointer" onclick="openDataUrlViewer('${escapeJsSingle(String(file.dataUrl || ''))}', '${escapeJsSingle(label)}')"><img src="${escapeHtml(String(file.dataUrl || ''))}" style="width:100%;height:100%;object-fit:cover"></div>`;
+            } else if (isPdf) {
+                preview = `<div style="height:160px;background:#f6f7f9;border-radius:8px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer" onclick="openDataUrlViewer('${escapeJsSingle(String(file.dataUrl || ''))}', '${escapeJsSingle(label)}')"><svg width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span style="font-size:13px;color:var(--text-dark)">Ver PDF</span></div>`;
+            } else {
+                preview = `<div style="height:160px;background:#f6f7f9;border-radius:8px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer" onclick="openDataUrlViewer('${escapeJsSingle(String(file.dataUrl || ''))}', '${escapeJsSingle(label)}')"><svg width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span style="font-size:13px;color:var(--text-dark)">Ver archivo</span></div>`;
+            }
+        } else {
+            preview = `<div style="height:160px;background:#f6f7f9;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text-light);font-size:13px">Sin vista previa</div>`;
+        }
+
+        const actions = hasDataUrl
+            ? `<div style="display:flex;gap:6px;margin-top:10px"><a class="btn btn-sm btn-outline" href="${escapeHtml(String(file.dataUrl || ''))}" download="${escapeHtml(String(file.name || 'adjunto'))}">Descargar</a><button class="btn btn-sm btn-outline" onclick="openDataUrlViewer('${escapeJsSingle(String(file.dataUrl || ''))}', '${escapeJsSingle(label)}')">Ver</button></div>`
+            : (hasFile ? `<div style="display:flex;gap:6px;margin-top:10px"><span class="muted" style="font-size:12px">Archivo demasiado grande para vista previa</span></div>` : `<div style="display:flex;gap:6px;margin-top:10px"><span class="muted" style="font-size:12px">No adjunto</span></div>`);
+
+        cards.push(`<div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:#fff">
+            <div style="font-weight:600;font-size:13px;margin-bottom:8px">${escapeHtml(label)}</div>
+            ${preview}
+            <div style="margin-top:8px;font-size:12px;color:var(--text-light)">${hasFile ? escapeHtml(String(file.name || '')) + ' · ' + escapeHtml(meta) : escapeHtml(meta)}</div>
+            ${actions}
+        </div>`);
+    });
+
+    const grid = cards.length
+        ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">${cards.join('')}</div>`
+        : '<div class="muted">No hay adjuntos en esta solicitud.</div>';
+
+    openModal('Adjuntos de matrícula', grid);
+}
+
+function openEnrollmentDetailModal(enrollmentId) {
+    const id = String(enrollmentId || '');
+    const item = readEnrollmentRequestsStorage().find(x => String((x || {}).id || '') === id);
+    if (!item) return showToast('Solicitud no encontrada', 'error');
+
+    const s = asObject(item.student);
+    const a = asObject(item.academic);
+    const g = asObject(item.guardian);
+    const extra = asArray(item.extra);
+    const notes = String(item.notes || '');
+    const created = item.createdAt ? new Date(item.createdAt).toLocaleString('es-CO') : '-';
+    const status = enrollmentStatusLabel(item.status);
+
+    const field = (label, value) => `<div style="margin-bottom:6px"><span style="color:var(--text-light);font-size:12px">${escapeHtml(label)}</span><div style="font-size:13px;color:var(--text-dark);font-weight:500">${escapeHtml(String(value || '—'))}</div></div>`;
+
+    let extraHtml = '';
+    if (extra.length) {
+        extraHtml = `<div style="margin-top:12px"><div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--gold)">Campos adicionales</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${extra.map(e => field(e.label || e.id, e.value)).join('')}</div></div>`;
+    }
+
+    const notesHtml = notes ? `<div style="margin-top:12px"><div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--gold)">Observaciones</div><div style="font-size:13px;color:var(--text-dark);background:#f8f9fb;border-radius:6px;padding:10px">${escapeHtml(notes)}</div></div>` : '';
+
+    const html = `
+        <div style="margin-bottom:12px">
+            <span style="display:inline-block;padding:4px 10px;border-radius:20px;background:rgba(184,147,58,0.12);color:var(--gold);font-size:12px;font-weight:600">${escapeHtml(status)}</span>
+            <span style="font-size:12px;color:var(--text-light);margin-left:8px">${escapeHtml(created)}</span>
         </div>
-    `);
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+            <div style="border:1px solid var(--border);border-radius:10px;padding:14px;background:#fff">
+                <div style="font-weight:700;font-size:13px;margin-bottom:10px;color:var(--gold)">Estudiante</div>
+                ${field('Nombre', s.name)}
+                ${field('Apellidos', s.lastName)}
+                ${field('Documento', s.document)}
+                ${field('Fecha de nacimiento', s.birthDate)}
+                ${field('Género', s.gender)}
+            </div>
+            <div style="border:1px solid var(--border);border-radius:10px;padding:14px;background:#fff">
+                <div style="font-weight:700;font-size:13px;margin-bottom:10px;color:var(--gold)">Datos académicos</div>
+                ${field('Nivel', a.level)}
+                ${field('Grado', a.grade)}
+            </div>
+            <div style="border:1px solid var(--border);border-radius:10px;padding:14px;background:#fff;grid-column:1 / -1">
+                <div style="font-weight:700;font-size:13px;margin-bottom:10px;color:var(--gold)">Acudiente</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+                    ${field('Nombre', g.name)}
+                    ${field('Parentesco', g.relation)}
+                    ${field('Teléfono', g.phone)}
+                    ${field('Correo', g.email)}
+                    ${field('Dirección', g.address)}
+                </div>
+            </div>
+        </div>
+        ${notesHtml}
+        ${extraHtml}
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+            <button class="btn btn-outline" onclick="closeModal()">Cerrar</button>
+            <button class="btn btn-teal" onclick="openEnrollmentAttachmentsModal('${escapeJsSingle(id)}');closeModal()">Ver adjuntos</button>
+        </div>
+    `;
+
+    openModal('Detalle de solicitud de matrícula', html);
 }
 
 function renderEnrollmentReviewSection() {
@@ -2530,8 +2766,9 @@ function renderEnrollmentReviewSection() {
                 <td>${escapeHtml(guardian)}</td>
                 <td>${escapeHtml(statusLabel)}</td>
                 <td>${escapeHtml(reviewText || '-')}</td>
-                <td><button class="btn btn-sm btn-outline" onclick="openEnrollmentAttachmentsModal('${escapeJsSingle(id)}')">Ver adjuntos (${docsCount})</button></td>
+                <td><button class="btn btn-sm btn-outline" onclick="openEnrollmentAttachmentsModal('${escapeJsSingle(id)}')">Adjuntos (${docsCount})</button></td>
                 <td style="white-space:nowrap">
+                    <button class="btn btn-sm btn-outline" onclick="openEnrollmentDetailModal('${escapeJsSingle(id)}')">Detalle</button>
                     <button class="btn btn-sm btn-outline" onclick="approveEnrollmentRequest('${escapeJsSingle(id)}')">Aprobar</button>
                     <button class="btn btn-sm btn-outline" onclick="rejectEnrollmentRequest('${escapeJsSingle(id)}')">Rechazar</button>
                 </td>
@@ -2658,6 +2895,10 @@ function deleteEnrollmentFormField(index) {
     const draft = getEnrollmentFormConfigDraft();
     const idx = parseInt(index || '-1', 10);
     if (idx < 0 || idx >= draft.length) return;
+    if (draft[idx].immutable) {
+        showToast('Este campo es obligatorio del sistema y no se puede eliminar.', 'error');
+        return;
+    }
     draft.splice(idx, 1);
     state.ui.enrollmentFormBuilderPage = Math.max(1, state.ui.enrollmentFormBuilderPage || 1);
     renderEnrollmentFormBuilderSection();
@@ -2685,6 +2926,511 @@ function persistEnrollmentFormBuilder() {
     showToast('Formulario de matrículas actualizado', 'success');
 }
 
+/* ── Gestión de horarios de estudiantes ───────────────────────── */
+
+const ENROLLMENT_SCHEDULE_PAGE_SIZE = 8;
+const ADMIN_SCHEDULE_MODAL_PAGE_SIZE = 5;
+
+let adminScheduleModalState = {
+    studentId: null,
+    currentPage: 1,
+    pageSize: ADMIN_SCHEDULE_MODAL_PAGE_SIZE
+};
+
+function getAllStudentsForSchedule() {
+    return asArray(state.students);
+}
+
+function getEnrollmentStudentSearch() {
+    return String((document.getElementById('enrollmentScheduleSearch') || {}).value || '').trim().toLowerCase();
+}
+
+function getEnrollmentStudentLevelFilter() {
+    return String((document.getElementById('enrollmentScheduleLevelFilter') || {}).value || 'all');
+}
+
+function setEnrollmentScheduleSearch(value) {
+    renderEnrollmentScheduleSection();
+}
+
+function setEnrollmentScheduleLevelFilter(value) {
+    renderEnrollmentScheduleSection();
+}
+
+async function openStudentScheduleModal(studentId) {
+    const sid = parseInt(studentId, 10);
+    if (!sid) return showToast('Estudiante no válido', 'error');
+    const student = asArray(state.students).find(s => String(s.id) === String(sid));
+    if (!student) return showToast('Estudiante no encontrado', 'error');
+
+    const enrollments = await api('/api/enrollments/student/' + sid).catch(() => []);
+    const schedules = await api('/api/schedules/student/' + sid).catch(() => []);
+    const allCourses = asArray(state.courses);
+
+    const enrolledCourseIds = new Set(asArray(enrollments).map(e => String(e.courseId || (e.course && e.course.id) || '')));
+
+    // Filtrar cursos por grado del estudiante
+    const studentGradeId = String((state.studentGrades || {})[String(sid)] || '');
+    const gradeName = studentGradeId ? getGradeNameById(studentGradeId) : '';
+    const availableCourses = allCourses.filter(c => {
+        const cid = String(c.id || '');
+        if (enrolledCourseIds.has(cid)) return false;
+        if (!studentGradeId) return true; // Si no tiene grado asignado, mostrar todos
+        const courseGradeId = String((state.courseGrades || {})[cid] || '');
+        return !courseGradeId || courseGradeId === studentGradeId;
+    });
+
+    // Obtener schedules de cursos disponibles para mostrar opciones
+    const courseSchedulesMap = {};
+    await Promise.all(availableCourses.map(async c => {
+        const sch = await api('/api/schedules/course/' + c.id).catch(() => []);
+        courseSchedulesMap[c.id] = Array.isArray(sch) ? sch : [];
+    }));
+
+    // Paginado de matriculaciones actuales
+    if (adminScheduleModalState.studentId !== sid) {
+        adminScheduleModalState.studentId = sid;
+        adminScheduleModalState.currentPage = 1;
+    }
+    const pageSize = adminScheduleModalState.pageSize;
+    const allScheduleRows = asArray(schedules).map(sch => {
+        const courseName = sch.course ? sch.course.name : (allCourses.find(c => String(c.id) === String((sch.course || {}).id || sch.courseId)) || {}).name || 'Curso';
+        return {
+            html: `<tr>
+                <td>${escapeHtml(courseName)}</td>
+                <td>${escapeHtml(sch.day || '-')}</td>
+                <td>${escapeHtml(String(sch.startTime || '').slice(0, 5))} - ${escapeHtml(String(sch.endTime || '').slice(0, 5))}</td>
+                <td style="white-space:nowrap">
+                    <button class="btn btn-sm btn-outline" onclick="adminRemoveStudentEnrollment(${sid}, ${sch.course ? sch.course.id : sch.courseId || 0})">Retirar</button>
+                    <button class="btn btn-sm btn-outline" onclick="adminChangeStudentCourse(${sid}, ${sch.course ? sch.course.id : sch.courseId || 0})">Cambiar</button>
+                </td>
+            </tr>`,
+            sortKey: String(courseName)
+        };
+    });
+    const totalPages = Math.max(1, Math.ceil(allScheduleRows.length / pageSize));
+    const safePage = Math.max(1, Math.min(totalPages, adminScheduleModalState.currentPage));
+    adminScheduleModalState.currentPage = safePage;
+    const startIdx = (safePage - 1) * pageSize;
+    const pagedRows = allScheduleRows.slice(startIdx, startIdx + pageSize);
+    const scheduleRows = pagedRows.map(r => r.html).join('');
+    const pagerControls = allScheduleRows.length > pageSize
+        ? `<div class="pager" style="margin-top:8px">
+            <button class="btn btn-sm btn-outline" ${safePage <= 1 ? 'disabled' : ''} onclick="adminScheduleModalPrevPage(${sid})">Anterior</button>
+            <span>${safePage}/${totalPages}</span>
+            <button class="btn btn-sm btn-outline" ${safePage >= totalPages ? 'disabled' : ''} onclick="adminScheduleModalNextPage(${sid})">Siguiente</button>
+        </div>`
+        : '';
+
+    const courseOptions = availableCourses.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.courseCode || 'Sin código')})</option>`).join('');
+
+    openModal(`Horario de ${escapeHtml(userNameFrom(student))}${gradeName ? ' — ' + escapeHtml(gradeName) : ''}`, `
+        <div style="margin-bottom:14px">
+            <div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--gold)">Matriculaciones actuales</div>
+            ${scheduleRows ? `<table class="simple-table"><thead><tr><th>Curso</th><th>Día</th><th>Hora</th><th>Acción</th></tr></thead><tbody>${scheduleRows}</tbody></table>${pagerControls}` : '<div class="muted">Sin matriculaciones.</div>'}
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:14px">
+            <div style="font-weight:700;font-size:13px;margin-bottom:10px;color:var(--gold)">Agregar curso</div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Curso</label>
+                    <select class="form-input" id="adminAddCourseSelect" onchange="adminRenderScheduleOptionsForCourse(this.value, ${sid})">${courseOptions || '<option value="">Sin cursos disponibles</option>'}</select>
+                </div>
+                <div class="form-group" id="adminScheduleSelectGroup" style="display:none">
+                    <label class="form-label">Horario</label>
+                    <select class="form-input" id="adminAddScheduleSelect"></select>
+                </div>
+            </div>
+            <div id="adminScheduleConflictMsg" class="alert alert-error" style="display:none;margin-top:10px"></div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+                <button class="btn btn-outline" onclick="closeModal()">Cerrar</button>
+                <button class="btn btn-teal" id="adminAddEnrollmentBtn" onclick="adminAddStudentEnrollment(${sid})" ${!courseOptions ? 'disabled' : ''}>Agregar matrícula</button>
+            </div>
+        </div>
+    `);
+
+    // Pre-renderizar schedules para el primer curso disponible
+    if (availableCourses.length) {
+        adminRenderScheduleOptionsForCourse(availableCourses[0].id, sid);
+    }
+}
+
+function adminScheduleModalPrevPage(studentId) {
+    adminScheduleModalState.currentPage = Math.max(1, parseInt(adminScheduleModalState.currentPage || '1', 10) - 1);
+    openStudentScheduleModal(studentId);
+}
+
+function adminScheduleModalNextPage(studentId) {
+    adminScheduleModalState.currentPage = parseInt(adminScheduleModalState.currentPage || '1', 10) + 1;
+    openStudentScheduleModal(studentId);
+}
+
+function adminSchColor(index) {
+    const PALETTE = [
+        { bg: 'rgba(74,111,165,0.12)', border: '#4A6FA5', text: '#2E4A6E' },
+        { bg: 'rgba(42,157,143,0.12)', border: '#2A9D8F', text: '#1D6B62' },
+        { bg: 'rgba(233,196,106,0.18)', border: '#C8962E', text: '#7A5A1D' },
+        { bg: 'rgba(155,89,182,0.12)', border: '#9B59B6', text: '#5B2577' },
+        { bg: 'rgba(39,174,96,0.12)', border: '#27AE60', text: '#1A6B3C' },
+        { bg: 'rgba(231,76,60,0.10)', border: '#E74C3C', text: '#7B1D13' },
+        { bg: 'rgba(52,152,219,0.12)', border: '#3498DB', text: '#1A5276' },
+        { bg: 'rgba(243,156,18,0.12)', border: '#F39C12', text: '#7A4B00' }
+    ];
+    return PALETTE[(index || 0) % PALETTE.length];
+}
+
+function adminRenderScheduleCalendar(schedules, containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const DAY_ORDER = ['Lunes','Martes','Miercoles','Jueves','Viernes','Sabado'];
+    const DAY_SHORT = {Lunes:'Lun',Martes:'Mar',Miercoles:'Mié',Jueves:'Jue',Viernes:'Vie',Sabado:'Sáb'};
+    function toMin(t) { if(!t)return 0; const[h,m]=t.split(':').map(Number); return h*60+(m||0); }
+
+    const hasSchedules = schedules && schedules.length > 0;
+    const allMins = hasSchedules ? schedules.flatMap(s => [toMin(s.startTime),toMin(s.endTime)]) : [];
+    const startHour = hasSchedules ? Math.min(6, Math.floor(Math.min(...allMins)/60)) : 7;
+    const endHour = hasSchedules ? Math.max(20, Math.ceil(Math.max(...allMins)/60)) : 19;
+    const minTime = startHour*60, maxTime = endHour*60, PX = 2.4, totalH = (maxTime-minTime)*PX;
+
+    const courseIds = [...new Set(schedules.map(s=>s.course&&s.course.id).filter(Boolean))];
+    const colorMap = {}; courseIds.forEach((id,i) => colorMap[id]=adminSchColor(i));
+
+    let guideHtml='', timeLabelsHtml='';
+    for (let h=startHour;h<=endHour;h++) {
+        const top=(h*60-minTime)*PX;
+        guideHtml+=`<div class="wcal-guide" style="top:${top}px"></div>`;
+        timeLabelsHtml+=`<div class="wcal-time-label" style="top:${top}px">${String(h).padStart(2,'0')}:00</div>`;
+    }
+    for (let h=startHour;h<=endHour;h++) {
+        const top=((h*60+30)-minTime)*PX;
+        if (top < totalH) guideHtml+=`<div class="wcal-guide" style="top:${top}px;opacity:0.5"></div>`;
+    }
+
+    let colsHtml='';
+    DAY_ORDER.forEach(day => {
+        const daySch=schedules.filter(s=>s.day===day); let blocksHtml='';
+        daySch.forEach(s => {
+            const sMin=(toMin(s.startTime)-minTime)*PX;
+            const height=Math.max((toMin(s.endTime)-toMin(s.startTime))*PX-2,22);
+            const c=colorMap[s.course&&s.course.id]||adminSchColor(0);
+            const name=s.course?s.course.name:'\u2014';
+            const code=s.courseCode || s.code || '';
+            blocksHtml+=`<div class="wcal-block" style="top:${sMin}px;height:${height}px;background:${c.bg};border-left:3px solid ${c.border};" title="${escapeHtml(name)}${code?' \u00b7 '+escapeHtml(code):''}\n${s.startTime} \u2013 ${s.endTime}">
+                <span class="wcal-block-name" style="color:${c.text}">${escapeHtml(name)}</span>
+                <span class="wcal-block-time">${s.startTime} \u2013 ${s.endTime}</span>
+                ${code?`<span class="wcal-block-teacher">${escapeHtml(code)}</span>`:''}
+            </div>`;
+        });
+        colsHtml+=`<div class="wcal-day-col"><div class="wcal-day-header"><span class="wcal-day-full">${day}</span><span class="wcal-day-short">${DAY_SHORT[day]||day}</span></div><div class="wcal-day-body" style="height:${totalH}px">${guideHtml}${blocksHtml}</div></div>`;
+    });
+
+    container.innerHTML = `<div class="wcal-root"><div class="wcal-time-col" style="width:56px"><div class="wcal-corner" style="height:48px"></div><div class="wcal-time-track" style="height:${totalH}px">${timeLabelsHtml}</div></div><div class="wcal-grid">${colsHtml}</div></div>`;
+}
+
+function adminCheckScheduleConflict(newSch, existingSchedules) {
+    if (!newSch || !newSch.day || !newSch.startTime || !newSch.endTime) return null;
+    const toMin = (t) => { if(!t)return 0; const[h,m]=t.split(':').map(Number); return h*60+(m||0); };
+    const newStart = toMin(newSch.startTime);
+    const newEnd = toMin(newSch.endTime);
+    for (const ex of existingSchedules) {
+        if (ex.day !== newSch.day) continue;
+        const exStart = toMin(ex.startTime);
+        const exEnd = toMin(ex.endTime);
+        if (newStart < exEnd && newEnd > exStart) {
+            return ex;
+        }
+    }
+    return null;
+}
+
+async function adminRenderScheduleOptionsForCourse(courseId, studentId) {
+    const scheduleGroup = document.getElementById('adminScheduleSelectGroup');
+    const scheduleSelect = document.getElementById('adminAddScheduleSelect');
+    const conflictMsg = document.getElementById('adminScheduleConflictMsg');
+    const addBtn = document.getElementById('adminAddEnrollmentBtn');
+    if (!scheduleGroup || !scheduleSelect) return;
+
+    const cid = parseInt(courseId, 10);
+    if (!cid) {
+        scheduleGroup.style.display = 'none';
+        if (addBtn) addBtn.disabled = true;
+        return;
+    }
+
+    // Cargar horarios actuales del estudiante para detectar conflictos
+    const currentSchedules = await api('/api/schedules/student/' + studentId).catch(() => []);
+
+    api('/api/schedules/course/' + cid).then(sch => {
+        const schedules = Array.isArray(sch) ? sch : [];
+        if (!schedules.length) {
+            scheduleGroup.style.display = 'none';
+            scheduleSelect.innerHTML = '<option value="">Sin horarios</option>';
+            if (addBtn) addBtn.disabled = true;
+            return;
+        }
+
+        let allConflict = true;
+        scheduleSelect.innerHTML = schedules.map((s, idx) => {
+            const conflict = adminCheckScheduleConflict(s, asArray(currentSchedules));
+            if (!conflict) allConflict = false;
+            const time = `${escapeHtml(String(s.startTime || '').slice(0, 5))} - ${escapeHtml(String(s.endTime || '').slice(0, 5))}`;
+            const conflictLabel = conflict ? ' (CONFlicto)' : '';
+            return `<option value="${s.id}" data-conflict="${conflict ? '1' : '0'}">${escapeHtml(s.day || '-')} \u00b7 ${time}${conflictLabel}</option>`;
+        }).join('');
+
+        if (schedules.length > 1) {
+            scheduleGroup.style.display = '';
+        } else {
+            scheduleGroup.style.display = 'none';
+        }
+
+        // Seleccionar automáticamente el primer horario sin conflicto
+        const firstNonConflict = schedules.findIndex(s => !adminCheckScheduleConflict(s, asArray(currentSchedules)));
+        if (firstNonConflict >= 0) {
+            scheduleSelect.selectedIndex = firstNonConflict;
+        }
+
+        // Mostrar mensaje de conflicto si todos los horarios chocan
+        if (allConflict) {
+            if (conflictMsg) {
+                conflictMsg.style.display = '';
+                conflictMsg.textContent = 'Todos los horarios de este curso se cruzan con los actuales del estudiante. Selecciona otro curso.';
+            }
+            if (addBtn) addBtn.disabled = true;
+        } else {
+            if (conflictMsg) conflictMsg.style.display = 'none';
+            if (addBtn) addBtn.disabled = false;
+        }
+
+        // Validar conflicto al cambiar la selección manualmente
+        scheduleSelect.onchange = function() {
+            const selectedOpt = scheduleSelect.options[scheduleSelect.selectedIndex];
+            const hasConflict = selectedOpt && selectedOpt.dataset.conflict === '1';
+            if (hasConflict) {
+                if (conflictMsg) {
+                    conflictMsg.style.display = '';
+                    conflictMsg.textContent = 'El horario seleccionado se cruza con una clase actual del estudiante.';
+                }
+                if (addBtn) addBtn.disabled = true;
+            } else {
+                if (conflictMsg) conflictMsg.style.display = 'none';
+                if (addBtn) addBtn.disabled = false;
+            }
+        };
+    }).catch(() => {
+        scheduleGroup.style.display = 'none';
+        if (addBtn) addBtn.disabled = true;
+    });
+}
+
+async function adminChangeStudentCourse(studentId, oldCourseId) {
+    const sid = parseInt(studentId, 10);
+    const oldCid = parseInt(oldCourseId, 10);
+    if (!sid || !oldCid) return showToast('Datos incompletos', 'error');
+
+    const student = asArray(state.students).find(s => String(s.id) === String(sid));
+    if (!student) return showToast('Estudiante no encontrado', 'error');
+
+    const allCourses = asArray(state.courses);
+    const enrollments = await api('/api/enrollments/student/' + sid).catch(() => []);
+    const enrolledCourseIds = new Set(asArray(enrollments).map(e => String(e.courseId || (e.course && e.course.id) || '')));
+
+    const studentGradeId = String((state.studentGrades || {})[String(sid)] || '');
+    const availableCourses = allCourses.filter(c => {
+        const cid = String(c.id || '');
+        if (enrolledCourseIds.has(cid)) return false;
+        if (cid === String(oldCid)) return false;
+        if (!studentGradeId) return true;
+        const courseGradeId = String((state.courseGrades || {})[cid] || '');
+        return !courseGradeId || courseGradeId === studentGradeId;
+    });
+
+    const courseOptions = availableCourses.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.courseCode || 'Sin código')})</option>`).join('');
+
+    openModal(`Cambiar curso de ${escapeHtml(userNameFrom(student))}`, `
+        <div style="margin-bottom:14px">
+            <div class="alert alert-info">Se retirará al estudiante del curso actual y se matriculará en el nuevo curso seleccionado.</div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Nuevo curso</label>
+                    <select class="form-input" id="adminChangeCourseSelect">${courseOptions || '<option value="">Sin cursos disponibles</option>'}</select>
+                </div>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+                <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+                <button class="btn btn-teal" onclick="adminDoChangeCourse(${sid}, ${oldCid})" ${!courseOptions ? 'disabled' : ''}>Confirmar cambio</button>
+            </div>
+        </div>
+    `);
+}
+
+async function adminDoChangeCourse(studentId, oldCourseId) {
+    const select = document.getElementById('adminChangeCourseSelect');
+    if (!select || !select.value) return showToast('Selecciona un curso', 'error');
+    const newCourseId = parseInt(select.value, 10);
+    try {
+        // 1. Eliminar matrícula anterior
+        const enrollments = await api('/api/enrollments/student/' + studentId).catch(() => []);
+        const target = asArray(enrollments).find(e => String(e.courseId || (e.course && e.course.id)) === String(oldCourseId));
+        if (target && target.id) {
+            await api('/api/enrollments/' + target.id, { method: 'DELETE', headers: headers() });
+        }
+        // 2. Crear nueva matrícula
+        await api('/api/enrollments', {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify({
+                studentId: parseInt(studentId, 10),
+                courseId: newCourseId,
+                enrollmentDate: new Date().toISOString()
+            })
+        });
+        showToast('Curso cambiado correctamente', 'success');
+        await openStudentScheduleModal(studentId);
+        renderEnrollmentScheduleSection();
+    } catch (e) {
+        showToast('Error al cambiar curso: ' + (e.message || ''), 'error');
+    }
+}
+
+async function adminRemoveStudentEnrollment(studentId, courseId) {
+    if (!studentId || !courseId) return showToast('Datos incompletos', 'error');
+    try {
+        const enrollments = await api('/api/enrollments/student/' + studentId).catch(() => []);
+        const target = asArray(enrollments).find(e => String(e.courseId || (e.course && e.course.id)) === String(courseId));
+        if (target && target.id) {
+            await api('/api/enrollments/' + target.id, { method: 'DELETE', headers: headers() });
+            showToast('Matrícula eliminada', 'success');
+        }
+        await openStudentScheduleModal(studentId);
+        renderEnrollmentScheduleSection();
+    } catch (e) {
+        showToast('Error al eliminar matrícula: ' + (e.message || ''), 'error');
+    }
+}
+
+async function adminAddStudentEnrollment(studentId) {
+    const select = document.getElementById('adminAddCourseSelect');
+    if (!select || !select.value) return showToast('Selecciona un curso', 'error');
+    try {
+        await api('/api/enrollments', {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify({
+                studentId: parseInt(studentId, 10),
+                courseId: parseInt(select.value, 10),
+                enrollmentDate: new Date().toISOString()
+            })
+        });
+        showToast('Matrícula agregada', 'success');
+        await openStudentScheduleModal(studentId);
+        renderEnrollmentScheduleSection();
+    } catch (e) {
+        showToast('Error al agregar matrícula: ' + (e.message || ''), 'error');
+    }
+}
+
+async function adminResetStudentSchedule(studentId) {
+    const sid = parseInt(studentId, 10);
+    if (!sid) return;
+    openConfirmModal('Reiniciar horario', '¿Eliminar todas las matriculaciones de este estudiante? Podrá volver a escoger horario desde su portal.', async () => {
+        try {
+            const enrollments = await api('/api/enrollments/student/' + sid).catch(() => []);
+            for (const enr of asArray(enrollments)) {
+                if (enr.id) {
+                    await api('/api/enrollments/' + enr.id, { method: 'DELETE', headers: headers() }).catch(() => {});
+                }
+            }
+            showToast('Horario reiniciado correctamente', 'success');
+            renderEnrollmentScheduleSection();
+        } catch (e) {
+            showToast('Error al reiniciar horario', 'error');
+        }
+    }, 'Reiniciar');
+}
+
+function renderEnrollmentScheduleSection() {
+    const tableEl = document.getElementById('enrollmentScheduleTable');
+    const pagerEl = document.getElementById('enrollmentSchedulePager');
+    if (!tableEl) return;
+
+    const allStudents = getAllStudentsForSchedule();
+    const query = getEnrollmentStudentSearch();
+    const levelFilter = getEnrollmentStudentLevelFilter();
+
+    const levelOptions = Array.from(new Set(allStudents.map(s => {
+        const sid = String(s.id || '');
+        const levelId = String((state.studentLevels || {})[sid] || '');
+        return levelId ? getLevelNameById(levelId) : '';
+    }).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+    fillSelect('enrollmentScheduleLevelFilter', levelOptions.map(v => ({ id: v, name: v })), l => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.name)}</option>`, 'Todos los niveles');
+    const levelEl = document.getElementById('enrollmentScheduleLevelFilter');
+    if (levelEl) levelEl.value = levelFilter === 'all' ? '' : levelFilter;
+
+    const filtered = allStudents.filter(s => {
+        const sid = String(s.id || '');
+        const name = userNameFrom(s);
+        const code = String(s.studentCode || '');
+        const searchOk = !query || `${name} ${code}`.toLowerCase().includes(query);
+        const levelId = String((state.studentLevels || {})[sid] || '');
+        const levelName = levelId ? getLevelNameById(levelId) : '';
+        const levelOk = levelFilter === 'all' || levelName === levelFilter;
+        return searchOk && levelOk;
+    });
+
+    const paged = paginateItems(filtered, state.ui.enrollmentSchedulePage, ENROLLMENT_SCHEDULE_PAGE_SIZE);
+    state.ui.enrollmentSchedulePage = paged.page;
+
+    tableEl.innerHTML = paged.items.length
+        ? `<table class="simple-table"><thead><tr>
+            <th>Estudiante</th>
+            <th>Código</th>
+            <th>Nivel/Grado</th>
+            <th>Matriculaciones</th>
+            <th>Acciones</th>
+        </tr></thead><tbody>${paged.items.map(s => {
+            const sid = String(s.id || '');
+            const name = userNameFrom(s);
+            const code = String(s.studentCode || 'Sin código');
+            const levelId = String((state.studentLevels || {})[sid] || '');
+            const gradeId = String((state.studentGrades || {})[sid] || '');
+            const level = levelId ? getLevelNameById(levelId) : 'Sin nivel';
+            const grade = gradeId ? getGradeNameById(gradeId) : 'Sin grado';
+            const enrCount = asArray(state.enrollments).filter(e => String(e.studentId || ((e.student || {}).id)) === sid).length;
+            return `<tr>
+                <td>${escapeHtml(name)}</td>
+                <td>${escapeHtml(code)}</td>
+                <td>${escapeHtml(level)} · ${escapeHtml(grade)}</td>
+                <td>${enrCount} curso(s)</td>
+                <td style="white-space:nowrap">
+                    <button class="btn btn-sm btn-outline" onclick="openStudentScheduleModal(${sid})">Ver horario</button>
+                    <button class="btn btn-sm btn-outline" onclick="adminResetStudentSchedule(${sid})">Reiniciar</button>
+                </td>
+            </tr>`;
+        }).join('')}</tbody></table>`
+        : '<div class="muted" style="padding:10px">No hay estudiantes registrados.</div>';
+
+    if (pagerEl) {
+        pagerEl.innerHTML = `
+            <button class="btn btn-sm btn-outline" ${paged.page <= 1 ? 'disabled' : ''} onclick="enrollmentSchedulePrevPage()">Anterior</button>
+            <span>${paged.page}/${paged.totalPages}</span>
+            <button class="btn btn-sm btn-outline" ${paged.page >= paged.totalPages ? 'disabled' : ''} onclick="enrollmentScheduleNextPage()">Siguiente</button>
+        `;
+    }
+}
+
+function enrollmentSchedulePrevPage() {
+    state.ui.enrollmentSchedulePage = Math.max(1, parseInt(state.ui.enrollmentSchedulePage || '1', 10) - 1);
+    renderEnrollmentScheduleSection();
+}
+
+function enrollmentScheduleNextPage() {
+    state.ui.enrollmentSchedulePage = parseInt(state.ui.enrollmentSchedulePage || '1', 10) + 1;
+    renderEnrollmentScheduleSection();
+}
+
 function renderEnrollmentFormBuilderSection() {
     const listEl = document.getElementById('enrollmentFormBuilderList');
     if (!listEl) return;
@@ -2700,19 +3446,42 @@ function renderEnrollmentFormBuilderSection() {
         ? paged.items.map(item => {
             const absoluteIndex = draft.findIndex(f => String(f.id) === String(item.id));
             const isSelect = String(item.type) === 'select';
-            return `<div class="card-check" style="display:block;padding:10px;margin-bottom:8px">
+            const isImmutable = !!item.immutable;
+            const disabledAttr = isImmutable ? 'disabled' : '';
+            const sectionInput = isImmutable
+                ? `<input class="form-input" value="${escapeHtml(item.section)}" disabled title="Campo del sistema">`
+                : `<input class="form-input" value="${escapeHtml(item.section)}" oninput="updateEnrollmentFormField('${absoluteIndex}','section',this.value,false)">`;
+            const typeInput = isImmutable
+                ? `<select class="form-input" disabled title="Campo del sistema">${typeOptions.map(t => `<option value="${t}" ${String(item.type) === t ? 'selected' : ''}>${t}</option>`).join('')}</select>`
+                : `<select class="form-input" onchange="updateEnrollmentFormField('${absoluteIndex}','type',this.value)">${typeOptions.map(t => `<option value="${t}" ${String(item.type) === t ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+            const labelInput = isImmutable
+                ? `<input class="form-input" value="${escapeHtml(item.label)}" disabled title="Campo del sistema">`
+                : `<input class="form-input" value="${escapeHtml(item.label)}" oninput="updateEnrollmentFormField('${absoluteIndex}','label',this.value,false)">`;
+            const placeholderInput = isImmutable
+                ? `<input class="form-input" value="${escapeHtml(item.placeholder)}" disabled title="Campo del sistema">`
+                : `<input class="form-input" value="${escapeHtml(item.placeholder)}" oninput="updateEnrollmentFormField('${absoluteIndex}','placeholder',this.value,false)">`;
+            const optionsInput = isSelect && !isImmutable
+                ? `<div class="form-group" style="margin-bottom:6px"><label class="form-label">Opciones (coma)</label><input class="form-input" value="${escapeHtml(asArray(item.options).join(', '))}" oninput="updateEnrollmentFormField('${absoluteIndex}','options',this.value,false)"></div>`
+                : (isSelect ? `<div class="form-group" style="margin-bottom:6px"><label class="form-label">Opciones (coma)</label><input class="form-input" value="${escapeHtml(asArray(item.options).join(', '))}" disabled title="Campo del sistema"></div>` : '');
+            const requiredCheckbox = isImmutable
+                ? `<label class="card-check" style="margin:0" title="Campo obligatorio del sistema"><input type="checkbox" checked disabled><span>Obligatorio</span></label>`
+                : `<label class="card-check" style="margin:0"><input type="checkbox" ${item.required ? 'checked' : ''} onchange="updateEnrollmentFormField('${absoluteIndex}','required',this.checked,false)"><span>Obligatorio</span></label>`;
+            const deleteBtn = isImmutable
+                ? `<span style="font-size:12px;color:var(--text-light);padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:#fafafa">Campo del sistema</span>`
+                : `<button class="btn btn-sm btn-outline" type="button" onclick="deleteEnrollmentFormField('${absoluteIndex}')">Eliminar</button>`;
+            return `<div class="card-check" style="display:block;padding:10px;margin-bottom:8px;${isImmutable ? 'border-left:3px solid var(--gold)' : ''}">
                 <div class="form-row" style="margin-bottom:6px">
-                    <div class="form-group"><label class="form-label">Sección</label><input class="form-input" value="${escapeHtml(item.section)}" oninput="updateEnrollmentFormField('${absoluteIndex}','section',this.value,false)"></div>
-                    <div class="form-group"><label class="form-label">Tipo</label><select class="form-input" onchange="updateEnrollmentFormField('${absoluteIndex}','type',this.value)">${typeOptions.map(t => `<option value="${t}" ${String(item.type) === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+                    <div class="form-group"><label class="form-label">Sección</label>${sectionInput}</div>
+                    <div class="form-group"><label class="form-label">Tipo</label>${typeInput}</div>
                 </div>
                 <div class="form-row" style="margin-bottom:6px">
-                    <div class="form-group"><label class="form-label">Etiqueta</label><input class="form-input" value="${escapeHtml(item.label)}" oninput="updateEnrollmentFormField('${absoluteIndex}','label',this.value,false)"></div>
-                    <div class="form-group"><label class="form-label">Placeholder</label><input class="form-input" value="${escapeHtml(item.placeholder)}" oninput="updateEnrollmentFormField('${absoluteIndex}','placeholder',this.value,false)"></div>
+                    <div class="form-group"><label class="form-label">Etiqueta</label>${labelInput}</div>
+                    <div class="form-group"><label class="form-label">Placeholder</label>${placeholderInput}</div>
                 </div>
-                ${isSelect ? `<div class="form-group" style="margin-bottom:6px"><label class="form-label">Opciones (coma)</label><input class="form-input" value="${escapeHtml(asArray(item.options).join(', '))}" oninput="updateEnrollmentFormField('${absoluteIndex}','options',this.value,false)"></div>` : ''}
+                ${optionsInput}
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-                    <label class="card-check" style="margin:0"><input type="checkbox" ${item.required ? 'checked' : ''} onchange="updateEnrollmentFormField('${absoluteIndex}','required',this.checked,false)"><span>Obligatorio</span></label>
-                    <button class="btn btn-sm btn-outline" type="button" onclick="deleteEnrollmentFormField('${absoluteIndex}')">Eliminar</button>
+                    ${requiredCheckbox}
+                    ${deleteBtn}
                 </div>
             </div>`;
         }).join('')
@@ -5076,8 +5845,20 @@ function getSurveyLiveSignature(survey) {
 function bindStorageListeners() {
     if (storageListenersBound) return;
     storageListenersBound = true;
-    window.addEventListener('storage', () => {
-        // backend-only: no sincronización por storage del navegador.
+    window.addEventListener('storage', ev => {
+        if (ev.key === 'educat_enrollment_requests') {
+            const panel = document.getElementById('panel-matriculas');
+            if (panel && panel.classList.contains('active')) {
+                renderEnrollmentReviewSection();
+                showToast('Nueva solicitud de matrícula recibida', 'success');
+            }
+        }
+        if (ev.key === 'educat_enrollment_form_config') {
+            const panel = document.getElementById('panel-matriculas');
+            if (panel && panel.classList.contains('active')) {
+                showToast('Configuración del formulario de matrículas actualizada', 'info');
+            }
+        }
     });
 }
 
@@ -7345,6 +8126,10 @@ function bindEvents() {
     bindClick('btnEnrollmentFormAddFile', () => callIfFn('addEnrollmentFormField', 'file'));
     bindClickIfFn('btnEnrollmentFormResetDefault', 'resetEnrollmentFormBuilderDefault');
     bindClickIfFn('btnEnrollmentFormSave', 'persistEnrollmentFormBuilder');
+    const enrollmentScheduleSearch = document.getElementById('enrollmentScheduleSearch');
+    if (enrollmentScheduleSearch) enrollmentScheduleSearch.addEventListener('input', () => callIfFn('renderEnrollmentScheduleSection'));
+    const enrollmentScheduleLevelFilter = document.getElementById('enrollmentScheduleLevelFilter');
+    if (enrollmentScheduleLevelFilter) enrollmentScheduleLevelFilter.addEventListener('change', () => callIfFn('renderEnrollmentScheduleSection'));
     bindClickIfFn('btnSelectAdminUsersPage', 'selectCurrentPageAdminUsers');
     bindClickIfFn('btnSelectAdminUsersFiltered', 'selectFilteredAdminUsers');
     bindClickIfFn('btnClearAdminUsersSelection', 'clearAdminUsersSelection');
@@ -7606,6 +8391,7 @@ function renderAll() {
     callIfFn('renderRolesSection');
     callIfFn('renderCertificatesSection');
     callIfFn('renderEnrollmentReviewSection');
+    callIfFn('renderEnrollmentScheduleSection');
     callIfFn('renderEnrollmentFormBuilderSection');
     callIfFn('renderGuidesSection');
     callIfFn('renderFormsSection');

@@ -16,4 +16,5 @@ public class ActivitySubmissionResponse {
     private java.math.BigDecimal grade;
     private String feedback;
     private LocalDateTime gradedAt;
+    private java.util.List<Integer> groupMembers;
 }

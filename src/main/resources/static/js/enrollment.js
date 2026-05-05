@@ -2,12 +2,14 @@ const ENROLLMENT_STORAGE_KEY = 'educat_enrollment_requests';
 const ENROLLMENT_FORM_STORAGE_KEY = 'educat_enrollment_form_config';
 const ENROLLMENT_MAX_FILE_FIELDS = 4;
 const ENROLLMENT_PAGE_SIZE = 6;
+const ENROLLMENT_MAX_FILE_SIZE = 2 * 1024 * 1024; // 2 MB
 
 const DEFAULT_ENROLLMENT_FORM_FIELDS = [
     { id: 'studentName', section: 'Datos del estudiante', type: 'text', label: 'Nombre completo', placeholder: 'Nombre del estudiante', required: true },
     { id: 'studentDoc', section: 'Datos del estudiante', type: 'text', label: 'Documento', placeholder: 'CC / TI / Pasaporte', required: true },
     { id: 'studentBirthDate', section: 'Datos del estudiante', type: 'date', label: 'Fecha de nacimiento', placeholder: '', required: true },
     { id: 'studentGender', section: 'Datos del estudiante', type: 'select', label: 'Genero', placeholder: '', required: true, options: ['Femenino', 'Masculino', 'Otro', 'Prefiero no decirlo'] },
+    { id: 'studentEmail', section: 'Datos del estudiante', type: 'email', label: 'Correo electronico del estudiante', placeholder: 'estudiante@dominio.com', required: true, immutable: true },
     { id: 'level', section: 'Datos academicos', type: 'select', label: 'Nivel academico', placeholder: '', required: true, options: ['Preescolar', 'Primaria', 'Secundaria', 'Media'] },
     { id: 'grade', section: 'Datos academicos', type: 'text', label: 'Grado', placeholder: 'Ej: 6A, 9B, 11', required: true },
     { id: 'studentLastName', section: 'Datos del estudiante', type: 'text', label: 'Apellidos del estudiante', placeholder: 'Apellidos del estudiante', required: true },
@@ -183,8 +185,46 @@ function readRequests() {
     }
 }
 
+function stripFileDataUrls(payload) {
+    if (!payload || !payload.documents) return payload;
+    const docs = payload.documents;
+    const strip = (obj) => {
+        if (!obj || typeof obj !== 'object') return obj;
+        if (obj.dataUrl !== undefined) {
+            return { ...obj, dataUrl: '' };
+        }
+        if (obj.file && obj.file.dataUrl !== undefined) {
+            return { ...obj, file: { ...obj.file, dataUrl: '' } };
+        }
+        return obj;
+    };
+    return {
+        ...payload,
+        documents: {
+            schoolCertificate: strip(docs.schoolCertificate),
+            guardianIdentityCopy: strip(docs.guardianIdentityCopy),
+            studentIdentityCard: strip(docs.studentIdentityCard),
+            healthAffiliationCertificate: strip(docs.healthAffiliationCertificate),
+            additional: Array.isArray(docs.additional) ? docs.additional.map(strip) : []
+        }
+    };
+}
+
 function saveRequests(items) {
-    localStorage.setItem(ENROLLMENT_STORAGE_KEY, JSON.stringify(items));
+    try {
+        localStorage.setItem(ENROLLMENT_STORAGE_KEY, JSON.stringify(items));
+    } catch (e) {
+        if (e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014)) {
+            const trimmed = items.map(stripFileDataUrls);
+            try {
+                localStorage.setItem(ENROLLMENT_STORAGE_KEY, JSON.stringify(trimmed));
+            } catch (e2) {
+                throw new Error('No hay espacio suficiente para guardar la solicitud. Reduce el tamaño de los archivos adjuntos.');
+            }
+        } else {
+            throw e;
+        }
+    }
 }
 
 function clearForm() {
@@ -208,10 +248,20 @@ function readFileAsDataUrl(file) {
 
 async function mapFilePayload(file) {
     if (!file) return null;
+    const size = Math.max(0, parseInt(file.size || '0', 10) || 0);
+    if (size > ENROLLMENT_MAX_FILE_SIZE) {
+        return {
+            name: String(file.name || ''),
+            type: String(file.type || ''),
+            size: size,
+            dataUrl: '',
+            oversized: true
+        };
+    }
     return {
         name: String(file.name || ''),
         type: String(file.type || ''),
-        size: Math.max(0, parseInt(file.size || '0', 10) || 0),
+        size: size,
         dataUrl: await readFileAsDataUrl(file)
     };
 }
@@ -253,7 +303,8 @@ async function buildEnrollmentPayload() {
             lastName: valueMap.studentLastName || '',
             document: valueMap.studentDoc || '',
             birthDate: valueMap.studentBirthDate || '',
-            gender: valueMap.studentGender || ''
+            gender: valueMap.studentGender || '',
+            email: valueMap.studentEmail || ''
         },
         academic: {
             level: valueMap.level || '',
@@ -309,7 +360,9 @@ async function handleSubmit(ev) {
         clearForm();
         setAlert('alertSuccess', true, 'Solicitud enviada. Pronto recibirás confirmación en el correo de contacto.');
     } catch (e) {
-        setAlert('alertError', true, 'No se pudo enviar la solicitud. Intenta nuevamente.');
+        console.error('Error al enviar solicitud de matrícula:', e);
+        const msg = e && e.message ? e.message : 'No se pudo enviar la solicitud. Intenta nuevamente.';
+        setAlert('alertError', true, msg);
     } finally {
         setLoading(false);
     }

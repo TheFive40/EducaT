@@ -1596,6 +1596,69 @@ textarea.form-input{resize:vertical;min-height:100px}
 .ap-period-grade{font-size:14px;font-weight:700;font-family:'Cormorant Garamond',serif;width:30px;text-align:right;flex-shrink:0}
 .ap-definitiva-row{display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:1px dashed rgba(11,31,58,0.1);font-size:11.5px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px}
 .cert-table{width:100%;border-collapse:collapse;font-size:13.5px}
+
+/* Group participant autocomplete */
+.gp-input-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--white);
+    min-height: 44px;
+}
+.gp-input-wrap:focus-within {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px rgba(184,147,58,0.08);
+}
+.gp-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--cream-dark);
+    border: 1px solid rgba(11,31,58,0.1);
+    border-radius: 20px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dark);
+}
+.gp-input {
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: 'Jost', sans-serif;
+    font-size: 13px;
+    color: var(--text-dark);
+    flex: 1;
+    min-width: 80px;
+}
+.gp-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 4px;
+    background: var(--white);
+    border: 1px solid rgba(11,31,58,0.1);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    z-index: 100;
+    max-height: 200px;
+    overflow-y: auto;
+}
+.gp-option {
+    padding: 10px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background .15s;
+    color: var(--text-dark);
+}
+.gp-option:hover {
+    background: var(--cream);
+}
 .cert-table th{padding:10px 16px;text-align:left;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);border-bottom:2px solid var(--cream-dark);background:var(--cream)}
 .cert-table td{padding:13px 16px;border-bottom:1px solid rgba(11,31,58,0.05);vertical-align:middle}
 .cert-table tr:last-child td{border-bottom:none}

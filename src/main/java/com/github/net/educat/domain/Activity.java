@@ -29,4 +29,8 @@ public class Activity {
     private String attachmentsJson;
     @Column(name = "materials_json", columnDefinition = "TEXT")
     private String materialsJson;
+    @Column(name = "is_group_work")
+    private Boolean isGroupWork;
+    @Column(name = "max_group_size")
+    private Integer maxGroupSize;
 }

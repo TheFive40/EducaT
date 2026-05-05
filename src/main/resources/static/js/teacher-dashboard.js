@@ -1893,6 +1893,7 @@ function navigateTo(section, options) {
         asistencia: ['Control de Asistencia', 'Registro de asistencia por clase'],
         horarios: ['Horarios', 'Programacion de clases'],
         estudiantes: ['Estudiantes', 'Gestion del estudiantado'],
+        bienestar: ['Bienestar', 'Psicologia y gestion de citas'],
         instructivos: ['Instructivos', 'Publica guias para docentes y estudiantes'],
         perfil: ['Mi Perfil', 'Datos del docente'],
     };
@@ -1909,6 +1910,7 @@ function navigateTo(section, options) {
     else if (section === 'asistencia') loadAsistencia();
     else if (section === 'horarios') loadHorarios();
     else if (section === 'estudiantes') loadEstudiantes();
+    else if (section === 'bienestar') loadBienestar();
     else if (section === 'instructivos') loadInstructivos();
     else if (section === 'perfil') loadPerfil();
 
@@ -3078,25 +3080,9 @@ async function loadAsistencia() {
 }
 
 function initTeacherModerationOverview(courses) {
-    // Solicitudes de bienestar estudiantil
-    ensureTeacherWellbeingCard();
-    const wellbeingModuleSel = document.getElementById('wellbeingModuleFilter');
-    if (wellbeingModuleSel) wellbeingModuleSel.onchange = () => { tableUiState.wellbeing.module = wellbeingModuleSel.value || 'all'; tableUiState.wellbeing.page = 1; renderTeacherWellbeingRequests(); };
-    const wellbeingStatusSel = document.getElementById('wellbeingStatusFilter');
-    if (wellbeingStatusSel) wellbeingStatusSel.onchange = () => { tableUiState.wellbeing.status = wellbeingStatusSel.value || 'all'; tableUiState.wellbeing.page = 1; renderTeacherWellbeingRequests(); };
-    const wellbeingSearchInput = document.getElementById('wellbeingSearchInput');
-    if (wellbeingSearchInput) wellbeingSearchInput.oninput = () => { tableUiState.wellbeing.query = wellbeingSearchInput.value || ''; tableUiState.wellbeing.page = 1; renderTeacherWellbeingRequests(); };
-    renderTeacherWellbeingRequests();
-
     // Solicitudes de publicacion de bienestar
     ensureTeacherPublicationRequestsCard();
     renderTeacherPublicationRequests();
-
-    // Citas de psicologia
-    if (canViewPsychologyAppointments()) {
-        ensureTeacherPsychologyAppointmentsCard();
-        renderTeacherPsychologyAppointments();
-    }
 
     // Mi evaluacion profesoral
     if (canViewMyEvaluationReport()) {
@@ -5603,9 +5589,7 @@ function removeAnnouncement(unitIdx, annIdx) {
 ═══════════════════════════════════════════════════════════════════════════ */
 function addActivityModal(unitIdx) {
     const keyAtts  = 'act-new-atts-' + unitIdx;
-    const keyMats  = 'act-new-mats-' + unitIdx;
     clearModalFiles(keyAtts);
-    clearModalFiles(keyMats);
     openModal('Nueva Actividad', `
         <div class="form-group">
             <label class="form-label">Título</label>
@@ -5643,27 +5627,31 @@ function addActivityModal(unitIdx) {
                 <option value="no">No, bloquear fuera de fecha</option>
             </select>
         </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:10px">
+            <label class="form-label" style="margin-bottom:0"><input type="checkbox" id="mActGroupWork" onchange="document.getElementById('mActGroupSizeWrap').style.display=this.checked?'':'none'"> Trabajo en grupo</label>
+        </div>
+        <div class="form-group" id="mActGroupSizeWrap" style="display:none">
+            <label class="form-label">Número máximo de estudiantes por grupo</label>
+            <input type="number" class="form-input" id="mActMaxGroupSize" min="2" max="10" value="2">
+        </div>
         <div class="form-group">
             <label class="form-label">Archivos adjuntos para el estudiante <span style="font-weight:400;color:var(--text-muted)">(guías, rúbricas, plantillas…)</span></label>
             ${modalDropAreaNoVideo(keyAtts, 'Arrastra guías, rúbricas o cualquier archivo')}
         </div>
         <div class="form-group">
-            <label class="form-label">Bibliografía y material de apoyo <span style="font-weight:400;color:var(--text-muted)">(lecturas y referencias)</span></label>
-            ${modalDropAreaNoVideo(keyMats, 'Arrastra PDFs y otros materiales de apoyo')}
-        </div>
-        <div class="form-group">
             <label class="form-label">Videos (solo enlaces de YouTube)</label>
             <textarea class="form-input" id="mActYoutubeLinks" placeholder="https://www.youtube.com/watch?v=... (uno por línea)" style="min-height:90px"></textarea>
         </div>
-        <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="saveActivity(${unitIdx},'${keyAtts}','${keyMats}')">Agregar actividad</button>`);
+        <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="saveActivity(${unitIdx},'${keyAtts}')">Agregar actividad</button>`);
 }
 
-async function saveActivity(unitIdx, keyAtts, keyMats) {
+async function saveActivity(unitIdx, keyAtts) {
     const title = document.getElementById('mActTitle').value.trim();
     if (!title) { showToast('El título es obligatorio', 'error'); return; }
     const attachments = getModalAttachments(keyAtts, []);
-    const materials   = getModalAttachments(keyMats, []);
     const youtubeLinks = parseYoutubeLinks((document.getElementById('mActYoutubeLinks') || {}).value || '');
+    const isGroupWork = !!document.getElementById('mActGroupWork').checked;
+    const maxGroupSize = isGroupWork ? (parseInt(document.getElementById('mActMaxGroupSize').value, 10) || 2) : null;
     const payload = {
         courseId: currentCourse.id,
         title,
@@ -5675,7 +5663,9 @@ async function saveActivity(unitIdx, keyAtts, keyMats) {
             ? ((document.getElementById('mActVisibleFrom') || {}).value || null)
             : null,
         attachments,
-        materials: [...materials, ...youtubeLinks]
+        materials: [...youtubeLinks],
+        isGroupWork,
+        maxGroupSize
     };
     let saved = null;
     try {
@@ -5691,7 +5681,6 @@ async function saveActivity(unitIdx, keyAtts, keyMats) {
     units[unitIdx].activities.push(newAct.id);
     saveUnits(currentCourse.id, units);
     clearModalFiles(keyAtts);
-    clearModalFiles(keyMats);
     closeModal();
     renderUnit(unitIdx);
     showToast('Actividad agregada', 'success');
@@ -5701,11 +5690,9 @@ function editActivityModal(actId, unitIdx) {
     const a = getActivityById(actId);
     if (!a) return;
     const keyAtts = 'act-edit-atts-' + actId;
-    const keyMats = 'act-edit-mats-' + actId;
     clearModalFiles(keyAtts);
-    clearModalFiles(keyMats);
     const existingAtts = Array.isArray(a.attachments) ? a.attachments : [];
-    const existingMats = Array.isArray(a.materials)   ? a.materials   : [];
+    const isGroupWork = a.isGroupWork === true;
     openModal('Editar Actividad', `
         <div class="form-group">
             <label class="form-label">Título</label>
@@ -5741,6 +5728,13 @@ function editActivityModal(actId, unitIdx) {
                 <option value="no" ${a.allowLateSubmission === false ? 'selected' : ''}>No, bloquear fuera de fecha</option>
             </select>
         </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:10px">
+            <label class="form-label" style="margin-bottom:0"><input type="checkbox" id="mActGroupWork" ${isGroupWork ? 'checked' : ''} onchange="document.getElementById('mActGroupSizeWrap').style.display=this.checked?'':'none'"> Trabajo en grupo</label>
+        </div>
+        <div class="form-group" id="mActGroupSizeWrap" style="${isGroupWork ? '' : 'display:none'}">
+            <label class="form-label">Número máximo de estudiantes por grupo</label>
+            <input type="number" class="form-input" id="mActMaxGroupSize" min="2" max="10" value="${a.maxGroupSize || 2}">
+        </div>
         <div class="form-group">
             <label class="form-label">Archivos adjuntos para el estudiante</label>
             ${existingAtts.length ? `<div style="margin-bottom:8px">${existingAtts.map((at,i) => `<div class="file-chip" id="exatt2-atts-${i}">
@@ -5753,21 +5747,10 @@ function editActivityModal(actId, unitIdx) {
             ${modalDropAreaNoVideo(keyAtts, 'Agregar guías, rúbricas o plantillas')}
         </div>
         <div class="form-group">
-            <label class="form-label">Bibliografía y material de apoyo</label>
-            ${existingMats.length ? `<div style="margin-bottom:8px">${existingMats.map((at,i) => `<div class="file-chip" id="exatt2-mats-${i}">
-                <svg width="13" height="13" fill="none" stroke="var(--gold)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                <span class="file-chip-name">${at.name}</span>
-                <button class="file-chip-remove" onclick="removeActExistingAtt(${actId},'materials',${i})">
-                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-            </div>`).join('')}</div>` : ''}
-            ${modalDropAreaNoVideo(keyMats, 'Agregar PDFs u otras referencias')}
-        </div>
-        <div class="form-group">
             <label class="form-label">Videos (solo enlaces de YouTube)</label>
-            <textarea class="form-input" id="mActYoutubeLinks" placeholder="https://www.youtube.com/watch?v=... (uno por línea)" style="min-height:90px">${(existingMats || []).filter(m => (m.type || '') === 'video' && /youtube\.com|youtu\.be/i.test(m.url || '')).map(m => m.url).join('\n')}</textarea>
+            <textarea class="form-input" id="mActYoutubeLinks" placeholder="https://www.youtube.com/watch?v=... (uno por línea)" style="min-height:90px">${(Array.isArray(a.materials) ? a.materials : []).filter(m => (m.type || '') === 'video' && /youtube\.com|youtu\.be/i.test(m.url || '')).map(m => m.url).join('\n')}</textarea>
         </div>
-        <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="updateActivity(${actId},${unitIdx},'${keyAtts}','${keyMats}')">Guardar cambios</button>`);
+        <button class="btn btn-teal" style="width:100%;margin-top:4px" onclick="updateActivity(${actId},${unitIdx},'${keyAtts}')">Guardar cambios</button>`);
 }
 
 function removeActExistingAtt(actId, field, idx) {
@@ -5778,7 +5761,7 @@ function removeActExistingAtt(actId, field, idx) {
     if (el) el.remove();
 }
 
-async function updateActivity(actId, unitIdx, keyAtts, keyMats) {
+async function updateActivity(actId, unitIdx, keyAtts) {
     const a = getActivityById(actId);
     if (!a) return;
     a.title       = document.getElementById('mActTitle').value.trim() || a.title;
@@ -5789,13 +5772,14 @@ async function updateActivity(actId, unitIdx, keyAtts, keyMats) {
     a.visibleFrom = (document.getElementById('mActVisibleMode') || {}).value === 'scheduled'
         ? ((document.getElementById('mActVisibleFrom') || {}).value || null)
         : null;
+    a.isGroupWork = !!document.getElementById('mActGroupWork').checked;
+    a.maxGroupSize = a.isGroupWork ? (parseInt(document.getElementById('mActMaxGroupSize').value, 10) || 2) : null;
     // Merge new uploads with whatever remains after inline removals
     a.attachments = getModalAttachments(keyAtts, Array.isArray(a.attachments) ? a.attachments : []);
     const currentMats = Array.isArray(a.materials) ? a.materials : [];
     const matsNoVideos = currentMats.filter(m => (m.type || '') !== 'video' || !/youtube\.com|youtu\.be/i.test(m.url || ''));
-    const newMats = getModalAttachments(keyMats, matsNoVideos);
     const youtubeLinks = parseYoutubeLinks((document.getElementById('mActYoutubeLinks') || {}).value || '');
-    a.materials = [...newMats, ...youtubeLinks];
+    a.materials = [...matsNoVideos, ...youtubeLinks];
     const payload = {
         courseId: a.course ? a.course.id : currentCourse.id,
         title: a.title,
@@ -5805,7 +5789,9 @@ async function updateActivity(actId, unitIdx, keyAtts, keyMats) {
         allowLateSubmission: a.allowLateSubmission,
         visibleFrom: a.visibleFrom,
         attachments: a.attachments,
-        materials: a.materials
+        materials: a.materials,
+        isGroupWork: a.isGroupWork,
+        maxGroupSize: a.maxGroupSize
     };
     try {
         await apiFetch('/api/activities/' + actId, { method: 'PUT', body: JSON.stringify(payload) });
@@ -5816,7 +5802,6 @@ async function updateActivity(actId, unitIdx, keyAtts, keyMats) {
     const idxAct = teacherActivities.findIndex(x => String(x.id) === String(a.id));
     if (idxAct >= 0) teacherActivities[idxAct] = a;
     clearModalFiles(keyAtts);
-    clearModalFiles(keyMats);
     closeModal();
     renderUnit(unitIdx);
     showToast('Actividad actualizada', 'success');
@@ -6714,6 +6699,17 @@ function canViewPsychologyAppointments() {
     return isCurrentUserAdmin() || hasAnyPermission(['bienestar.psicologia.gestionar-citas', 'bienestar.psicologia.ver-citas']);
 }
 
+function canAccessTeacherWellbeing() {
+    return isCurrentUserAdmin() || hasAnyPermission([
+        'bienestar.psicologia.gestionar-citas',
+        'bienestar.psicologia.ver-citas',
+        'bienestar.revisar-solicitudes-publicacion',
+        'bienestar.aprobar-publicacion',
+        'bienestar.rechazar-publicacion',
+        'bienestar.publicar-sin-solicitud'
+    ]);
+}
+
 function ensureTeacherPsychologyAppointmentsCard() {
     const slot = document.getElementById('teacherPsychologyAppointmentsSlot');
     if (!slot || document.getElementById('teacherPsychologyAppointmentsContainer')) return;
@@ -6736,90 +6732,376 @@ function ensureTeacherPsychologyAppointmentsCard() {
     `;
 }
 
+let _psychApptCache = [];
+let _psychApptPage = 1;
+const _psychApptPageSize = 6;
+
 async function renderTeacherPsychologyAppointments() {
-    ensureTeacherPsychologyAppointmentsCard();
-    const container = document.getElementById('teacherPsychologyAppointmentsContainer');
+    const container = document.getElementById('teacherBienestarPsychContainer');
     if (!container) return;
     if (!canViewPsychologyAppointments()) {
         container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin acceso</div><div class="empty-state-text">No cuentas con permisos para ver citas de psicologia.</div></div>';
         return;
     }
     const searchEl = document.getElementById('psychApptSearchInput');
+    const statusFilterEl = document.getElementById('psychApptStatusFilter');
     const query = ((searchEl ? searchEl.value : '') || '').trim().toLowerCase();
-    if (searchEl) searchEl.oninput = () => renderTeacherPsychologyAppointments();
+    const statusFilter = ((statusFilterEl ? statusFilterEl.value : '') || '').trim().toUpperCase();
+    if (searchEl) searchEl.oninput = () => { _psychApptPage = 1; renderTeacherPsychologyAppointments(); };
+    if (statusFilterEl) statusFilterEl.onchange = () => { _psychApptPage = 1; renderTeacherPsychologyAppointments(); };
     try {
-        const items = await tryFetch('/api/teacher/psychology/appointments') || [];
+        const data = await tryFetch('/api/teacher/psychology/appointments');
+        let items = Array.isArray(data) ? data : (data && Array.isArray(data.content) ? data.content : []);
+        _psychApptCache = items;
         let filtered = items;
         if (query) {
-            filtered = items.filter(r => {
+            filtered = filtered.filter(r => {
                 const student = String(r.studentName || '').toLowerCase();
                 const prof = String(r.professionalName || '').toLowerCase();
                 return student.includes(query) || prof.includes(query);
             });
         }
+        if (statusFilter) {
+            filtered = filtered.filter(r => String(r.status || '').toUpperCase() === statusFilter);
+        }
         if (!filtered.length) {
             container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Sin citas</div><div class="empty-state-text">No hay citas de psicologia registradas.</div></div>';
+            _renderPsychApptPagination(0);
             return;
         }
+        const totalPages = Math.max(1, Math.ceil(filtered.length / _psychApptPageSize));
+        if (_psychApptPage > totalPages) _psychApptPage = totalPages;
+        const start = (_psychApptPage - 1) * _psychApptPageSize;
+        const pageItems = filtered.slice(start, start + _psychApptPageSize);
         const statusMap = { SCHEDULED: { text: 'Agendada', cls: 'badge-gold' }, COMPLETED: { text: 'Completada', cls: 'badge-success' }, CANCELLED: { text: 'Cancelada', cls: 'badge-error' } };
-        container.innerHTML = filtered.map(r => {
+        container.innerHTML = pageItems.map(r => {
             const s = statusMap[r.status] || { text: r.status, cls: 'badge-navy' };
             const actions = canManagePsychologyAppointments() && r.status === 'SCHEDULED'
                 ? `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-sm btn-success-outline" onclick="updatePsychAppointmentStatus(${r.id},'COMPLETED')">Completar</button><button class="btn btn-sm btn-danger" onclick="updatePsychAppointmentStatus(${r.id},'CANCELLED')">Cancelar</button></div>`
                 : '';
-            return `<div class="card" style="margin-bottom:14px"><div class="card-header" style="padding:14px 18px"><div><div style="font-size:14px;font-weight:700">${escapeHtml(r.studentName || 'Estudiante')} <span style="font-size:11px;color:var(--text-muted);font-weight:500">${r.appointmentDate} · ${r.slot}</span></div><div style="font-size:12px;color:var(--text-muted);margin-top:2px">${escapeHtml(r.professionalName || '—')}</div></div><span class="badge ${s.cls}">${s.text}</span></div><div class="card-body" style="padding:16px 18px"><div style="font-size:13px;line-height:1.65;color:var(--text-body)">${escapeHtml(r.reason || 'Sin motivo registrado')}</div>${actions}</div></div>`;
+            return `<div class="card" style="margin-bottom:14px"><div class="card-header" style="padding:14px 18px"><div><div style="font-size:14px;font-weight:700">${htmlEscape(r.studentName || 'Estudiante')} <span style="font-size:11px;color:var(--text-muted);font-weight:500">${r.appointmentDate} · ${r.slot}</span></div><div style="font-size:12px;color:var(--text-muted);margin-top:2px">${htmlEscape(r.professionalName || '—')}</div></div><span class="badge ${s.cls}">${s.text}</span></div><div class="card-body" style="padding:16px 18px"><div style="font-size:13px;line-height:1.65;color:var(--text-body)">${htmlEscape(r.reason || 'Sin motivo registrado')}</div>${actions}</div></div>`;
         }).join('');
+        _renderPsychApptPagination(filtered.length);
     } catch (e) {
         container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Error</div><div class="empty-state-text">No se pudieron cargar las citas de psicologia.</div></div>';
+        _renderPsychApptPagination(0);
     }
+}
+
+function _renderPsychApptPagination(totalItems) {
+    const container = document.getElementById('psychApptPagination');
+    if (!container) return;
+    const totalPages = Math.max(1, Math.ceil(totalItems / _psychApptPageSize));
+    if (totalItems === 0) { container.innerHTML = ''; return; }
+    const prevDisabled = _psychApptPage <= 1 ? 'disabled' : '';
+    const nextDisabled = _psychApptPage >= totalPages ? 'disabled' : '';
+    container.innerHTML = `
+        <span style="font-size:12px;color:var(--text-muted)">Mostrando ${((_psychApptPage - 1) * _psychApptPageSize) + 1} - ${Math.min(_psychApptPage * _psychApptPageSize, totalItems)} de ${totalItems}</span>
+        <div style="display:flex;gap:6px">
+            <button class="btn btn-sm btn-outline" ${prevDisabled} onclick="_psychApptPage--;renderTeacherPsychologyAppointments()">Anterior</button>
+            <button class="btn btn-sm btn-outline" ${nextDisabled} onclick="_psychApptPage++;renderTeacherPsychologyAppointments()">Siguiente</button>
+        </div>
+    `;
 }
 
 async function updatePsychAppointmentStatus(id, status) {
     if (!canManagePsychologyAppointments()) { showToast('Sin permisos', 'error'); return; }
+    const comment = status === 'CANCELLED' ? 'Tu cita ha sido cancelada por el area de bienestar. Por favor agenda una nueva cita si lo necesitas.' : '';
     const res = await apiFetch('/api/teacher/psychology/appointments/' + id + '/status', {
         method: 'PATCH',
-        body: JSON.stringify({ status, resolutionComment: '' })
+        body: JSON.stringify({ status, resolutionComment: comment })
     });
     if (!res || !res.ok) { showToast('No se pudo actualizar', 'error'); return; }
     showToast(status === 'COMPLETED' ? 'Cita completada' : 'Cita cancelada', 'success');
     renderTeacherPsychologyAppointments();
 }
 
+const _psychDayNames = ['Domingo','Lunes','Martes','Miercoles','Jueves','Viernes','Sabado'];
+const _psychDayShort = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+const _psychMonthNames = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+function _psychAvailGenerateSlots(start, end, slotMinutes) {
+    const slots = [];
+    const [sh, sm] = start.split(':').map(Number);
+    const [eh, em] = end.split(':').map(Number);
+    let cur = sh * 60 + sm;
+    const endM = eh * 60 + em;
+    while (cur + slotMinutes <= endM) {
+        const h = Math.floor(cur / 60);
+        const m = cur % 60;
+        slots.push(String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'));
+        cur += slotMinutes;
+    }
+    return slots;
+}
+
+function _psychAvailSlotsToMeta(slots) {
+    if (!slots || !slots.length) return { startTime: '08:00', endTime: '12:00', slotMinutes: 60 };
+    const startTime = slots[0];
+    let slotMinutes = 60;
+    if (slots.length > 1) {
+        const toMin = s => { const [h,m] = s.split(':').map(Number); return h*60+m; };
+        const diff = toMin(slots[1]) - toMin(slots[0]);
+        if (diff > 0) slotMinutes = diff;
+    }
+    const [lh, lm] = slots[slots.length - 1].split(':').map(Number);
+    const endTotal = lh * 60 + lm + slotMinutes;
+    const endH = Math.floor(endTotal / 60);
+    const endM = endTotal % 60;
+    const endTime = String(endH).padStart(2, '0') + ':' + String(endM).padStart(2, '0');
+    return { startTime, endTime, slotMinutes };
+}
+
+window._psychAvailSelected = {};
+window._psychAvailViewDate = new Date();
+
+function _psychAvailToggleDate(dateStr) {
+    if (dateStr < new Date().toISOString().slice(0, 10)) {
+        showToast('No puedes configurar disponibilidad en fechas pasadas', 'error');
+        return;
+    }
+    if (window._psychAvailSelected[dateStr]) {
+        delete window._psychAvailSelected[dateStr];
+    } else {
+        window._psychAvailSelected[dateStr] = { startTime: '08:00', endTime: '12:00', slotMinutes: 60 };
+    }
+    _psychAvailRenderCalendar();
+    _psychAvailRenderSelectedList();
+}
+
+function _psychAvailUpdateDate(dateStr, field, value) {
+    const d = window._psychAvailSelected[dateStr];
+    if (!d) return;
+    if (field === 'slotMinutes') d[field] = parseInt(value, 10) || 60;
+    else d[field] = value;
+    _psychAvailRenderCalendar();
+    _psychAvailRenderSelectedList();
+}
+
+function _psychAvailRemoveDate(dateStr) {
+    delete window._psychAvailSelected[dateStr];
+    _psychAvailRenderCalendar();
+    _psychAvailRenderSelectedList();
+}
+
+function _psychAvailClearAll() {
+    window._psychAvailSelected = {};
+    _psychAvailRenderCalendar();
+    _psychAvailRenderSelectedList();
+}
+
+function _psychAvailChangeMonth(delta) {
+    window._psychAvailViewDate.setMonth(window._psychAvailViewDate.getMonth() + delta);
+    _psychAvailRenderCalendar();
+}
+
+function _psychAvailRenderCalendar() {
+    const container = document.getElementById('psychAvailCalendarGrid');
+    const label = document.getElementById('psychAvailMonthLabel');
+    if (!container) return;
+
+    const date = window._psychAvailViewDate;
+    const year = date.getFullYear();
+    const month = date.getMonth();
+
+    if (label) {
+        label.textContent = _psychMonthNames[month] + ' ' + year;
+    }
+
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startWeekDay = firstDay.getDay();
+    const prevLastDay = new Date(year, month, 0).getDate();
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    const fmtDay = d => {
+        const mm = String(month + 1).padStart(2, '0');
+        const dd = String(d).padStart(2, '0');
+        return `${year}-${mm}-${dd}`;
+    };
+
+    let html = '';
+    const headers = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+    headers.forEach(h => {
+        html += `<div style="text-align:center;font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;padding:4px 0">${h}</div>`;
+    });
+
+    for (let i = startWeekDay - 1; i >= 0; i--) {
+        html += `<div class="cal-day other-month">${prevLastDay - i}</div>`;
+    }
+
+    for (let d = 1; d <= lastDay.getDate(); d++) {
+        const dateStr = fmtDay(d);
+        const isSelected = !!window._psychAvailSelected[dateStr];
+        const isToday = dateStr === todayStr;
+        const isPast = dateStr < todayStr;
+        const cls = ['cal-day'];
+        if (isSelected) cls.push('selected');
+        if (isToday) cls.push('today');
+        if (isPast) cls.push('past');
+        const onclick = isPast ? '' : `onclick="_psychAvailToggleDate('${dateStr}')"`;
+        const title = isPast ? 'Fecha pasada' : (isSelected ? 'Quitar disponibilidad' : 'Agregar disponibilidad');
+        html += `<div class="${cls.join(' ')}" ${onclick} title="${title}">${d}</div>`;
+    }
+
+    const totalCells = startWeekDay + lastDay.getDate();
+    const remaining = (7 - (totalCells % 7)) % 7;
+    for (let d = 1; d <= remaining; d++) {
+        html += `<div class="cal-day other-month">${d}</div>`;
+    }
+
+    container.innerHTML = html;
+}
+
+function _psychAvailRenderSelectedList() {
+    const container = document.getElementById('psychAvailSelectedList');
+    if (!container) return;
+    const dates = Object.keys(window._psychAvailSelected).sort();
+    if (!dates.length) {
+        container.innerHTML = '<div style="font-size:13px;color:var(--text-muted);text-align:center;padding:20px">Selecciona días en el calendario para configurar tu disponibilidad.</div>';
+        return;
+    }
+    container.innerHTML = dates.map(dateStr => {
+        const meta = window._psychAvailSelected[dateStr];
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const dateObj = new Date(y, m - 1, d);
+        const label = dateObj.toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
+        const slots = _psychAvailGenerateSlots(meta.startTime, meta.endTime, meta.slotMinutes);
+        return `
+        <div style="background:var(--cream);border:1px solid rgba(11,31,58,0.1);border-radius:10px;padding:12px;margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <span style="font-weight:600;font-size:13px;color:var(--navy)">${htmlEscape(label)}</span>
+                <span style="font-size:11px;color:var(--text-muted)">${slots.length} cupo${slots.length===1?'':'s'}</span>
+                <button class="btn-icon del" onclick="_psychAvailRemoveDate('${dateStr}')" title="Eliminar">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+                <div>
+                    <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:2px">Inicio</label>
+                    <input type="time" class="form-input" value="${meta.startTime}" onchange="_psychAvailUpdateDate('${dateStr}','startTime',this.value)" style="width:100%;padding:5px 6px;font-size:12px">
+                </div>
+                <div>
+                    <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:2px">Fin</label>
+                    <input type="time" class="form-input" value="${meta.endTime}" onchange="_psychAvailUpdateDate('${dateStr}','endTime',this.value)" style="width:100%;padding:5px 6px;font-size:12px">
+                </div>
+                <div>
+                    <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:2px">Dur.</label>
+                    <select class="form-input" onchange="_psychAvailUpdateDate('${dateStr}','slotMinutes',this.value)" style="width:100%;padding:5px 6px;font-size:12px">
+                        <option value="30" ${meta.slotMinutes==30?'selected':''}>30m</option>
+                        <option value="45" ${meta.slotMinutes==45?'selected':''}>45m</option>
+                        <option value="60" ${meta.slotMinutes==60?'selected':''}>1h</option>
+                        <option value="90" ${meta.slotMinutes==90?'selected':''}>1h30</option>
+                    </select>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function _psychAvailBuildDatesFromSelection() {
+    const profName = (currentUser && currentUser.name) || 'Psicologo';
+    const profDates = [];
+    const dates = Object.keys(window._psychAvailSelected).sort();
+    for (const dateStr of dates) {
+        const meta = window._psychAvailSelected[dateStr];
+        const slots = _psychAvailGenerateSlots(meta.startTime, meta.endTime, meta.slotMinutes);
+        if (slots.length) profDates.push({ date: dateStr, slots });
+    }
+    return { profName, profDates };
+}
+
 async function apOpenPsychAvailabilityModal() {
     if (!canManagePsychologyAppointments()) { showToast('Sin permisos', 'error'); return; }
-    const config = await tryFetch('/api/psychology/availability') || {};
-    const professionals = (config.professionals || []).map(p => p.name || '').filter(Boolean);
-    document.getElementById('modalTitle').textContent = 'Configurar disponibilidad de psicologia';
+
+    const profName = (currentUser && currentUser.name) || 'Psicologo';
+    window._psychAvailSelected = {};
+    window._psychAvailViewDate = new Date();
+
+    try {
+        const existing = await tryFetch('/api/psychology/availability');
+        if (existing && existing.dates && typeof existing.dates === 'object') {
+            Object.values(existing.dates).forEach(dateList => {
+                if (!Array.isArray(dateList)) return;
+                dateList.forEach(item => {
+                    if (!item || !item.date || !Array.isArray(item.slots)) return;
+                    const meta = _psychAvailSlotsToMeta(item.slots);
+                    window._psychAvailSelected[item.date] = meta;
+                });
+            });
+        }
+    } catch (e) {
+        // ignorar errores de carga
+    }
+
+    document.getElementById('modalTitle').textContent = 'Configurar mi disponibilidad';
+    setModalSize('xl');
     document.getElementById('modalBody').innerHTML = `
-        <div class="form-group"><label class="form-label">Psicologos (uno por linea: Nombre | Especialidad)</label><textarea id="psychAvailProfessionals" class="form-input" rows="3" placeholder="Dra. Laura Sanchez | Ansiedad y manejo emocional">${escapeHtml((config.professionals || []).map(p => (p.name || '') + (p.specialty ? ' | ' + p.specialty : '')).join('\n'))}</textarea></div>
-        <div class="form-group"><label class="form-label">Fechas y horarios (JSON)</label><textarea id="psychAvailDates" class="form-input" rows="6" placeholder='{"Dra. Laura Sanchez": [{"date":"2026-04-14","slots":["08:00","09:00"]}]}'>${escapeHtml(JSON.stringify(config.dates || {}, null, 2))}</textarea></div>
-        <div style="display:flex;justify-content:flex-end;gap:8px">
+        <div style="display:grid;grid-template-columns:1fr 300px;gap:24px">
+            <div>
+                <div style="font-weight:600;font-size:14px;margin-bottom:14px">Profesional: <span style="color:var(--navy)">${htmlEscape(profName)}</span></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                    <button class="btn btn-sm btn-outline" onclick="_psychAvailChangeMonth(-1)">← Mes ant.</button>
+                    <span style="font-weight:600;font-size:15px" id="psychAvailMonthLabel"></span>
+                    <button class="btn btn-sm btn-outline" onclick="_psychAvailChangeMonth(1)">Mes sig. →</button>
+                </div>
+                <div id="psychAvailCalendarGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px"></div>
+                <div style="display:flex;gap:12px;margin-top:14px;align-items:center">
+                    <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)"><span style="width:14px;height:14px;border-radius:4px;background:var(--teal);display:inline-block"></span> Disponible</div>
+                    <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)"><span style="width:14px;height:14px;border-radius:4px;border:1.5px solid var(--gold);display:inline-block"></span> Hoy</div>
+                </div>
+            </div>
+            <div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                    <span style="font-weight:600;font-size:13px">Días seleccionados</span>
+                    <button class="btn btn-sm btn-outline" onclick="_psychAvailClearAll()">Limpiar todo</button>
+                </div>
+                <div id="psychAvailSelectedList" style="max-height:420px;overflow:auto;padding-right:4px"></div>
+            </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
             <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
-            <button class="btn btn-primary" onclick="apSavePsychAvailability()">Guardar</button>
+            <button class="btn btn-primary" onclick="apSavePsychAvailability()">Guardar disponibilidad</button>
         </div>
     `;
     document.getElementById('modalBackdrop').classList.add('show');
+    _psychAvailRenderCalendar();
+    _psychAvailRenderSelectedList();
+}
+
+async function loadBienestar() {
+    const searchEl = document.getElementById('psychApptSearchInput');
+    if (searchEl) searchEl.oninput = () => renderTeacherPsychologyAppointments();
+    const btn = document.getElementById('btnPsychAvailability');
+    if (btn) {
+        btn.style.display = canManagePsychologyAppointments() ? '' : 'none';
+        btn.onclick = apOpenPsychAvailabilityModal;
+    }
+    renderTeacherPsychologyAppointments();
 }
 
 async function apSavePsychAvailability() {
-    const profsRaw = String((document.getElementById('psychAvailProfessionals') || {}).value || '').trim();
-    const datesRaw = String((document.getElementById('psychAvailDates') || {}).value || '').trim();
-    const professionals = profsRaw.split('\n').map(line => {
-        const parts = line.split('|').map(x => x.trim());
-        return { name: parts[0] || '', specialty: parts[1] || '' };
-    }).filter(p => p.name);
-    let dates = {};
-    try { dates = datesRaw ? JSON.parse(datesRaw) : {}; } catch (e) { showToast('JSON de fechas invalido', 'error'); return; }
+    const result = _psychAvailBuildDatesFromSelection();
+    if (!result.profDates.length) { showToast('Selecciona al menos un día', 'error'); return; }
+
+    const professionals = [{ name: result.profName, specialty: '' }];
+    const dates = {};
+    dates[result.profName] = result.profDates;
+
     try {
-        const res = await apiFetch('/api/admin/psychology/availability', {
+        const res = await apiFetch('/api/teacher/psychology/availability', {
             method: 'PUT',
             body: JSON.stringify({ professionals, dates })
         });
-        if (!res || !res.ok) throw new Error('Error');
+        if (!res || !res.ok) {
+            const txt = await res.text().catch(() => '');
+            throw new Error(txt || 'HTTP ' + (res ? res.status : 'unknown'));
+        }
         closeModal();
-        showToast('Disponibilidad guardada', 'success');
+        showToast('Disponibilidad guardada correctamente', 'success');
     } catch (e) {
-        showToast('No se pudo guardar la disponibilidad', 'error');
+        console.error(e);
+        showToast('No se pudo guardar la disponibilidad: ' + (e.message || ''), 'error');
     }
 }
 
@@ -6883,7 +7165,7 @@ async function renderTeacherMyEvaluations() {
             ? `<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:1px;margin-bottom:8px">Promedios por pregunta</div><div style="display:flex;flex-wrap:wrap;gap:8px">${Object.entries(averages).map(([k, sum]) => {
                 const label = labels.eval[k] || (k || '').replace(/_/g, ' ');
                 const avg = (sum / (counts[k] || 1)).toFixed(1);
-                return `<div style="background:var(--cream);border:1px solid rgba(11,31,58,0.08);border-radius:8px;padding:8px 12px;font-size:12.5px"><strong>${escapeHtml(label)}</strong>: ${avg}</div>`;
+                return `<div style="background:var(--cream);border:1px solid rgba(11,31,58,0.08);border-radius:8px;padding:8px 12px;font-size:12.5px"><strong>${htmlEscape(label)}</strong>: ${avg}</div>`;
             }).join('')}</div></div>`
             : '';
 
@@ -6903,8 +7185,8 @@ async function renderTeacherMyEvaluations() {
             return `<div class="card" style="margin-bottom:14px">
                 <div class="card-header" style="padding:14px 18px">
                     <div>
-                        <div style="font-size:14px;font-weight:700">${escapeHtml(courseName)}</div>
-                        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Evaluado por ${escapeHtml(studentName)} ${studentCode ? `<span style="font-size:11px;color:var(--text-muted);font-weight:500">${escapeHtml(studentCode)}</span>` : ''} · ${submittedAt}</div>
+                        <div style="font-size:14px;font-weight:700">${htmlEscape(courseName)}</div>
+                        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Evaluado por ${htmlEscape(studentName)} ${studentCode ? `<span style="font-size:11px;color:var(--text-muted);font-weight:500">${htmlEscape(studentCode)}</span>` : ''} · ${submittedAt}</div>
                     </div>
                 </div>
                 <div class="card-body" style="padding:16px 18px">
@@ -6993,7 +7275,8 @@ async function renderTeacherPublicationRequests() {
         searchEl.oninput = () => { renderTeacherPublicationRequests(); };
     }
     try {
-        const items = await tryFetch('/api/teacher/wellbeing/publications/pending') || [];
+        const data = await tryFetch('/api/teacher/wellbeing/publications/pending');
+        let items = Array.isArray(data) ? data : (data && Array.isArray(data.content) ? data.content : []);
         let filtered = items;
         if (query) {
             filtered = items.filter(r => {
@@ -7021,14 +7304,14 @@ async function renderTeacherPublicationRequests() {
             return `<div class="card" style="margin-bottom:14px">
                 <div class="card-header" style="padding:14px 18px">
                     <div>
-                        <div style="font-size:14px;font-weight:700">${escapeHtml(r.title || 'Sin titulo')}</div>
-                        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${sectionLabel} · Solicitada por ${escapeHtml(r.requestedBy || '—')} · ${requestedAt}</div>
+                        <div style="font-size:14px;font-weight:700">${htmlEscape(r.title || 'Sin titulo')}</div>
+                        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${sectionLabel} · Solicitada por ${htmlEscape(r.requestedBy || '—')} · ${requestedAt}</div>
                     </div>
                     <span class="badge badge-gold">Pendiente</span>
                 </div>
                 <div class="card-body" style="padding:16px 18px">
                     <div style="font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;margin-bottom:6px">Autor</div>
-                    <div style="font-size:13px;line-height:1.65;color:var(--text-body);background:var(--cream);border-radius:8px;padding:10px 12px;border:1px solid rgba(11,31,58,0.06)">${escapeHtml(r.author || '—')}</div>
+                    <div style="font-size:13px;line-height:1.65;color:var(--text-body);background:var(--cream);border-radius:8px;padding:10px 12px;border:1px solid rgba(11,31,58,0.06)">${htmlEscape(r.author || '—')}</div>
                     <div style="font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;margin:12px 0 6px">Contenido</div>
                     <div style="font-size:13px;line-height:1.65;color:var(--text-body);background:#fff;border-radius:8px;padding:10px 12px;border:1px solid rgba(11,31,58,0.08);max-height:200px;overflow:auto">${r.content || 'Sin contenido'}</div>
                     ${autoPublishAt ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted)"><strong>Publicacion automatica:</strong> ${autoPublishAt}</div>` : ''}
@@ -7040,7 +7323,8 @@ async function renderTeacherPublicationRequests() {
             </div>`;
         }).join('');
     } catch (e) {
-        container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Error</div><div class="empty-state-text">No se pudieron cargar las solicitudes de publicacion.</div></div>';
+        console.error('Error al cargar solicitudes de publicacion:', e);
+        container.innerHTML = '<div class="empty-state" style="padding:24px 0"><div class="empty-state-title">Error</div><div class="empty-state-text">No se pudieron cargar las solicitudes de publicacion. Revisa tu conexion o permisos.</div></div>';
     }
 }
 
@@ -7419,6 +7703,10 @@ async function init() {
         }
         document.getElementById('sidebarUserName').textContent = currentUser.name;
         document.getElementById('sidebarSpecialization').textContent = currentTeacher.specialization || 'Docente';
+        const navGroupBienestar = document.getElementById('navGroupBienestar');
+        if (navGroupBienestar) {
+            navGroupBienestar.style.display = canAccessTeacherWellbeing() ? '' : 'none';
+        }
         await loadOverview();
         restoreTeacherNavigationState();
     } finally {

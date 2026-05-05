@@ -554,6 +554,26 @@
                     </div>
                 </div>
                 <div class="card">
+                    <div class="card-header"><span class="card-title">Gestión de horarios de estudiantes</span></div>
+                    <div class="card-body">
+                        <div class="alert alert-info" style="margin-bottom:12px">
+                            Busca un estudiante para ver su horario actual, cambiarle de curso dentro del mismo grado o reiniciarle todo el horario.
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Buscar estudiante</label>
+                                <input class="form-input" id="enrollmentScheduleSearch" placeholder="Nombre, código, documento...">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Nivel</label>
+                                <select class="form-input" id="enrollmentScheduleLevelFilter"></select>
+                            </div>
+                        </div>
+                        <div id="enrollmentScheduleTable" class="table-wrap"></div>
+                        <div class="pager" id="enrollmentSchedulePager" style="margin-top:10px"></div>
+                    </div>
+                </div>
+                <div class="card">
                     <div class="card-header"><span class="card-title">Editor del formulario de matrículas</span></div>
                     <div class="card-body">
                         <div class="alert alert-info" style="margin-bottom:12px">

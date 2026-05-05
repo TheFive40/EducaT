@@ -39,4 +39,7 @@ public class ActivitySubmission {
 
     @Column(name = "graded_at")
     private LocalDateTime gradedAt;
+
+    @Column(name = "group_members_json", columnDefinition = "TEXT")
+    private String groupMembersJson;
 }

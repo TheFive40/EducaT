@@ -29,6 +29,8 @@ public class ActivityMapper {
                 .visibleFrom(activity.getVisibleFrom())
                 .attachments(readList(activity.getAttachmentsJson()))
                 .materials(readList(activity.getMaterialsJson()))
+                .isGroupWork(activity.getIsGroupWork())
+                .maxGroupSize(activity.getMaxGroupSize())
                 .build();
     }
     public Activity toEntity(ActivityRequest request) {
@@ -41,6 +43,8 @@ public class ActivityMapper {
                 .visibleFrom(request.getVisibleFrom())
                 .attachmentsJson(writeList(request.getAttachments()))
                 .materialsJson(writeList(request.getMaterials()))
+                .isGroupWork(request.getIsGroupWork())
+                .maxGroupSize(request.getMaxGroupSize())
                 .build();
     }
 

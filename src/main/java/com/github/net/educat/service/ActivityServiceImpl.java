@@ -54,6 +54,8 @@ public class ActivityServiceImpl implements ActivityService {
         activity.setVisibleFrom(request.getVisibleFrom());
         activity.setAttachmentsJson(activityMapper.writeList(request.getAttachments()));
         activity.setMaterialsJson(activityMapper.writeList(request.getMaterials()));
+        activity.setIsGroupWork(request.getIsGroupWork());
+        activity.setMaxGroupSize(request.getMaxGroupSize());
         return activityMapper.toResponse(activityRepository.save(activity));
     }
     @Override

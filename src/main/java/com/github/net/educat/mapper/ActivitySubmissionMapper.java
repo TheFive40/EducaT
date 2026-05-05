@@ -30,6 +30,7 @@ public class ActivitySubmissionMapper {
                 .grade(submission.getGrade())
                 .feedback(submission.getFeedback())
                 .gradedAt(submission.getGradedAt())
+                .groupMembers(readIntList(submission.getGroupMembersJson()))
                 .build();
     }
 
@@ -40,6 +41,7 @@ public class ActivitySubmissionMapper {
                 .isLate(request.getIsLate())
                 .grade(request.getGrade())
                 .feedback(request.getFeedback())
+                .groupMembersJson(writeIntList(request.getGroupMembers()))
                 .build();
     }
 
@@ -52,6 +54,23 @@ public class ActivitySubmissionMapper {
     }
 
     private List<Object> readList(String rawJson) {
+        try {
+            if (rawJson == null || rawJson.isBlank()) return Collections.emptyList();
+            return objectMapper.readValue(rawJson, new TypeReference<>() {});
+        } catch (Exception ex) {
+            return Collections.emptyList();
+        }
+    }
+
+    public String writeIntList(List<Integer> values) {
+        try {
+            return objectMapper.writeValueAsString(values == null ? Collections.emptyList() : values);
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("Cannot serialize group members");
+        }
+    }
+
+    public List<Integer> readIntList(String rawJson) {
         try {
             if (rawJson == null || rawJson.isBlank()) return Collections.emptyList();
             return objectMapper.readValue(rawJson, new TypeReference<>() {});

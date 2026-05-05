@@ -49,6 +49,8 @@ let examTakerState = {
 };
 let studentExamAttempts = [];
 const activitySubmissionCache = {};
+const courseStudentsCache = {};
+const groupParticipantsByActivity = {};
 const runtimeUnitsByCourse = Object.create(null);
 function safeJsonParse(str, fallback) { try { return JSON.parse(str); } catch (e) { return fallback; } }
 
@@ -1303,6 +1305,31 @@ async function joinCourseByCodeAsStudent() {
     if (!code) return showToast('Ingresa un código de curso', 'error');
     try {
         const role = (currentUser && currentUser.role && currentUser.role.name) ? currentUser.role.name : 'ESTUDIANTE';
+        const isStudentRole = /EST|ALUM|STUD/i.test(role);
+
+        // Validación de grado para estudiantes antes de unirse
+        if (isStudentRole && currentStudent && currentStudent.id) {
+            let myGradeId = apMyGradeId || '';
+            let courseGrades = apAdminCourseGrades || {};
+            if (!myGradeId || Object.keys(courseGrades).length === 0) {
+                const [courseGradesRes, studentGradesRes] = await Promise.all([
+                    tryFetch('/api/config/course-grades'),
+                    tryFetch('/api/config/student-grades')
+                ]);
+                courseGrades = (courseGradesRes && courseGradesRes.value) ? safeJsonParse(courseGradesRes.value, {}) : {};
+                const studentGrades = (studentGradesRes && studentGradesRes.value) ? safeJsonParse(studentGradesRes.value, {}) : {};
+                myGradeId = String(studentGrades[String(currentStudent.id)] || '');
+            }
+            const allCourses = await tryFetch('/api/courses') || [];
+            const course = allCourses.find(c => String(c.courseCode || '').trim().toLowerCase() === code.toLowerCase());
+            if (course && myGradeId) {
+                const courseGradeId = String(courseGrades[String(course.id || '')] || '');
+                if (courseGradeId && courseGradeId !== myGradeId) {
+                    return showToast('No puedes unirte a este curso porque no pertenece a tu grado.', 'error');
+                }
+            }
+        }
+
         const resp = await postJson('/api/courses/join-by-code', { courseCode: code, userId: currentUser.id, role });
         if (!resp || resp.success === false) return showToast((resp && resp.message) || 'No se pudo unir al curso', 'error');
         closeModal();
@@ -3433,7 +3460,8 @@ function apRenderWellnessSection(section) {
     if (!section) { host.innerHTML = ''; return; }
     const state = apGetWellnessState();
     if (section === 'psychology') {
-        host.innerHTML = apRenderSocialFeed('psychology', 'Apoyo Psicológico', `<button class="btn btn-sm btn-primary" onclick="apOpenPsychAppointmentModal()">Agendar cita</button><button class="btn btn-sm btn-outline" onclick="apOpenPsychHistoryModal()">Mis citas</button>`);
+        host.innerHTML = `<div id="psychPendingSlot"></div>` + apRenderSocialFeed('psychology', 'Apoyo Psicológico', `<button class="btn btn-sm btn-primary" onclick="apOpenPsychAppointmentModal()">Agendar cita</button><button class="btn btn-sm btn-outline" onclick="apOpenPsychHistoryModal()">Mis citas</button>`);
+        apFillPsychPendingSection();
         return;
     }
     if (section === 'sports') {
@@ -3480,6 +3508,119 @@ async function apLoadPsychologyAppointments() {
     }
 }
 
+async function apFillPsychPendingSection() {
+    const slot = document.getElementById('psychPendingSlot');
+    if (!slot) return;
+    await apLoadPsychologyAppointments();
+    const appointments = psychologyAppointmentsCache || [];
+    const cancelled = appointments.filter(a => String(a.status).toUpperCase() === 'CANCELLED');
+    const scheduled = appointments.filter(a => String(a.status).toUpperCase() === 'SCHEDULED').sort((a, b) => {
+        const da = new Date((a.appointmentDate || '') + 'T00:00:00').getTime();
+        const db = new Date((b.appointmentDate || '') + 'T00:00:00').getTime();
+        if (da !== db) return da - db;
+        return (a.slot || '').localeCompare(b.slot || '');
+    });
+
+    let html = '';
+
+    // Banner de cancelaciones no notificadas
+    const notifiedIds = readNotifiedCancelledAppointments();
+    const newCancelled = cancelled.filter(a => !notifiedIds.includes(a.id));
+    if (newCancelled.length) {
+        html += `<div id="psychCancelBanner" style="background:var(--error-bg);border:1px solid rgba(192,57,43,0.2);border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;gap:12px;align-items:flex-start">
+            <svg width="20" height="20" fill="none" stroke="var(--error)" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <div style="flex:1">
+                <div style="font-size:13px;font-weight:600;color:var(--error);margin-bottom:4px">Se han cancelado ${newCancelled.length} cita${newCancelled.length===1?'':'s'}</div>
+                <div style="font-size:12px;color:var(--text-body);line-height:1.5">${newCancelled.map(a => `<span style="display:block;margin-bottom:2px">• ${escapeHtml(a.professionalName || '—')} · ${escapeHtml(a.appointmentDate || '—')} · ${escapeHtml(a.slot || '—')}</span>`).join('')}</div>
+            </div>
+            <button class="btn btn-sm btn-outline" style="border-color:var(--error);color:var(--error);flex-shrink:0" onclick="apMarkCancelledAsNotified();document.getElementById('psychCancelBanner').remove()">Entendido</button>
+        </div>`;
+    }
+
+    if (scheduled.length) {
+        html += `<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">Próximas citas</span><span class="badge badge-gold">${scheduled.length}</span></div><div class="card-body" style="padding:14px 18px">`;
+        html += scheduled.map(a => `
+            <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(11,31,58,0.05)">
+                <div style="width:36px;height:36px;border-radius:9px;background:rgba(200,150,46,0.1);display:flex;align-items:center;justify-content:center;color:var(--gold);flex-shrink:0">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                </div>
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:13px;font-weight:600;color:var(--text-dark)">${escapeHtml(a.professionalName || '—')}</div>
+                    <div style="font-size:12px;color:var(--text-muted)">${escapeHtml(a.appointmentDate || '—')} · ${escapeHtml(a.slot || '—')}</div>
+                </div>
+                <span class="badge badge-gold">Agendada</span>
+            </div>
+        `).join('');
+        html += `</div></div>`;
+    }
+
+    slot.innerHTML = html;
+}
+
+async function apCancelPsychAppointment(id) {
+    if (!confirm('¿Seguro que deseas cancelar esta cita?')) return;
+    try {
+        const res = await apiFetch('/api/student/psychology/appointments/' + id, { method: 'DELETE' });
+        if (!res || !res.ok) throw new Error('Error');
+        showToast('Cita cancelada', 'success');
+        await apLoadPsychologyAppointments();
+        apFillPsychPendingSection();
+        apOpenPsychHistoryModal();
+    } catch (e) {
+        showToast('No se pudo cancelar la cita', 'error');
+    }
+}
+
+const PSYCH_NOTIFIED_KEY = 'educat_psych_cancel_notified';
+
+function readNotifiedCancelledAppointments() {
+    try {
+        const raw = localStorage.getItem(PSYCH_NOTIFIED_KEY) || '[]';
+        return JSON.parse(raw);
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveNotifiedCancelledAppointments(ids) {
+    localStorage.setItem(PSYCH_NOTIFIED_KEY, JSON.stringify(Array.isArray(ids) ? ids : []));
+}
+
+async function apCheckPsychAppointmentNotifications() {
+    try {
+        const data = await tryFetch('/api/student/psychology/appointments');
+        const appointments = Array.isArray(data) ? data : [];
+        psychologyAppointmentsCache = appointments;
+        const cancelled = appointments.filter(a => String(a.status).toUpperCase() === 'CANCELLED');
+        if (!cancelled.length) return;
+        const notifiedIds = readNotifiedCancelledAppointments();
+        const newCancelled = cancelled.filter(a => !notifiedIds.includes(a.id));
+        if (!newCancelled.length) return;
+        const listHtml = newCancelled.map(a => {
+            return `<div style="margin-bottom:10px;padding:10px;background:var(--cream);border-radius:8px;border:1px solid rgba(11,31,58,0.08)">
+                <div style="font-size:13px;font-weight:600">Cita cancelada</div>
+                <div style="font-size:12px;color:var(--text-muted)">${a.professionalName || '—'} · ${a.appointmentDate || '—'} · ${a.slot || '—'}</div>
+                <div style="font-size:12px;color:var(--text-body);margin-top:4px">${a.resolutionComment || 'Tu cita ha sido cancelada. Por favor agenda una nueva cita si lo necesitas.'}</div>
+            </div>`;
+        }).join('');
+        document.getElementById('modalTitle').textContent = 'Notificacion de citas';
+        document.getElementById('modalBody').innerHTML = `<div style="font-size:13px;color:var(--text-body);line-height:1.6;margin-bottom:10px">Se han cancelado las siguientes citas:</div>${listHtml}<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn btn-primary" onclick="apMarkCancelledAsNotified();closeModal();">Entendido</button></div>`;
+        document.getElementById('modalBackdrop').classList.add('show');
+    } catch (e) {
+        // Silenciar errores de notificacion para no interrumpir la carga
+    }
+}
+
+function apMarkCancelledAsNotified() {
+    try {
+        const data = psychologyAppointmentsCache || [];
+        const cancelledIds = data.filter(a => String(a.status).toUpperCase() === 'CANCELLED').map(a => a.id);
+        const notifiedIds = readNotifiedCancelledAppointments();
+        const merged = Array.from(new Set([...notifiedIds, ...cancelledIds]));
+        saveNotifiedCancelledAppointments(merged);
+    } catch (e) {}
+}
+
 function apPsychGetProfessionals() {
     const cfg = psychologyAvailabilityCache || {};
     const professionals = cfg.professionals || apCatalogList('psychologists') || [];
@@ -3488,30 +3629,67 @@ function apPsychGetProfessionals() {
 
 function apPsychModalRefreshSlots() {
     const profName = (document.getElementById('psyModalProfessional') || {}).value;
-    const date = (document.getElementById('psyModalDate') || {}).value;
+    const dateSel = document.getElementById('psyModalDate');
     const slotSel = document.getElementById('psyModalSlot');
-    if (!slotSel) return;
+    if (!slotSel || !dateSel) return;
     const cfg = psychologyAvailabilityCache || {};
     const dates = cfg.dates || {};
     const profDates = dates[profName] || [];
-    const dateInfo = profDates.find(d => d.date === date);
+    const selectedDate = dateSel.value;
+    const dateInfo = profDates.find(d => d.date === selectedDate);
+    const slots = (dateInfo && dateInfo.slots && dateInfo.slots.length) ? dateInfo.slots : ['Sin disponibilidad'];
+    slotSel.innerHTML = slots.map(s => `<option value="${s}">${s}</option>`).join('');
+}
+
+async function apPsychModalRefreshDates() {
+    const profName = (document.getElementById('psyModalProfessional') || {}).value;
+    const dateSel = document.getElementById('psyModalDate');
+    if (!dateSel) return;
+    const cfg = await tryFetch('/api/psychology/availability/free?professionalName=' + encodeURIComponent(profName));
+    window._psychAvailFreeCache = cfg || {};
+    const dates = (cfg && cfg.dates) || {};
+    const profDates = dates[profName] || [];
+    if (!profDates.length) {
+        dateSel.innerHTML = '<option value="">Sin fechas disponibles</option>';
+        return;
+    }
+    dateSel.innerHTML = profDates.map(d => {
+        const label = new Date(d.date + 'T00:00:00').toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
+        return `<option value="${d.date}">${label}</option>`;
+    }).join('');
+    apPsychModalRefreshSlots();
+}
+
+function apPsychModalRefreshSlots() {
+    const profName = (document.getElementById('psyModalProfessional') || {}).value;
+    const dateSel = document.getElementById('psyModalDate');
+    const slotSel = document.getElementById('psyModalSlot');
+    if (!slotSel || !dateSel) return;
+    const cfg = window._psychAvailFreeCache || {};
+    const dates = cfg.dates || {};
+    const profDates = dates[profName] || [];
+    const selectedDate = dateSel.value;
+    const dateInfo = profDates.find(d => d.date === selectedDate);
     const slots = (dateInfo && dateInfo.slots && dateInfo.slots.length) ? dateInfo.slots : ['Sin disponibilidad'];
     slotSel.innerHTML = slots.map(s => `<option value="${s}">${s}</option>`).join('');
 }
 
 async function apOpenPsychAppointmentModal() {
+    await apLoadPsychologyAppointments();
+    const existingScheduled = (psychologyAppointmentsCache || []).find(a => String(a.status).toUpperCase() === 'SCHEDULED');
+    if (existingScheduled) {
+        document.getElementById('modalTitle').textContent = 'Ya tienes una cita agendada';
+        document.getElementById('modalBody').innerHTML = `<div style="font-size:13px;color:var(--text-body);line-height:1.7;margin-bottom:14px">Ya cuentas con una cita psicológica agendada:<br><strong>${escapeHtml(existingScheduled.professionalName || '—')}</strong> · ${escapeHtml(existingScheduled.appointmentDate || '—')} · ${escapeHtml(existingScheduled.slot || '—')}</div><div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn btn-outline" onclick="closeModal()">Cerrar</button><button class="btn btn-danger" onclick="apCancelPsychAppointment(${existingScheduled.id});closeModal()">Cancelar cita y agendar nueva</button></div>`;
+        srtSetModalSize('lg');
+        document.getElementById('modalBackdrop').classList.add('show');
+        return;
+    }
     await apLoadPsychologyAvailability();
     const professionals = apPsychGetProfessionals();
     const profOptions = professionals.map(p => `<option value="${p.name || p.id}">${p.name} — ${p.specialty || ''}</option>`).join('');
     document.getElementById('modalTitle').textContent = 'Agendar cita psicológica';
-    document.getElementById('modalBody').innerHTML = `<div class="form-group"><label class="form-label">Psicóloga</label><select id="psyModalProfessional" class="form-input" onchange="apPsychModalRefreshSlots()">${profOptions}</select></div><div class="form-row"><div class="form-group"><label class="form-label">Fecha disponible</label><input type="date" id="psyModalDate" class="form-input" onchange="apPsychModalRefreshSlots()"></div><div class="form-group"><label class="form-label">Hora</label><select id="psyModalSlot" class="form-input"></select></div></div><div class="form-group"><label class="form-label">Motivo de la consulta</label>${buildStudentRichEditorHtml('psyModalReasonEditor',120)}</div><button class="btn btn-primary" onclick="apSubmitPsychAppointment()">Agendar cita</button>`;
-    const firstProf = professionals[0];
-    const cfg = psychologyAvailabilityCache || {};
-    const dates = cfg.dates || {};
-    const profDates = firstProf ? (dates[firstProf.name || firstProf.id] || []) : [];
-    const dateInput = document.getElementById('psyModalDate');
-    if (firstProf && dateInput && profDates.length) dateInput.value = profDates[0].date;
-    apPsychModalRefreshSlots();
+    document.getElementById('modalBody').innerHTML = `<div class="form-group"><label class="form-label">Psicóloga</label><select id="psyModalProfessional" class="form-input" onchange="apPsychModalRefreshDates()">${profOptions}</select></div><div class="form-row"><div class="form-group"><label class="form-label">Fecha disponible</label><select id="psyModalDate" class="form-input" onchange="apPsychModalRefreshSlots()"></select></div><div class="form-group"><label class="form-label">Hora</label><select id="psyModalSlot" class="form-input"></select></div></div><div class="form-group"><label class="form-label">Motivo de la consulta</label>${buildStudentRichEditorHtml('psyModalReasonEditor',120)}</div><button class="btn btn-primary" onclick="apSubmitPsychAppointment()">Agendar cita</button>`;
+    apPsychModalRefreshDates();
     srtSetModalSize('xl');
     document.getElementById('modalBackdrop').classList.add('show');
 }
@@ -3545,7 +3723,8 @@ async function apOpenPsychHistoryModal() {
     document.getElementById('modalBody').innerHTML = `<div class="bw-mini-list">${appointments.length ? appointments.slice().reverse().map(a => {
         const statusMap = { SCHEDULED: { text: 'Agendada', cls: 'badge-gold' }, COMPLETED: { text: 'Completada', cls: 'badge-success' }, CANCELLED: { text: 'Cancelada', cls: 'badge-error' } };
         const s = statusMap[a.status] || { text: a.status, cls: 'badge-navy' };
-        return `<div class="bw-mini-item"><strong>${a.professionalName}</strong><span>${a.appointmentDate} · ${a.slot}</span><span class="badge ${s.cls}">${s.text}</span>${a.resolutionComment ? `<span style="font-size:12px;color:var(--text-muted)">Resolución: ${a.resolutionComment}</span>` : ''}</div>`;
+        const cancelBtn = String(a.status).toUpperCase() === 'SCHEDULED' ? `<button class="btn btn-sm btn-danger" style="margin-top:6px;align-self:flex-start" onclick="apCancelPsychAppointment(${a.id})">Cancelar cita</button>` : '';
+        return `<div class="bw-mini-item"><strong>${escapeHtml(a.professionalName || '—')}</strong><span>${a.appointmentDate || '—'} · ${a.slot || '—'}</span><span class="badge ${s.cls}">${s.text}</span>${a.resolutionComment ? `<span style="font-size:12px;color:var(--text-muted)">Resolución: ${escapeHtml(a.resolutionComment)}</span>` : ''}${cancelBtn}</div>`;
     }).join('') : '<div style="font-size:12.5px;color:var(--text-muted)">Sin citas registradas.</div>'}</div>`;
     srtSetModalSize('lg');
     document.getElementById('modalBackdrop').classList.add('show');
@@ -3690,6 +3869,15 @@ async function saveProfile() {
     showToast('Perfil actualizado','success');
 }
 
+async function loadCourseStudents(courseId) {
+    if (!courseId) return [];
+    if (courseStudentsCache[courseId]) return courseStudentsCache[courseId];
+    const data = await tryFetch('/api/courses/' + courseId + '/students');
+    const list = Array.isArray(data) ? data : [];
+    courseStudentsCache[courseId] = list;
+    return list;
+}
+
 async function loadStudentSubmissions(courseId) {
     const sid = currentStudent ? currentStudent.id : null;
     if (!sid || !courseId) return;
@@ -3712,7 +3900,8 @@ async function loadStudentSubmissions(courseId) {
             feedback: sub.feedback || '',
             gradedAt: sub.gradedAt,
             isLate: !!sub.isLate,
-            id: sub.id
+            id: sub.id,
+            groupMembers: Array.isArray(sub.groupMembers) ? sub.groupMembers : []
         };
     }
 }
@@ -3732,7 +3921,8 @@ async function refreshStudentSubmission(actId) {
         feedback: data.feedback || '',
         gradedAt: data.gradedAt,
         isLate: !!data.isLate,
-        id: data.id
+        id: data.id,
+        groupMembers: Array.isArray(data.groupMembers) ? data.groupMembers : []
     };
 }
 
@@ -3795,12 +3985,100 @@ function renderUnitTabs() {
     bar.innerHTML = units.map((u,i)=>`<button class="unit-tab ${i===0?'active':''}" onclick="renderUnit(${i})"><span class="unit-tab-num">${i+1}</span>${u.name}</button>`).join('');
 }
 
+function groupParticipantInputHtml(actId, courseId, initialMembers) {
+    const initial = Array.isArray(initialMembers) ? initialMembers : [];
+    groupParticipantsByActivity[actId] = initial.map(m => parseInt(m, 10)).filter(Boolean);
+    const tags = initial.map(id => `<span class="gp-tag" data-id="${id}" id="gp-tag-${actId}-${id}">${escapeHtml(getStudentNameById(id))} <button type="button" onclick="removeGroupParticipant(${actId},${id})" style="background:none;border:none;color:inherit;cursor:pointer;padding:0 2px">×</button></span>`).join('');
+    return `
+    <div class="form-group" style="position:relative">
+        <label class="form-label">Participantes <span style="font-weight:400;color:var(--text-muted)">(escribe @ + nombre para buscar compañeros)</span></label>
+        <div class="gp-input-wrap" id="gp-wrap-${actId}">
+            ${tags}
+            <input type="text" class="gp-input" id="gp-input-${actId}" placeholder="@nombre..." oninput="handleGroupParticipantInput(${actId},${courseId},this.value)">
+        </div>
+        <div class="gp-dropdown" id="gp-dropdown-${actId}" style="display:none"></div>
+        <input type="hidden" id="gp-members-${actId}" value="${initial.join(',')}">
+    </div>`;
+}
+
+function getStudentNameById(studentId) {
+    const id = parseInt(studentId, 10);
+    const students = Object.values(courseStudentsCache).flat();
+    const s = students.find(x => x.id === id || (x.user && x.user.id === id));
+    return s ? (s.user ? s.user.name : s.name) : ('Estudiante ' + id);
+}
+
+function removeGroupParticipant(actId, studentId) {
+    const arr = groupParticipantsByActivity[actId] || [];
+    groupParticipantsByActivity[actId] = arr.filter(id => id !== studentId);
+    const tag = document.getElementById('gp-tag-' + actId + '-' + studentId);
+    if (tag) tag.remove();
+    const hidden = document.getElementById('gp-members-' + actId);
+    if (hidden) hidden.value = (groupParticipantsByActivity[actId] || []).join(',');
+}
+
+async function handleGroupParticipantInput(actId, courseId, value) {
+    const dropdown = document.getElementById('gp-dropdown-' + actId);
+    if (!dropdown) return;
+    const query = String(value || '').trim();
+    if (!query.startsWith('@') || query.length < 2) {
+        dropdown.style.display = 'none';
+        return;
+    }
+    const search = query.slice(1).toLowerCase();
+    const students = await loadCourseStudents(courseId);
+    const sid = currentStudent ? currentStudent.id : null;
+    const currentMembers = groupParticipantsByActivity[actId] || [];
+    const matches = students.filter(s => {
+        const id = s.id || (s.user && s.user.id);
+        if (id === sid) return false;
+        if (currentMembers.includes(id)) return false;
+        const name = String(s.user ? s.user.name : s.name || '').toLowerCase();
+        return name.includes(search);
+    }).slice(0, 5);
+    if (!matches.length) {
+        dropdown.style.display = 'none';
+        return;
+    }
+    dropdown.innerHTML = matches.map(s => {
+        const id = s.id || (s.user && s.user.id);
+        const name = escapeHtml(s.user ? s.user.name : s.name);
+        return `<div class="gp-option" onclick="selectGroupParticipant(${actId},${id},'${escapeJsSingle(name)}')">${name}</div>`;
+    }).join('');
+    dropdown.style.display = 'block';
+}
+
+function selectGroupParticipant(actId, studentId, name) {
+    const arr = groupParticipantsByActivity[actId] || [];
+    if (!arr.includes(studentId)) {
+        arr.push(studentId);
+        groupParticipantsByActivity[actId] = arr;
+    }
+    const wrap = document.getElementById('gp-wrap-' + actId);
+    const input = document.getElementById('gp-input-' + actId);
+    if (wrap) {
+        const tag = document.createElement('span');
+        tag.className = 'gp-tag';
+        tag.id = 'gp-tag-' + actId + '-' + studentId;
+        tag.dataset.id = studentId;
+        tag.innerHTML = escapeHtml(name) + ` <button type="button" onclick="removeGroupParticipant(${actId},${studentId})" style="background:none;border:none;color:inherit;cursor:pointer;padding:0 2px">×</button>`;
+        wrap.insertBefore(tag, input);
+    }
+    if (input) input.value = '';
+    const hidden = document.getElementById('gp-members-' + actId);
+    if (hidden) hidden.value = arr.join(',');
+    const dropdown = document.getElementById('gp-dropdown-' + actId);
+    if (dropdown) dropdown.style.display = 'none';
+}
+
 function renderSubmissionSection(act, sub) {
     const actId = act.id;
+    const courseId = act.course ? act.course.id : currentCourse.id;
     const allowLate = allowsLateSubmission(act);
     const deadline = getActivityDeadline(act);
     const isOverdueNow = !!deadline && new Date() > deadline;
     const isLate = isSubmissionLate(act, sub);
+    const isGroupWork = act.isGroupWork === true;
     const iconFile=`<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
     const iconSend=`<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
     const iconCheck=`<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`;
@@ -3810,26 +4088,35 @@ function renderSubmissionSection(act, sub) {
     const iconRefresh=`<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>`;
     const iconMsg=`<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>`;
     const iconChevron=`<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>`;
+    const iconLeave=`<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`;
     function commentToggle(comment,uid) {
         if(!comment) return '';
         return `<div class="sub-comment-toggle" id="sct-wrap-${uid}"><button class="sub-comment-toggle-btn" onclick="toggleSubComment('${uid}')"><span style="display:flex;align-items:center;gap:6px">${iconMsg} Comentario del estudiante <span class="sub-comment-count">1</span></span><span class="sub-comment-chevron" id="sct-chev-${uid}">${iconChevron}</span></button><div class="sub-comment-body" id="sct-body-${uid}" style="display:none"><div class="sub-comment-text">${comment}</div></div></div>`;
     }
+    function groupMembersHtml(members) {
+        if (!members || !members.length) return '';
+        const names = members.map(id => escapeHtml(getStudentNameById(id))).join(', ');
+        return `<div style="font-size:12px;color:var(--text-muted);margin-top:8px"><strong>Compañeros de grupo:</strong> ${names}</div>`;
+    }
     if (sub&&sub.graded) {
         const uid='graded-'+actId;
-        return `<div class="submission-status-bar graded" style="margin-top:18px"><div class="submission-status-icon">${iconStar}</div><div class="submission-status-info"><div class="submission-status-label">Calificado</div><div class="submission-status-detail">Entregado el ${new Date(sub.submittedAt).toLocaleDateString('es-CO')}${isLate ? ' · Con retraso' : ''}</div></div>${isLate ? '<span class="badge badge-warning">Tardia</span>' : ''}</div><div class="submission-grade-display"><div class="submission-grade-num">${sub.grade}</div><div class="submission-grade-sep"></div><div class="submission-grade-info"><div class="submission-grade-label">Retroalimentación del Docente</div><div class="submission-grade-comment">${sub.feedback||'Sin comentarios adicionales.'}</div></div></div>${commentToggle(sub.comment,uid)}`;
+        return `<div class="submission-status-bar graded" style="margin-top:18px"><div class="submission-status-icon">${iconStar}</div><div class="submission-status-info"><div class="submission-status-label">Calificado</div><div class="submission-status-detail">Entregado el ${new Date(sub.submittedAt).toLocaleDateString('es-CO')}${isLate ? ' · Con retraso' : ''}</div></div>${isLate ? '<span class="badge badge-warning">Tardia</span>' : ''}</div><div class="submission-grade-display"><div class="submission-grade-num">${sub.grade}</div><div class="submission-grade-sep"></div><div class="submission-grade-info"><div class="submission-grade-label">Retroalimentación del Docente</div><div class="submission-grade-comment">${sub.feedback||'Sin comentarios adicionales.'}</div></div></div>${commentToggle(sub.comment,uid)}${isGroupWork ? groupMembersHtml(sub.groupMembers) : ''}`;
     }
     if (sub&&sub.editing) {
-        return `<div class="submission-upload-section" style="margin-top:18px"><div class="submission-section-title"><span>Editar Entrega</span><span class="badge badge-gold">Editando</span></div><textarea class="submission-comment-input" id="sub-comment-${actId}" placeholder="Comentario para el docente (opcional)...">${sub.prevComment||''}</textarea><div class="submission-file-drop" id="sub-drop-${actId}" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleSubDrop(event,${actId})"><input type="file" multiple onchange="handleSubFile(event,${actId})"><div class="submission-file-drop-text">Arrastra archivos aquí o haz clic para seleccionar</div><div class="submission-file-drop-sub">PDF, imágenes, documentos Word</div></div><div id="sub-files-${actId}"></div><div class="submission-actions" style="gap:8px"><button class="btn btn-teal" onclick="submitActivity(${actId})">${iconSend} Guardar cambios</button><button class="btn btn-outline btn-sm" onclick="cancelEditSubmission(${actId})" style="background:transparent">Cancelar</button></div></div>`;
+        const gpInput = isGroupWork ? groupParticipantInputHtml(actId, courseId, sub.groupMembers) : '';
+        return `<div class="submission-upload-section" style="margin-top:18px"><div class="submission-section-title"><span>Editar Entrega</span><span class="badge badge-gold">Editando</span></div>${gpInput}<textarea class="submission-comment-input" id="sub-comment-${actId}" placeholder="Comentario para el docente (opcional)...">${sub.prevComment||''}</textarea><div class="submission-file-drop" id="sub-drop-${actId}" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleSubDrop(event,${actId})"><input type="file" multiple onchange="handleSubFile(event,${actId})"><div class="submission-file-drop-text">Arrastra archivos aquí o haz clic para seleccionar</div><div class="submission-file-drop-sub">PDF, imágenes, documentos Word</div></div><div id="sub-files-${actId}"></div><div class="submission-actions" style="gap:8px"><button class="btn btn-teal" onclick="submitActivity(${actId})">${iconSend} Guardar cambios</button><button class="btn btn-outline btn-sm" onclick="cancelEditSubmission(${actId})" style="background:transparent">Cancelar</button></div></div>`;
     }
     if (sub&&sub.submitted) {
         const submittedDate = new Date(sub.submittedAt).toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
         const uid='sub-'+actId;
-        return `<div class="submission-status-bar submitted" style="margin-top:18px"><div class="submission-status-icon">${iconCheck}</div><div class="submission-status-info"><div class="submission-status-label">Entrega realizada</div><div class="submission-status-detail">Enviado el ${submittedDate} — Pendiente de calificación</div></div>${isLate ? '<span class="badge badge-warning">Con retraso</span>' : ''}<div class="submission-status-actions"><button class="sub-action-btn edit" onclick="editSubmission(${actId})">${iconEdit} Editar</button><button class="sub-action-btn resubmit" onclick="resubmitActivity(${actId})">${iconRefresh} Reenviar</button><button class="sub-action-btn delete" onclick="deleteSubmission(${actId})">${iconTrash} Eliminar</button></div></div>${commentToggle(sub.comment,uid)}${sub.files&&sub.files.length?`<div class="announcement-section-label" style="margin-top:12px">Archivos enviados</div><div class="attachment-list">${sub.files.map(f=>`<div class="attachment-item"><div class="attachment-icon doc">${iconFile}</div><span class="attachment-name">${f.name}</span><span class="attachment-meta">${(f.size/1024).toFixed(0)} KB</span></div>`).join('')}</div>`:''}`;
+        const groupActions = isGroupWork ? `<button class="sub-action-btn delete" onclick="leaveActivityGroup(${actId})">${iconLeave} Abandonar grupo</button>` : '';
+        return `<div class="submission-status-bar submitted" style="margin-top:18px"><div class="submission-status-icon">${iconCheck}</div><div class="submission-status-info"><div class="submission-status-label">Entrega realizada</div><div class="submission-status-detail">Enviado el ${submittedDate} — Pendiente de calificación</div></div>${isLate ? '<span class="badge badge-warning">Con retraso</span>' : ''}<div class="submission-status-actions"><button class="sub-action-btn edit" onclick="editSubmission(${actId})">${iconEdit} Editar</button><button class="sub-action-btn resubmit" onclick="resubmitActivity(${actId})">${iconRefresh} Reenviar</button><button class="sub-action-btn delete" onclick="deleteSubmission(${actId})">${iconTrash} Eliminar</button>${groupActions}</div></div>${commentToggle(sub.comment,uid)}${sub.files&&sub.files.length?`<div class="announcement-section-label" style="margin-top:12px">Archivos enviados</div><div class="attachment-list">${sub.files.map(f=>`<div class="attachment-item"><div class="attachment-icon doc">${iconFile}</div><span class="attachment-name">${f.name}</span><span class="attachment-meta">${(f.size/1024).toFixed(0)} KB</span></div>`).join('')}</div>`:''}${isGroupWork ? groupMembersHtml(sub.groupMembers) : ''}`;
     }
     if (isOverdueNow && !allowLate) {
         return `<div class="submission-upload-section" style="margin-top:18px"><div class="submission-section-title"><span>Entregar Actividad</span><span class="badge badge-error">Bloqueada fuera de fecha</span></div><div class="alert alert-error" style="margin-bottom:0"><svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>La fecha de entrega ya vencio y el docente no permite entregas con retraso.</div></div>`;
     }
-    return `<div class="submission-upload-section" style="margin-top:18px"><div class="submission-section-title"><span>Entregar Actividad</span><span class="badge ${allowLate ? 'badge-warning' : 'badge-navy'}">${allowLate ? 'Permite retraso' : 'Sin retraso'}</span></div><textarea class="submission-comment-input" id="sub-comment-${actId}" placeholder="Comentario para el docente (opcional)..."></textarea><div class="submission-file-drop" id="sub-drop-${actId}" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleSubDrop(event,${actId})"><input type="file" multiple onchange="handleSubFile(event,${actId})"><div class="submission-file-drop-text">Arrastra archivos aquí o haz clic para seleccionar</div><div class="submission-file-drop-sub">PDF, imágenes, documentos Word</div></div><div id="sub-files-${actId}"></div><div class="submission-actions"><button class="btn btn-teal" onclick="submitActivity(${actId})">${iconSend} Enviar entrega</button></div></div>`;
+    const gpInput = isGroupWork ? groupParticipantInputHtml(actId, courseId, []) : '';
+    return `<div class="submission-upload-section" style="margin-top:18px"><div class="submission-section-title"><span>Entregar Actividad</span><span class="badge ${allowLate ? 'badge-warning' : 'badge-navy'}">${allowLate ? 'Permite retraso' : 'Sin retraso'}</span></div>${gpInput}<textarea class="submission-comment-input" id="sub-comment-${actId}" placeholder="Comentario para el docente (opcional)..."></textarea><div class="submission-file-drop" id="sub-drop-${actId}" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleSubDrop(event,${actId})"><input type="file" multiple onchange="handleSubFile(event,${actId})"><div class="submission-file-drop-text">Arrastra archivos aquí o haz clic para seleccionar</div><div class="submission-file-drop-sub">PDF, imágenes, documentos Word</div></div><div id="sub-files-${actId}"></div><div class="submission-actions"><button class="btn btn-teal" onclick="submitActivity(${actId})">${iconSend} Enviar entrega</button></div></div>`;
 }
 
 function toggleSubComment(uid) {
@@ -3913,13 +4200,26 @@ async function submitActivity(actId) {
     if(!finalFiles.length&&existing&&existing.files) finalFiles=existing.files;
     const sid = currentStudent ? currentStudent.id : null;
     if (!sid) { showToast('No se pudo identificar al estudiante', 'error'); return; }
-    const payload = { activityId: actId, studentId: sid, comment, files: finalFiles, isLate: lateNow };
+
+    // Validar trabajo en grupo
+    const isGroupWork = act && act.isGroupWork === true;
+    let groupMembers = [];
+    if (isGroupWork) {
+        groupMembers = (groupParticipantsByActivity[actId] || []).filter(id => id !== sid);
+        const maxSize = act.maxGroupSize || 2;
+        if (groupMembers.length >= maxSize) {
+            showToast('El grupo no puede tener más de ' + maxSize + ' estudiantes.', 'error');
+            return;
+        }
+    }
+
+    const payload = { activityId: actId, studentId: sid, comment, files: finalFiles, isLate: lateNow, groupMembers };
     try {
         const saved = await postJson('/api/activity-submissions', payload);
         if (saved) {
-            saveSubmission(actId, { submitted: true, submittedAt: saved.submittedAt || new Date().toISOString(), comment, files: finalFiles, graded: saved.grade != null, grade: saved.grade, feedback: saved.feedback, editing: false, isLate: lateNow });
+            saveSubmission(actId, { submitted: true, submittedAt: saved.submittedAt || new Date().toISOString(), comment, files: finalFiles, graded: saved.grade != null, grade: saved.grade, feedback: saved.feedback, editing: false, isLate: lateNow, groupMembers: saved.groupMembers || groupMembers });
         } else {
-            saveSubmission(actId, { submitted: true, submittedAt: new Date().toISOString(), comment, files: finalFiles, graded: false, editing: false, isLate: lateNow });
+            saveSubmission(actId, { submitted: true, submittedAt: new Date().toISOString(), comment, files: finalFiles, graded: false, editing: false, isLate: lateNow, groupMembers });
         }
     } catch (e) {
         showToast('Error enviando entrega al servidor', 'error');
@@ -3927,6 +4227,21 @@ async function submitActivity(actId) {
     }
     delete actSubmissionFiles[actId];
     showToast('Actividad entregada correctamente','success'); renderUnit(currentUnitIdx);
+}
+
+async function leaveActivityGroup(actId) {
+    const sid = currentStudent ? currentStudent.id : null;
+    if (!sid) return;
+    openConfirmModal('Abandonar grupo', '¿Seguro que quieres abandonar este grupo? Tu entrega será eliminada y tendrás que volver a entregar la actividad.', async () => {
+        try {
+            await apiFetch('/api/activity-submissions/activity/' + actId + '/student/' + sid + '/leave-group', { method: 'POST' });
+            delete activitySubmissionCache[sid + '_' + actId];
+            showToast('Has abandonado el grupo', 'success');
+            renderUnit(currentUnitIdx);
+        } catch (e) {
+            showToast('Error al abandonar el grupo', 'error');
+        }
+    }, 'Abandonar');
 }
 
 function renderUnit(idx, options) {
@@ -4278,6 +4593,7 @@ async function init() {
             currentStudent = { id: 0, studentCode: 'ACCESO-ADMIN' };
         }
         await apLoadWellnessContentFromBackend().catch(() => {});
+        apCheckPsychAppointmentNotifications().catch(() => {});
         try {
             const gp = await tryFetch('/api/config/grade-policy');
             if (gp && gp.value) studentSchedulePolicy = { ...studentSchedulePolicy, ...JSON.parse(gp.value) };

@@ -15,4 +15,5 @@ public class ActivitySubmissionRequest {
     private Boolean isLate;
     private java.math.BigDecimal grade;
     private String feedback;
+    private java.util.List<Integer> groupMembers;
 }

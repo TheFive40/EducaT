@@ -526,3 +526,21 @@ textarea.form-input{resize:vertical;min-height:100px}
     .submission-row{flex-wrap:wrap}
     .submission-date-info{display:none}
 }
+
+/* Psychology availability calendar & blocks */
+.cal-day{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:10px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s ease;border:1.5px solid rgba(11,31,58,0.06);background:var(--white);color:var(--text-dark);user-select:none}
+.cal-day:hover{background:rgba(200,150,46,0.12);border-color:rgba(200,150,46,0.35);transform:translateY(-1px)}
+.cal-day.selected{background:var(--teal);color:#fff;border-color:var(--teal);box-shadow:0 2px 8px rgba(30,107,116,0.25)}
+.cal-day.selected:hover{background:#1a5a61;border-color:#1a5a61}
+.cal-day.today{border-color:var(--gold);color:var(--gold);font-weight:700}
+.cal-day.other-month{color:var(--text-light);background:transparent;border-color:transparent;cursor:default}
+.cal-day.other-month:hover{background:transparent;border-color:transparent;transform:none}
+.cal-day.past{color:var(--text-light);background:transparent;border-color:transparent;cursor:not-allowed;opacity:0.4}
+.cal-day.past:hover{background:transparent;border-color:transparent;transform:none}
+#psychAvailSelectedList::-webkit-scrollbar{width:5px}
+#psychAvailSelectedList::-webkit-scrollbar-thumb{background:rgba(200,150,46,0.3);border-radius:3px}
+#psychAvailCalendarGrid::-webkit-scrollbar{width:4px}
+#psychAvailCalendarGrid::-webkit-scrollbar-thumb{background:rgba(200,150,46,0.3);border-radius:3px}
+@media(max-width:900px){
+    #modalDialog .cal-day{font-size:12px;border-radius:8px}
+}

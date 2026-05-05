@@ -15,4 +15,6 @@ public class ActivityResponse {
     private String visibleFrom;
     private java.util.List<Object> attachments;
     private java.util.List<Object> materials;
+    private Boolean isGroupWork;
+    private Integer maxGroupSize;
 }

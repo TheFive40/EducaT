@@ -16,7 +16,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -51,7 +54,41 @@ public class ActivitySubmissionServiceImpl implements ActivitySubmissionService 
         submission.setActivity(activity);
         submission.setStudent(student);
         submission.setSubmittedAt(LocalDateTime.now());
-        return submissionMapper.toResponse(submissionRepository.save(submission));
+        ActivitySubmission saved = submissionRepository.save(submission);
+
+        // Si es trabajo en grupo, crear entregas para los miembros del grupo
+        List<Integer> groupMembers = request.getGroupMembers() != null ? request.getGroupMembers() : Collections.emptyList();
+        if (Boolean.TRUE.equals(activity.getIsGroupWork()) && !groupMembers.isEmpty()) {
+            for (Integer memberId : groupMembers) {
+                if (memberId == null || memberId.equals(request.getStudentId())) continue;
+                Optional<ActivitySubmission> existing = submissionRepository.findByActivityIdAndStudentId(activity.getId(), memberId);
+                if (existing.isPresent()) {
+                    ActivitySubmission memSub = existing.get();
+                    memSub.setComment(request.getComment());
+                    memSub.setFilesJson(submission.getFilesJson());
+                    memSub.setIsLate(submission.getIsLate());
+                    memSub.setSubmittedAt(LocalDateTime.now());
+                    memSub.setGroupMembersJson(submission.getGroupMembersJson());
+                    submissionRepository.save(memSub);
+                } else {
+                    Student member = studentRepository.findById(memberId).orElse(null);
+                    if (member != null) {
+                        ActivitySubmission memSub = ActivitySubmission.builder()
+                                .activity(activity)
+                                .student(member)
+                                .comment(request.getComment())
+                                .filesJson(submission.getFilesJson())
+                                .isLate(submission.getIsLate())
+                                .submittedAt(LocalDateTime.now())
+                                .groupMembersJson(submission.getGroupMembersJson())
+                                .build();
+                        submissionRepository.save(memSub);
+                    }
+                }
+            }
+        }
+
+        return submissionMapper.toResponse(saved);
     }
 
     @Override
@@ -69,7 +106,42 @@ public class ActivitySubmissionServiceImpl implements ActivitySubmissionService 
         submission.setFilesJson(submissionMapper.writeList(request.getFiles()));
         submission.setIsLate(request.getIsLate());
         submission.setSubmittedAt(LocalDateTime.now());
-        return submissionMapper.toResponse(submissionRepository.save(submission));
+        submission.setGroupMembersJson(submissionMapper.writeIntList(request.getGroupMembers()));
+        ActivitySubmission saved = submissionRepository.save(submission);
+
+        // Actualizar entregas de grupo si aplica
+        List<Integer> groupMembers = request.getGroupMembers() != null ? request.getGroupMembers() : Collections.emptyList();
+        if (Boolean.TRUE.equals(activity.getIsGroupWork()) && !groupMembers.isEmpty()) {
+            for (Integer memberId : groupMembers) {
+                if (memberId == null || memberId.equals(request.getStudentId())) continue;
+                Optional<ActivitySubmission> existing = submissionRepository.findByActivityIdAndStudentId(activity.getId(), memberId);
+                if (existing.isPresent()) {
+                    ActivitySubmission memSub = existing.get();
+                    memSub.setComment(request.getComment());
+                    memSub.setFilesJson(submission.getFilesJson());
+                    memSub.setIsLate(submission.getIsLate());
+                    memSub.setSubmittedAt(LocalDateTime.now());
+                    memSub.setGroupMembersJson(submission.getGroupMembersJson());
+                    submissionRepository.save(memSub);
+                } else {
+                    Student member = studentRepository.findById(memberId).orElse(null);
+                    if (member != null) {
+                        ActivitySubmission memSub = ActivitySubmission.builder()
+                                .activity(activity)
+                                .student(member)
+                                .comment(request.getComment())
+                                .filesJson(submission.getFilesJson())
+                                .isLate(submission.getIsLate())
+                                .submittedAt(LocalDateTime.now())
+                                .groupMembersJson(submission.getGroupMembersJson())
+                                .build();
+                        submissionRepository.save(memSub);
+                    }
+                }
+            }
+        }
+
+        return submissionMapper.toResponse(saved);
     }
 
     @Override
@@ -81,7 +153,28 @@ public class ActivitySubmissionServiceImpl implements ActivitySubmissionService 
         }
         submission.setFeedback(feedback);
         submission.setGradedAt(LocalDateTime.now());
-        return submissionMapper.toResponse(submissionRepository.save(submission));
+        ActivitySubmission saved = submissionRepository.save(submission);
+
+        // Si es trabajo en grupo, calificar a todos los miembros
+        Activity activity = submission.getActivity();
+        List<Integer> groupMembers = submissionMapper.readIntList(submission.getGroupMembersJson());
+        if (Boolean.TRUE.equals(activity != null ? activity.getIsGroupWork() : null) && !groupMembers.isEmpty()) {
+            for (Integer memberId : groupMembers) {
+                if (memberId == null) continue;
+                Optional<ActivitySubmission> memOpt = submissionRepository.findByActivityIdAndStudentId(activity.getId(), memberId);
+                if (memOpt.isPresent()) {
+                    ActivitySubmission memSub = memOpt.get();
+                    if (grade != null) {
+                        memSub.setGrade(java.math.BigDecimal.valueOf(grade));
+                    }
+                    memSub.setFeedback(feedback);
+                    memSub.setGradedAt(LocalDateTime.now());
+                    submissionRepository.save(memSub);
+                }
+            }
+        }
+
+        return submissionMapper.toResponse(saved);
     }
 
     @Override
@@ -108,5 +201,13 @@ public class ActivitySubmissionServiceImpl implements ActivitySubmissionService 
         return submissionRepository.findByActivityIdAndStudentId(activityId, studentId)
                 .map(submissionMapper::toResponse)
                 .orElse(null);
+    }
+
+    @Override
+    public void leaveGroup(Integer activityId, Integer studentId) {
+        ActivitySubmission submission = submissionRepository.findByActivityIdAndStudentId(activityId, studentId)
+                .orElseThrow(() -> new EntityNotFoundException("Submission not found"));
+        // Limpiar miembros de grupo para este estudiante y eliminar la entrega
+        submissionRepository.delete(submission);
     }
 }
