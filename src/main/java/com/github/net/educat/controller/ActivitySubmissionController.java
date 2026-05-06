@@ -67,6 +67,12 @@ public class ActivitySubmissionController {
         return ResponseEntity.noContent().build();
     }
 
+    @DeleteMapping("/activity/{activityId}")
+    public ResponseEntity<Void> deleteByActivity(@PathVariable Integer activityId) {
+        submissionService.deleteByActivityId(activityId);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/activity/{activityId}/student/{studentId}/leave-group")
     public ResponseEntity<Void> leaveGroup(@PathVariable Integer activityId, @PathVariable Integer studentId) {
         submissionService.leaveGroup(activityId, studentId);

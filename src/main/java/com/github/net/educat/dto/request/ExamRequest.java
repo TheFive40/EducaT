@@ -20,5 +20,6 @@ public class ExamRequest {
     private String openAt;
     private String closeAt;
     private Integer maxAttempts;
+    private Boolean requireSeb;
     private List<ExamQuestionRequest> questions;
 }

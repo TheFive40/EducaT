@@ -75,6 +75,7 @@ public class ExamServiceImpl implements ExamService {
         exam.setOpenAt(examMapper.parseDateTime(request.getOpenAt()));
         exam.setCloseAt(examMapper.parseDateTime(request.getCloseAt()));
         exam.setMaxAttempts(request.getMaxAttempts());
+        exam.setRequireSeb(request.getRequireSeb());
         Exam saved = examRepository.save(exam);
         saveQuestions(saved, request.getQuestions());
         List<ExamQuestion> questions = questionRepository.findByExamIdOrderByOrderIndexAsc(saved.getId());

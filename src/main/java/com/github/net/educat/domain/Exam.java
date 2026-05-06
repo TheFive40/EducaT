@@ -46,6 +46,9 @@ public class Exam {
     @Column(name = "max_attempts")
     private Integer maxAttempts;
 
+    @Column(name = "require_seb")
+    private Boolean requireSeb;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

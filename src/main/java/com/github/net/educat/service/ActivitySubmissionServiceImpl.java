@@ -7,8 +7,10 @@ import com.github.net.educat.domain.Student;
 import com.github.net.educat.dto.request.ActivitySubmissionRequest;
 import com.github.net.educat.dto.response.ActivitySubmissionResponse;
 import com.github.net.educat.mapper.ActivitySubmissionMapper;
+import com.github.net.educat.domain.Grade;
 import com.github.net.educat.repository.ActivityRepository;
 import com.github.net.educat.repository.ActivitySubmissionRepository;
+import com.github.net.educat.repository.GradeRepository;
 import com.github.net.educat.repository.StudentRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +31,7 @@ public class ActivitySubmissionServiceImpl implements ActivitySubmissionService 
     private final ActivityRepository activityRepository;
     private final StudentRepository studentRepository;
     private final ActivitySubmissionMapper submissionMapper;
+    private final GradeRepository gradeRepository;
 
     @Override
     @Transactional(readOnly = true)
@@ -171,6 +174,27 @@ public class ActivitySubmissionServiceImpl implements ActivitySubmissionService 
                     memSub.setGradedAt(LocalDateTime.now());
                     submissionRepository.save(memSub);
                 }
+                // Replicar registro Grade al miembro
+                Student member = studentRepository.findById(memberId).orElse(null);
+                if (member != null && activity != null && activity.getCourse() != null) {
+                    Grade memberGrade = gradeRepository.findByStudentIdAndActivityId(memberId, activity.getId()).orElse(null);
+                    if (memberGrade != null) {
+                        if (grade != null) {
+                            memberGrade.setGrade(java.math.BigDecimal.valueOf(grade));
+                        }
+                        memberGrade.setDescription(feedback);
+                        gradeRepository.save(memberGrade);
+                    } else {
+                        Grade newGrade = Grade.builder()
+                                .student(member)
+                                .course(activity.getCourse())
+                                .activityId(activity.getId())
+                                .grade(grade != null ? java.math.BigDecimal.valueOf(grade) : null)
+                                .description(feedback)
+                                .build();
+                        gradeRepository.save(newGrade);
+                    }
+                }
             }
         }
 
@@ -209,5 +233,14 @@ public class ActivitySubmissionServiceImpl implements ActivitySubmissionService 
                 .orElseThrow(() -> new EntityNotFoundException("Submission not found"));
         // Limpiar miembros de grupo para este estudiante y eliminar la entrega
         submissionRepository.delete(submission);
+    }
+
+    @Override
+    public void deleteByActivityId(Integer activityId) {
+        List<Grade> grades = gradeRepository.findByActivityId(activityId);
+        if (!grades.isEmpty()) {
+            gradeRepository.deleteAll(grades);
+        }
+        submissionRepository.deleteByActivity_Id(activityId);
     }
 }

@@ -19,6 +19,7 @@ public class ExamResponse {
     private LocalDateTime openAt;
     private LocalDateTime closeAt;
     private Integer maxAttempts;
+    private Boolean requireSeb;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private List<ExamQuestionResponse> questions;

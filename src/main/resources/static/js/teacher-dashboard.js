@@ -2227,6 +2227,21 @@ window.joinCourseByCodeAsTeacher = joinCourseByCodeAsTeacher;
 window.claimCourseAsTeacher = claimCourseAsTeacher;
 window.claimAndOpenCourseAsTeacher = claimAndOpenCourseAsTeacher;
 
+async function deleteAllSubmissionsForActivity(actId) {
+    openConfirmModal('Eliminar entregas', '¿Estás seguro de que deseas eliminar <strong>TODAS</strong> las entregas de esta actividad? Esta acción también eliminará las calificaciones asociadas y no se puede deshacer.', async () => {
+        try {
+            await apiFetch('/api/activity-submissions/activity/' + actId, { method: 'DELETE' });
+            Object.keys(runtimeSubmissionsByKey).forEach(key => {
+                if (key.endsWith('_' + actId)) delete runtimeSubmissionsByKey[key];
+            });
+            await renderEntregasList();
+            showToast('Todas las entregas han sido eliminadas', 'success');
+        } catch (e) {
+            showToast('Error al eliminar las entregas', 'error');
+        }
+    }, 'Eliminar todo');
+}
+
 function loadEntregas() {
     const coursesSel = document.getElementById('subCourseFilter');
     const actSel = document.getElementById('subActivityFilter');
@@ -2276,6 +2291,9 @@ async function renderEntregasList() {
             if (status === 'late') return r.state !== 'none' && r.isLate;
             return r.state === status;
         });
+        // Si la actividad no tiene ninguna entrega real, no mostrar la sección
+        const hasAnyRealSubmission = rows.some(r => r.sub && r.sub.submitted);
+        if (!hasAnyRealSubmission) return;
         if (!rows.length) return;
         const pend = rows.filter(r => r.state === 'pending').length;
         const grad = rows.filter(r => r.state === 'graded').length;
@@ -2293,6 +2311,10 @@ async function renderEntregasList() {
     ${miss > 0 ? `<span class="badge badge-navy">${miss} sin entregar</span>` : ''}
     ${late > 0 ? `<span class="badge badge-warning">${late} tardias</span>` : ''}
 </div>
+<button class="btn btn-sm btn-outline" onclick="event.stopPropagation();deleteAllSubmissionsForActivity(${act.id})" style="color:var(--error);border-color:rgba(192,57,43,0.35)">
+    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+    Eliminar entregas
+</button>
 <button class="btn btn-sm btn-teal" onclick="openActivitySubmissions(${act.id},null,'submitted')">
     <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
     Calificar
@@ -4127,8 +4149,8 @@ function renderUnit(idx, options) {
                 <div class="exam-card-header">
                     <div class="exam-num">${i + 1}</div>
                     <div class="exam-header-meta">
-                        <div class="exam-title">${x.title}</div>
-                        ${x.examDate ? `<div class="exam-date">${ICAL} Fecha: ${new Date(x.examDate + 'T00:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}</div>` : ''}
+                        <div class="exam-title">${x.title}${x.requireSeb ? ` <span class="badge badge-warning" title="Requiere Safe Exam Browser">SEB</span>` : ''}</div>
+                        ${x.openAt || x.closeAt ? `<div class="exam-date">${ICAL} ${x.openAt ? 'Abre: ' + new Date(x.openAt).toLocaleString('es-CO', { day:'numeric', month:'long', hour:'2-digit', minute:'2-digit' }) : ''}${x.openAt && x.closeAt ? ' · ' : ''}${x.closeAt ? 'Cierra: ' + new Date(x.closeAt).toLocaleString('es-CO', { day:'numeric', month:'long', hour:'2-digit', minute:'2-digit' }) : ''}</div>` : ''}
                     </div>
                     <div style="display:flex;gap:4px">
                         <button class="btn-icon" onclick="editExamModal(${x.id},${idx})">${IEDIT}</button>
@@ -5831,7 +5853,8 @@ function addExamModal(unitIdx) {
             accessKey: '', totalTimeMinutes: 0, timePerQuestionSeconds: 0,
             allowBacktrack: true, showScoreOnFinish: true, showCorrectAnswers: false,
             showCorrectAnswersAfterAll: true, allowRetake: false,
-            passingScore: 6.0, maxScore: 10.0, shuffleQuestions: false, shuffleOptions: false
+            passingScore: 6.0, maxScore: 10.0, shuffleQuestions: false, shuffleOptions: false,
+            requireSeb: false
         }
     };
     openExamEditor();
@@ -5855,7 +5878,7 @@ function editExamModal(examId, unitIdx) {
             timeLimitSeconds: q.timeLimitSeconds || 0
         })),
         currentQuestionIndex: 0,
-        config: { ...examEditorState.config, ...cfg, maxAttempts: x.maxAttempts != null ? x.maxAttempts : (cfg.allowRetake ? 3 : 1) }
+        config: { ...examEditorState.config, ...cfg, maxAttempts: x.maxAttempts != null ? x.maxAttempts : (cfg.allowRetake ? 3 : 1), requireSeb: x.requireSeb === true }
     };
     openExamEditor();
 }
@@ -5865,7 +5888,6 @@ function openExamEditor() {
     const maxScore = parseFloat(document.getElementById('mAdminMaxGrade')?.value || 10);
     const exam = st.examId ? teacherExams.find(e => String(e.id) === String(st.examId)) : null;
     const title = exam ? exam.title : '';
-    const examDate = exam ? (exam.examDate || '') : '';
     const examTime = exam ? (exam.examTime || '07:00') : '07:00';
     const description = exam ? (exam.description || '') : '';
     const cfg = st.config;
@@ -5878,12 +5900,14 @@ function openExamEditor() {
     <div id="examEditorBody">
         <div id="examTabContentConfig">
             <div class="form-group"><label class="form-label">Título</label><input type="text" class="form-input" id="mExTitle" value="${htmlEscape(title)}" placeholder="Ej: Parcial I — Álgebra Lineal"></div>
-            <div class="form-row">
-                <div class="form-group"><label class="form-label">Fecha</label><input type="date" class="form-input" id="mExDate" value="${examDate}"></div>
-                <div class="form-group"><label class="form-label">Hora</label><input type="time" class="form-input" id="mExTime" value="${examTime}"></div>
-            </div>
             <div class="form-group"><label class="form-label">Descripción</label><textarea class="form-input" id="mExDesc" rows="3" placeholder="Temas, duración, materiales permitidos...">${htmlEscape(description)}</textarea></div>
             <div class="form-group"><label class="form-label">Clave de acceso (opcional)</label><input type="text" class="form-input" id="mExAccessKey" value="${htmlEscape(cfg.accessKey || '')}" placeholder="Dejar vacío si no requiere clave"></div>
+            <div class="form-group">
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:10px 12px;background:rgba(30,107,116,0.06);border-radius:8px;border:1px solid rgba(30,107,116,0.12)">
+                    <input type="checkbox" id="mExRequireSeb" ${cfg.requireSeb ? 'checked' : ''}>
+                    <span><strong>Requerir Safe Exam Browser (SEB)</strong> — Los estudiantes solo podrán presentar este examen usando la herramienta Safe Exam Browser</span>
+                </label>
+            </div>
             <div class="form-row">
                 <div class="form-group"><label class="form-label">Abre el (fecha y hora)</label><input type="datetime-local" class="form-input" id="mExOpenAt" value="${exam && exam.openAt ? exam.openAt.slice(0,16) : ''}"></div>
                 <div class="form-group"><label class="form-label">Cierra el (fecha y hora)</label><input type="datetime-local" class="form-input" id="mExCloseAt" value="${exam && exam.closeAt ? exam.closeAt.slice(0,16) : ''}"></div>
@@ -6117,7 +6141,8 @@ function readExamConfigFromForm() {
         passingScore: parseFloat((document.getElementById('mExPassing') || {}).value || '6'),
         maxScore: parseFloat((document.getElementById('mExMaxScore') || {}).value || '10'),
         shuffleQuestions: !!(document.getElementById('mExShuffleQ') || {}).checked,
-        shuffleOptions: !!(document.getElementById('mExShuffleO') || {}).checked
+        shuffleOptions: !!(document.getElementById('mExShuffleO') || {}).checked,
+        requireSeb: !!(document.getElementById('mExRequireSeb') || {}).checked
     };
 }
 
@@ -6126,8 +6151,6 @@ async function saveExamFromEditor() {
     const title = String((document.getElementById('mExTitle') || {}).value || '').trim();
     if (!title) { showToast('El título es obligatorio', 'error'); return; }
     const description = String((document.getElementById('mExDesc') || {}).value || '');
-    const examDate = (document.getElementById('mExDate') || {}).value || '';
-    const examTime = (document.getElementById('mExTime') || {}).value || '07:00';
     const openAt = (document.getElementById('mExOpenAt') || {}).value || '';
     const closeAt = (document.getElementById('mExCloseAt') || {}).value || '';
     const cfg = readExamConfigFromForm();
@@ -6145,11 +6168,12 @@ async function saveExamFromEditor() {
     }));
     const payload = {
         courseId: currentCourse.id,
-        title, examDate, examTime, description,
+        title, description,
         accessKey: cfg.accessKey,
         openAt: openAt ? openAt + ':00' : '',
         closeAt: closeAt ? closeAt + ':00' : '',
         maxAttempts,
+        requireSeb: cfg.requireSeb,
         configJson: JSON.stringify(cfg),
         settingsJson: JSON.stringify({ maxScore: cfg.maxScore, passingScore: cfg.passingScore }),
         questions
@@ -6166,6 +6190,18 @@ async function saveExamFromEditor() {
             const idx = teacherExams.findIndex(e => String(e.id) === String(saved.id));
             if (idx >= 0) teacherExams[idx] = saved;
             else teacherExams.push(saved);
+
+            // Asociar la evaluación a la unidad actual para que se visualice
+            if (st.unitIdx != null && currentCourse) {
+                const units = getUnits(currentCourse.id);
+                if (units[st.unitIdx]) {
+                    units[st.unitIdx].exams = units[st.unitIdx].exams || [];
+                    if (!units[st.unitIdx].exams.includes(saved.id)) {
+                        units[st.unitIdx].exams.push(saved.id);
+                        saveUnits(currentCourse.id, units);
+                    }
+                }
+            }
         }
         closeModal();
         renderUnit(st.unitIdx);

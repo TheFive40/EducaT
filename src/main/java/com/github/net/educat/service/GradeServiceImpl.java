@@ -4,12 +4,14 @@ import com.github.net.educat.domain.ActivitySubmission;
 import com.github.net.educat.domain.Course;
 import com.github.net.educat.domain.Grade;
 import com.github.net.educat.domain.Student;
+import com.github.net.educat.domain.Activity;
 import com.github.net.educat.repository.ActivitySubmissionRepository;
 import com.github.net.educat.repository.CourseRepository;
 import com.github.net.educat.repository.GradeRepository;
 import com.github.net.educat.repository.StudentRepository;
 import com.github.net.educat.dto.request.GradeRequest;
 import com.github.net.educat.dto.response.GradeResponse;
+import com.github.net.educat.mapper.ActivitySubmissionMapper;
 import com.github.net.educat.mapper.GradeMapper;
 import com.github.net.educat.application.GradeService;
 import jakarta.persistence.EntityNotFoundException;
@@ -30,6 +32,7 @@ public class GradeServiceImpl implements GradeService {
     private final CourseRepository courseRepository;
     private final ActivitySubmissionRepository activitySubmissionRepository;
     private final GradeMapper gradeMapper;
+    private final ActivitySubmissionMapper submissionMapper;
 
     @Override @Transactional(readOnly = true)
     public List<GradeResponse> findAll() {
@@ -59,6 +62,7 @@ public class GradeServiceImpl implements GradeService {
                 grade.setSource(request.getSource());
                 Grade saved = gradeRepository.save(grade);
                 syncGradeToActivitySubmission(saved, request.getStudentId());
+                replicateGradeToGroupMembers(saved, request.getStudentId());
                 return gradeMapper.toResponse(saved);
             }
         }
@@ -71,6 +75,7 @@ public class GradeServiceImpl implements GradeService {
         grade.setSource(request.getSource());
         Grade saved = gradeRepository.save(grade);
         syncGradeToActivitySubmission(saved, request.getStudentId());
+        replicateGradeToGroupMembers(saved, request.getStudentId());
         return gradeMapper.toResponse(saved);
     }
     @Override
@@ -84,6 +89,7 @@ public class GradeServiceImpl implements GradeService {
         grade.setSource(request.getSource());
         Grade saved = gradeRepository.save(grade);
         syncGradeToActivitySubmission(saved, request.getStudentId());
+        replicateGradeToGroupMembers(saved, request.getStudentId());
         return gradeMapper.toResponse(saved);
     }
     @Override
@@ -126,5 +132,51 @@ public class GradeServiceImpl implements GradeService {
                     sub.setGradedAt(null);
                     activitySubmissionRepository.save(sub);
                 });
+    }
+
+    private void replicateGradeToGroupMembers(Grade grade, Integer studentId) {
+        if (grade.getActivityId() == null || studentId == null) return;
+        ActivitySubmission submission = activitySubmissionRepository.findByActivityIdAndStudentId(grade.getActivityId(), studentId).orElse(null);
+        if (submission == null) return;
+        Activity activity = submission.getActivity();
+        if (activity == null || !Boolean.TRUE.equals(activity.getIsGroupWork())) return;
+
+        List<Integer> groupMembers = submissionMapper.readIntList(submission.getGroupMembersJson());
+        if (groupMembers == null || groupMembers.isEmpty()) return;
+
+        for (Integer memberId : groupMembers) {
+            if (memberId == null) continue;
+            Student member = studentRepository.findById(memberId).orElse(null);
+            if (member == null) continue;
+
+            Grade memberGrade = gradeRepository.findByStudentIdAndActivityId(memberId, grade.getActivityId()).orElse(null);
+            if (memberGrade != null) {
+                memberGrade.setGrade(grade.getGrade());
+                memberGrade.setDescription(grade.getDescription());
+                memberGrade.setCourse(grade.getCourse());
+                memberGrade.setSourceUnitId(grade.getSourceUnitId());
+                memberGrade.setSource(grade.getSource());
+                gradeRepository.save(memberGrade);
+            } else {
+                Grade newGrade = Grade.builder()
+                        .student(member)
+                        .course(grade.getCourse())
+                        .activityId(grade.getActivityId())
+                        .sourceUnitId(grade.getSourceUnitId())
+                        .source(grade.getSource())
+                        .grade(grade.getGrade())
+                        .description(grade.getDescription())
+                        .build();
+                gradeRepository.save(newGrade);
+            }
+
+            activitySubmissionRepository.findByActivityIdAndStudentId(grade.getActivityId(), memberId)
+                    .ifPresent(memSub -> {
+                        memSub.setGrade(grade.getGrade());
+                        memSub.setFeedback(grade.getDescription());
+                        memSub.setGradedAt(LocalDateTime.now());
+                        activitySubmissionRepository.save(memSub);
+                    });
+        }
     }
 }

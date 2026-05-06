@@ -15,4 +15,5 @@ public interface ActivitySubmissionService {
     List<ActivitySubmissionResponse> findByStudentId(Integer studentId);
     ActivitySubmissionResponse findByActivityIdAndStudentId(Integer activityId, Integer studentId);
     void leaveGroup(Integer activityId, Integer studentId);
+    void deleteByActivityId(Integer activityId);
 }

@@ -32,6 +32,7 @@ public class ExamMapper {
                 .openAt(exam.getOpenAt())
                 .closeAt(exam.getCloseAt())
                 .maxAttempts(exam.getMaxAttempts())
+                .requireSeb(exam.getRequireSeb())
                 .createdAt(exam.getCreatedAt())
                 .updatedAt(exam.getUpdatedAt())
                 .questions(questions != null ? questions.stream().map(this::toQuestionResponse).toList() : null)
@@ -54,6 +55,7 @@ public class ExamMapper {
                 .openAt(parseDateTime(request.getOpenAt()))
                 .closeAt(parseDateTime(request.getCloseAt()))
                 .maxAttempts(request.getMaxAttempts())
+                .requireSeb(request.getRequireSeb())
                 .build();
     }
 

@@ -11,4 +11,5 @@ public interface ActivitySubmissionRepository extends JpaRepository<ActivitySubm
     List<ActivitySubmission> findByActivityId(Integer activityId);
     List<ActivitySubmission> findByStudentId(Integer studentId);
     Optional<ActivitySubmission> findByActivityIdAndStudentId(Integer activityId, Integer studentId);
+    void deleteByActivity_Id(Integer activityId);
 }
