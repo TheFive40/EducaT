@@ -45,6 +45,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/news/**", "/api/forums/**").permitAll()
+                        .requestMatchers("/seb-config/**").permitAll()
                         .requestMatchers("/admin-dashboard", "/admin-dashboard/**").hasAnyAuthority("ROLE_ADMIN", "ROLE_ADMINISTRADOR", "PORTAL_ADMIN")
                         .requestMatchers("/teacher-dashboard", "/teacher-dashboard/**").hasAnyAuthority("ROLE_DOCENTE", "ROLE_TEACHER", "ROLE_PROFESOR", "PORTAL_TEACHER")
                         .requestMatchers("/student-dashboard", "/student-dashboard/**").hasAnyAuthority("ROLE_ESTUDIANTE", "ROLE_STUDENT", "PORTAL_STUDENT")

@@ -3602,16 +3602,18 @@ async function apCheckPsychAppointmentNotifications() {
         const notifiedIds = readNotifiedCancelledAppointments();
         const newCancelled = cancelled.filter(a => !notifiedIds.includes(a.id));
         if (!newCancelled.length) return;
-        const listHtml = newCancelled.map(a => {
-            return `<div style="margin-bottom:10px;padding:10px;background:var(--cream);border-radius:8px;border:1px solid rgba(11,31,58,0.08)">
-                <div style="font-size:13px;font-weight:600">Cita cancelada</div>
-                <div style="font-size:12px;color:var(--text-muted)">${a.professionalName || '—'} · ${a.appointmentDate || '—'} · ${a.slot || '—'}</div>
-                <div style="font-size:12px;color:var(--text-body);margin-top:4px">${a.resolutionComment || 'Tu cita ha sido cancelada. Por favor agenda una nueva cita si lo necesitas.'}</div>
-            </div>`;
-        }).join('');
-        document.getElementById('modalTitle').textContent = 'Notificacion de citas';
-        document.getElementById('modalBody').innerHTML = `<div style="font-size:13px;color:var(--text-body);line-height:1.6;margin-bottom:10px">Se han cancelado las siguientes citas:</div>${listHtml}<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn btn-primary" onclick="apMarkCancelledAsNotified();closeModal();">Entendido</button></div>`;
-        document.getElementById('modalBackdrop').classList.add('show');
+        newCancelled.forEach(a => {
+            addNotification({
+                id: 'psych-cancel-' + a.id,
+                title: 'Cita cancelada',
+                text: `${a.professionalName || '—'} · ${a.appointmentDate || '—'} · ${a.slot || '—'} — ${a.resolutionComment || 'Tu cita ha sido cancelada. Por favor agenda una nueva cita si lo necesitas.'}`,
+                time: new Date().toISOString(),
+                actionType: 'psych-cancel'
+            });
+        });
+        const cancelledIds = cancelled.map(a => a.id);
+        const merged = Array.from(new Set([...notifiedIds, ...cancelledIds]));
+        saveNotifiedCancelledAppointments(merged);
     } catch (e) {
         // Silenciar errores de notificacion para no interrumpir la carga
     }
@@ -3624,7 +3626,141 @@ function apMarkCancelledAsNotified() {
         const notifiedIds = readNotifiedCancelledAppointments();
         const merged = Array.from(new Set([...notifiedIds, ...cancelledIds]));
         saveNotifiedCancelledAppointments(merged);
+        cancelledIds.forEach(id => markNotificationRead('psych-cancel-' + id));
     } catch (e) {}
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SISTEMA DE NOTIFICACIONES (campana dropdown)
+   ═══════════════════════════════════════════════════════════════════════════ */
+const STUDENT_NOTIFICATIONS_KEY = 'educat_student_notifications_v2';
+let studentNotifications = [];
+
+function loadStudentNotifications() {
+    try {
+        const raw = localStorage.getItem(STUDENT_NOTIFICATIONS_KEY);
+        studentNotifications = raw ? JSON.parse(raw) : [];
+    } catch (e) {
+        studentNotifications = [];
+    }
+}
+
+function saveStudentNotifications() {
+    try {
+        localStorage.setItem(STUDENT_NOTIFICATIONS_KEY, JSON.stringify(studentNotifications.slice(0, 100)));
+    } catch (e) {}
+}
+
+function addNotification({ id, title, text, time, actionType }) {
+    if (!id) id = 'notif-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
+    const exists = studentNotifications.find(n => n.id === id);
+    if (exists) return;
+    studentNotifications.unshift({ id, title, text, time: time || new Date().toISOString(), read: false, actionType: actionType || '' });
+    saveStudentNotifications();
+    renderNotificationDropdown();
+    updateNotificationBadge();
+}
+
+function markNotificationRead(id) {
+    const n = studentNotifications.find(x => x.id === id);
+    if (n) { n.read = true; saveStudentNotifications(); renderNotificationDropdown(); updateNotificationBadge(); }
+}
+
+function markAllNotificationsRead() {
+    studentNotifications.forEach(n => n.read = true);
+    saveStudentNotifications();
+    renderNotificationDropdown();
+    updateNotificationBadge();
+}
+
+function updateNotificationBadge() {
+    const unread = studentNotifications.filter(n => !n.read).length;
+    const badge = document.getElementById('notifBadge');
+    const btn = document.getElementById('notifBellBtn');
+    if (!badge) return;
+    if (unread > 0) {
+        badge.textContent = unread > 99 ? '99+' : unread;
+        badge.style.display = 'flex';
+        if (btn) btn.classList.add('active');
+    } else {
+        badge.style.display = 'none';
+        if (btn) btn.classList.remove('active');
+    }
+}
+
+function executeNotificationAction(actionType) {
+    if (actionType === 'psych-cancel') {
+        navigateTo('area-personal');
+        openPersonalView('bienestar');
+    }
+}
+
+function renderNotificationDropdown() {
+    const body = document.getElementById('notifDropdownBody');
+    if (!body) return;
+    if (!studentNotifications.length) {
+        body.innerHTML = '<div class="notif-empty">No tienes notificaciones nuevas</div>';
+        return;
+    }
+    body.innerHTML = studentNotifications.map(n => {
+        const cls = n.read ? 'notif-item read' : 'notif-item unread';
+        const dateObj = new Date(n.time);
+        const timeStr = isNaN(dateObj) ? '' : dateObj.toLocaleString('es-CO', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
+        return `<div class="${cls}" data-id="${n.id}">
+            <div class="notif-dot"></div>
+            <div class="notif-content">
+                <div class="notif-title">${htmlEscape(n.title)}</div>
+                <div class="notif-text">${htmlEscape(n.text)}</div>
+                ${timeStr ? `<div class="notif-time">${timeStr}</div>` : ''}
+            </div>
+        </div>`;
+    }).join('');
+    body.querySelectorAll('.notif-item').forEach(el => {
+        el.addEventListener('click', () => {
+            const id = el.dataset.id;
+            markNotificationRead(id);
+            const notif = studentNotifications.find(n => n.id === id);
+            if (notif && notif.actionType) {
+                try { executeNotificationAction(notif.actionType); } catch (e) {}
+            }
+            closeNotificationDropdown();
+        });
+    });
+}
+
+function openNotificationDropdown() {
+    const dropdown = document.getElementById('notifDropdown');
+    if (dropdown) dropdown.classList.add('show');
+}
+
+function closeNotificationDropdown() {
+    const dropdown = document.getElementById('notifDropdown');
+    if (dropdown) dropdown.classList.remove('show');
+}
+
+function toggleNotificationDropdown() {
+    const dropdown = document.getElementById('notifDropdown');
+    if (!dropdown) return;
+    if (dropdown.classList.contains('show')) {
+        closeNotificationDropdown();
+    } else {
+        renderNotificationDropdown();
+        openNotificationDropdown();
+    }
+}
+
+function setupNotificationBell() {
+    const btn = document.getElementById('notifBellBtn');
+    const markAll = document.getElementById('notifMarkAll');
+    if (btn) btn.addEventListener('click', e => { e.stopPropagation(); toggleNotificationDropdown(); });
+    if (markAll) markAll.addEventListener('click', e => { e.stopPropagation(); markAllNotificationsRead(); });
+    document.addEventListener('click', e => {
+        const wrap = document.getElementById('notifBellWrap');
+        if (wrap && !wrap.contains(e.target)) closeNotificationDropdown();
+    });
+    loadStudentNotifications();
+    renderNotificationDropdown();
+    updateNotificationBadge();
 }
 
 function apPsychGetProfessionals() {
@@ -4276,7 +4412,7 @@ function renderUnit(idx, options) {
     const ILINK=`<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>`;
     const annHtml = announcements.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Anuncios del Docente</span><span class="badge badge-gold">${announcements.length}</span></div><div class="card-body" style="padding:0">${announcements.map((a,i)=>{ const isObj=typeof a==='object'&&a!==null; const title=isObj?(a.title||'Anuncio'):String(a).slice(0,80); const content=isObj?(a.content||a.title||''):String(a); const dateStr=isObj&&a.date?new Date(a.date+'T00:00:00').toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'}):''; const attachments=isObj&&Array.isArray(a.attachments)?a.attachments:[]; const cid=`ann-${currentCourse.id}-${idx}-${i}`; return `<div class="announcement-card ${isStudentCardOpen(cid)?'open':''}" id="${cid}"><div class="announcement-card-header" onclick="toggleCard('${cid}')"><div class="announcement-card-icon">${IBELL}</div><div class="announcement-card-meta"><div class="announcement-card-title">${title}</div>${dateStr?`<div class="announcement-card-date">${dateStr}</div>`:''}<div class="announcement-card-preview">${content}</div></div><button class="announcement-toggle-btn" onclick="event.stopPropagation();toggleCard('${cid}')">${IC}</button></div><div class="announcement-card-body"><div class="announcement-full-text">${content}</div>${attachments.length?`<div class="announcement-section-label" style="margin-top:16px">Archivos adjuntos</div><div class="attachment-list">${attachments.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Descargar</a></div>`).join('')}</div>`:''}</div></div>`; }).join('')}</div></div>` : '';
     const actsHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Talleres y Actividades</span><span class="badge badge-navy">${acts.length}</span></div><div class="card-body" style="${acts.length?'padding:0':''}">${acts.length?acts.map((a,i)=>{ const sub=getSubmission(a.id); const cid=`act-${a.id}-${currentCourse.id}`; const isGraded=sub&&sub.graded; const isSubmitted=sub&&sub.submitted&&!sub.editing; const isLate=sub&&isSubmissionLate(a,sub); const keepOpen=isStudentCardOpen(cid)||!!(sub&&sub.editing); const statusBadge=isGraded?`<span class="badge badge-gold">Calificado: ${sub.grade}/10</span>`:isSubmitted?`<span class="badge badge-success">Enviado</span>`:`<span class="badge badge-navy">Pendiente</span>`; const dl=getActivityDeadline(a); const dueDateStr=dl?dl.toLocaleString('es-CO',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'}):''; const remaining=dl?formatRemaining(dl):''; return `<div class="activity-card ${keepOpen?'open':''}" id="${cid}"><div class="activity-card-header" onclick="toggleCard('${cid}')"><div class="activity-num">${i+1}</div><div class="activity-header-meta"><div class="activity-title">${a.title}</div><div class="activity-due-row">${dueDateStr?`<span class="activity-due">${ICAL} Entrega: ${dueDateStr}</span>`:''} ${remaining?`<span class="badge badge-warning">${remaining}</span>`:''} <span class="badge ${a.allowLateSubmission===false?'badge-navy':'badge-warning'}">${a.allowLateSubmission===false?'Sin retraso':'Permite retraso'}</span> ${statusBadge} ${isLate?'<span class="badge badge-warning">Tardia</span>':''}</div></div><button class="activity-toggle-btn" onclick="event.stopPropagation();toggleCard('${cid}')">${IC}</button></div><div class="activity-card-body"><div class="activity-description">${a.description||''}</div>${a.attachments&&a.attachments.length?`<div class="announcement-section-label" style="margin-top:16px">Material del docente</div><div class="attachment-list">${a.attachments.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Descargar</a></div>`).join('')}</div>`:''} ${a.materials&&a.materials.length?`<div class="announcement-section-label" style="margin-top:16px">Bibliografía y apoyo</div><div class="attachment-list">${a.materials.map(at=>`<div class="attachment-item"><div class="attachment-icon ${at.type||'doc'}">${IFILE}</div><span class="attachment-name">${at.name}</span><a class="attachment-download" href="${at.url||'#'}" target="_blank">${ICLIP} Abrir</a></div>`).join('')}</div>`:''} ${renderSubmissionSection(a,sub)}</div></div>`; }).join(''):'<div style="color:var(--text-muted);font-size:13px;padding:4px 0">Sin talleres asignados para esta unidad.</div>'}</div></div>`;
-    const examsHtml = exams.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Evaluaciones</span><span class="badge badge-error">${exams.length}</span></div><div class="card-body" style="padding:0">${exams.map((x,i)=>{ const cid=`exam-${x.id}-${currentCourse.id}`; const openDateStr=x.openAt?new Date(x.openAt).toLocaleString('es-CO',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'}):''; const cfg = safeJsonParse(x.configJson, {}); const hasAccessKey = !!(x.accessKey); const attempts = (studentExamAttempts||[]).filter(a=>a.examId===x.id).sort((a,b)=>new Date(b.startedAt||0)-new Date(a.startedAt||0)); const lastAttempt = attempts[0]; const isFinished = lastAttempt && (lastAttempt.status==='submitted'||lastAttempt.status==='graded'); const scoreDisplay = isFinished ? (cfg.showScoreOnFinish ? (lastAttempt.score!=null?`<span class="badge badge-gold">Nota: ${parseFloat(lastAttempt.score).toFixed(1)}</span>`:'<span class="badge badge-navy">Nota: No disponible</span>') : '<span class="badge badge-navy">Nota: No disponible</span>') : ''; const btnText = isFinished ? 'Ver resultado' : (hasAccessKey?'🔒 Ingresar clave':'Iniciar evaluación'); const btnClass = isFinished ? 'btn btn-sm btn-outline' : 'btn btn-sm btn-teal'; const closeDateStr = x.closeAt ? new Date(x.closeAt).toLocaleString('es-CO',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; const attemptsHtml = attempts.length ? `<div style="margin-top:14px;border-top:1px solid rgba(11,31,58,0.08);padding-top:12px"><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:1px;margin-bottom:10px">Historial de intentos</div><div style="display:flex;flex-direction:column;gap:8px">${attempts.map((att, ai) => { const attNum = attempts.length - ai; const attScore = (att.status==='submitted'||att.status==='graded') ? (cfg.showScoreOnFinish ? (att.score!=null?`<span style="color:var(--teal);font-weight:700">${parseFloat(att.score).toFixed(1)}</span>`:'<span style="color:var(--text-muted)">No disponible</span>') : '<span style="color:var(--text-muted)">No disponible</span>') : '<span style="color:var(--text-muted)">—</span>'; const attDate = att.submittedAt ? new Date(att.submittedAt).toLocaleString('es-CO',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : (att.startedAt?new Date(att.startedAt).toLocaleString('es-CO',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):''); const attStatus = att.status==='submitted'||att.status==='graded' ? '<span class="badge badge-success">Finalizado</span>' : '<span class="badge badge-warning">En progreso</span>'; return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid rgba(11,31,58,0.08);border-radius:8px;background:rgba(11,31,58,0.02)"><div><div style="font-size:13px;font-weight:600;color:var(--navy)">Intento ${attNum}</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">${attDate}</div></div><div style="display:flex;align-items:center;gap:8px">${attStatus}<div style="font-size:13px;font-weight:700">${attScore}</div></div></div>`; }).join('')}</div></div>` : ''; return `<div class="exam-card" id="${cid}"><div class="exam-card-header" onclick="toggleCard('${cid}')"><div class="exam-num">${i+1}</div><div class="exam-header-meta"><div class="exam-title">${x.title}${x.requireSeb || cfg.requireSeb ? ' <span class="badge badge-warning" title="Requiere Safe Exam Browser">SEB</span>' : ''}</div>${openDateStr?`<div class="exam-date">${ICAL} Abre: ${openDateStr}</div>`:''}${closeDateStr?`<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Cierre: ${closeDateStr}</div>`:''}${isFinished?`<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${lastAttempt.submittedAt?'Finalizado el '+new Date(lastAttempt.submittedAt).toLocaleString('es-CO'):'Finalizado'}</div>`:''}</div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${scoreDisplay}<button class="${btnClass}" onclick="event.stopPropagation();startStudentExam(${x.id})">${btnText}</button></div></div><div class="exam-card-body">${x.description?`<p style="font-size:14px;color:var(--text-body);line-height:1.75;margin-bottom:12px">${x.description}</p>`:''}${attemptsHtml}</div></div>`; }).join('')}</div></div>` : '';
+    const examsHtml = exams.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Evaluaciones</span><span class="badge badge-error">${exams.length}</span></div><div class="card-body" style="padding:0">${exams.map((x,i)=>{ const cid=`exam-${x.id}-${currentCourse.id}`; const openDateStr=x.openAt?new Date(x.openAt).toLocaleString('es-CO',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'}):''; const cfg = safeJsonParse(x.configJson, {}); const hasAccessKey = !!(x.accessKey); const attempts = (studentExamAttempts||[]).filter(a=>a.examId===x.id).sort((a,b)=>new Date(b.startedAt||0)-new Date(a.startedAt||0)); const lastAttempt = attempts[0]; const isFinished = lastAttempt && (lastAttempt.status==='submitted'||lastAttempt.status==='graded'); const scoreDisplay = isFinished ? (cfg.showScoreOnFinish ? (lastAttempt.score!=null?`<span class="badge badge-gold">Nota: ${parseFloat(lastAttempt.score).toFixed(1)}</span>`:'<span class="badge badge-navy">Nota: No disponible</span>') : '<span class="badge badge-navy">Nota: No disponible</span>') : ''; const canRetry = isFinished && ((x.maxAttempts || 1) > attempts.filter(a => a.status==='submitted'||a.status==='graded').length); const btnText = isFinished ? 'Ver resultado' : (hasAccessKey?'🔒 Ingresar clave':'Iniciar evaluación'); const btnClass = isFinished ? 'btn btn-sm btn-outline' : 'btn btn-sm btn-teal'; const closeDateStr = x.closeAt ? new Date(x.closeAt).toLocaleString('es-CO',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; const attemptsHtml = attempts.length ? `<div style="margin-top:14px;border-top:1px solid rgba(11,31,58,0.08);padding-top:12px"><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:1px;margin-bottom:10px">Historial de intentos</div><div style="display:flex;flex-direction:column;gap:8px">${attempts.map((att, ai) => { const attNum = attempts.length - ai; const attScore = (att.status==='submitted'||att.status==='graded') ? (cfg.showScoreOnFinish ? (att.score!=null?`<span style="color:var(--teal);font-weight:700">${parseFloat(att.score).toFixed(1)}</span>`:'<span style="color:var(--text-muted)">No disponible</span>') : '<span style="color:var(--text-muted)">No disponible</span>') : '<span style="color:var(--text-muted)">—</span>'; const attDate = att.submittedAt ? new Date(att.submittedAt).toLocaleString('es-CO',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : (att.startedAt?new Date(att.startedAt).toLocaleString('es-CO',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):''); const attStatus = att.status==='submitted'||att.status==='graded' ? '<span class="badge badge-success">Finalizado</span>' : '<span class="badge badge-warning">En progreso</span>'; return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid rgba(11,31,58,0.08);border-radius:8px;background:rgba(11,31,58,0.02)"><div><div style="font-size:13px;font-weight:600;color:var(--navy)">Intento ${attNum}</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">${attDate}</div></div><div style="display:flex;align-items:center;gap:8px">${attStatus}<div style="font-size:13px;font-weight:700">${attScore}</div></div></div>`; }).join('')}</div></div>` : ''; return `<div class="exam-card" id="${cid}"><div class="exam-card-header" onclick="toggleCard('${cid}')"><div class="exam-num">${i+1}</div><div class="exam-header-meta"><div class="exam-title">${x.title}${x.requireSeb || cfg.requireSeb ? ' <span class="badge badge-warning" title="Requiere Safe Exam Browser">SEB</span>' : ''}</div>${openDateStr?`<div class="exam-date">${ICAL} Abre: ${openDateStr}</div>`:''}${closeDateStr?`<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Cierre: ${closeDateStr}</div>`:''}${isFinished?`<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${lastAttempt.submittedAt?'Finalizado el '+new Date(lastAttempt.submittedAt).toLocaleString('es-CO'):'Finalizado'}</div>`:''}</div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${scoreDisplay}<button class="${btnClass}" onclick="event.stopPropagation();startStudentExam(${x.id})">${btnText}</button>${canRetry ? `<button class="btn btn-sm btn-teal" style="margin-left:6px" onclick="event.stopPropagation();startStudentExam(${x.id},true)">Reintentar evaluación</button>` : ''}</div></div><div class="exam-card-body">${x.description?`<p style="font-size:14px;color:var(--text-body);line-height:1.75;margin-bottom:12px">${x.description}</p>`:''}${attemptsHtml}</div></div>`; }).join('')}</div></div>` : '';
     const resourcesHtml = resources.length ? `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Bibliografía y Recursos</span><span class="badge badge-success">${resources.length}</span></div><div class="card-body">${resources.map(r=>`<a class="resource-card-item" href="${r.url||'#'}" target="_blank"><div class="resource-icon ${r.type||'doc'}"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${r.type==='video'?IVID:r.type==='link'?ILINK:'<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>'}</svg></div><span class="resource-name">${r.name}</span><span class="resource-type">${(r.type||'doc').toUpperCase()}</span></a>`).join('')}</div></div>` : '';
     const forumsHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Foros</span><span class="badge badge-teal">${forums.length}</span></div><div class="card-body">${forums.length ? forums.map((forum,fi)=>{ const recent=(forum.messages||[]).slice(-3).reverse(); return `<div class="forum-card" style="margin-bottom:12px"><div class="forum-card-header"><div class="forum-card-icon"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div><div class="forum-card-meta"><div class="forum-card-title">${forum.title}</div><div class="forum-card-desc">${forum.description||'Sin descripcion.'}</div></div></div><div class="forum-card-stats"><span class="forum-stat">${(forum.messages||[]).length} publicacion(es)</span></div><div class="forum-threads-body">${recent.length?recent.map(m=>`<div class="forum-thread-item"><div class="forum-thread-title">${m.authorName}</div><div class="forum-thread-meta"><span>${new Date(m.createdAt).toLocaleString('es-CO')}</span></div><div style="font-size:12.8px;color:var(--text-body);margin-top:6px">${m.text}</div></div>`).join(''):'<div style="font-size:12px;color:var(--text-muted)">Sin mensajes aun.</div>'}</div><div style="padding:0 20px 16px"><button class="btn btn-sm btn-teal" onclick="openStudentForumDetail(${idx},${fi})">Abrir foro completo</button></div></div>`; }).join(''):'<div style="font-size:13px;color:var(--text-muted)">No hay foros disponibles en esta unidad.</div>'}</div></div>`;
     const glossaryHtml = `<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Glosarios</span><span class="badge badge-teal">${glossaries.length}</span></div><div class="card-body">${glossaries.map((g,gi)=>{ const terms=g.terms||[]; const initials=[...new Set(terms.map(t=>(t.term||'').charAt(0).toUpperCase()).filter(Boolean))].sort(); return `<div class="forum-card" style="margin-bottom:12px"><div class="forum-card-header"><div class="forum-card-meta"><div class="forum-card-title">${g.title||'Glosario'}</div><div class="forum-card-desc">${terms.length} término(s)</div></div></div><div style="padding:0 20px 8px;display:flex;gap:6px;flex-wrap:wrap">${initials.length?initials.map(i=>`<span class="badge badge-navy">${i}</span>`).join(''):'<span style="font-size:12px;color:var(--text-muted)">Sin iniciales.</span>'}</div><div class="forum-threads-body">${terms.slice(-4).reverse().map(t=>`<div class="forum-thread-item"><div class="forum-thread-title">${t.term}</div><div style="font-size:12.8px;color:var(--text-body);line-height:1.6;margin-top:6px">${t.definition}</div></div>`).join('') || '<div style="font-size:12.5px;color:var(--text-muted)">Sin términos aún.</div>'}</div><div style="padding:0 20px 16px;display:flex;gap:8px"><button class="btn btn-sm btn-outline" onclick="addStudentGlossaryTerm(${idx},${gi})">Sugerir termino</button><button class="btn btn-sm btn-teal" onclick="openStudentGlossaryDetail(${idx},${gi},'ALL',1)">Ver completo</button></div></div>`; }).join('')}</div></div>`;
@@ -4561,6 +4697,14 @@ function hideInitialBootLoader() {
     }, 230);
 }
 
+function getStudentLoginRedirect() {
+    const params = new URLSearchParams(window.location.search);
+    const sebExamId = params.get('sebExamId');
+    let redirect = '/student-dashboard';
+    if (sebExamId) redirect += '?sebExamId=' + encodeURIComponent(sebExamId);
+    return '/login?role=student&redirect=' + encodeURIComponent(redirect);
+}
+
 async function init() {
     try {
         authHeader = '';
@@ -4569,7 +4713,7 @@ async function init() {
         await loadEvalFormsFromBackend();
         const me = await tryFetch('/api/auth/me');
         if (!me || !me.id) {
-            window.location.href = '/login?role=student&redirect=/student-dashboard';
+            window.location.href = getStudentLoginRedirect();
             return;
         }
         const roleName = String((((me || {}).role || {}).name) || '').toUpperCase();
@@ -4580,7 +4724,7 @@ async function init() {
         if (!hasStudentPortal) {
             window.location.href = roleName === 'DOCENTE' || roleName === 'TEACHER' || roleName === 'PROFESOR'
                 ? '/teacher-dashboard'
-                : '/login?role=student&redirect=/student-dashboard';
+                : getStudentLoginRedirect();
             return;
         }
         try {
@@ -4592,7 +4736,7 @@ async function init() {
             const studentsData = await tryFetch('/api/students');
             currentStudent = (studentsData || []).find(s => s.user && s.user.id === currentUser.id) || null;
             if (!currentStudent) {
-                window.location.href = '/login?role=student&redirect=/student-dashboard';
+                window.location.href = getStudentLoginRedirect();
                 return;
             }
         } else {
@@ -4600,6 +4744,7 @@ async function init() {
             currentStudent = { id: 0, studentCode: 'ACCESO-ADMIN' };
         }
         await apLoadWellnessContentFromBackend().catch(() => {});
+        setupNotificationBell();
         apCheckPsychAppointmentNotifications().catch(() => {});
         try {
             const gp = await tryFetch('/api/config/grade-policy');
@@ -4609,6 +4754,7 @@ async function init() {
         document.getElementById('sidebarStudentCode').textContent = currentStudent.studentCode;
         await loadOverview();
         restoreStudentNavigationState();
+        maybeAutoOpenSebExam().catch(() => {});
     } finally {
         hideInitialBootLoader();
     }
@@ -4664,6 +4810,21 @@ function isSebBrowser() {
     return /SEB|SafeExamBrowser/i.test(navigator.userAgent);
 }
 
+async function maybeAutoOpenSebExam() {
+    const params = new URLSearchParams(window.location.search);
+    const sebExamId = params.get('sebExamId');
+    if (!sebExamId || !isSebBrowser()) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('sebExamId');
+    window.history.replaceState({}, '', url);
+    const exam = courseExams.find(e => String(e.id) === String(sebExamId));
+    if (!exam) { showToast('Evaluación no encontrada', 'error'); return; }
+    const courseId = exam.course ? exam.course.id : null;
+    if (!courseId) { showToast('Curso de la evaluación no encontrado', 'error'); return; }
+    await openCourseView(courseId, { skipPersist: true });
+    setTimeout(() => startStudentExam(sebExamId), 400);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    EXAM TAKER FUNCTIONS
 ═══════════════════════════════════════════════════════════════════════════ */
@@ -4693,6 +4854,8 @@ async function confirmExamAccessKey(examId) {
 function openSebRequiredModal(examId) {
     const exam = courseExams.find(e => String(e.id) === String(examId));
     const examTitle = exam ? exam.title : 'Evaluación';
+    const sebProtocol = window.location.protocol === 'https:' ? 'sebs' : 'seb';
+    const sebHref = `${sebProtocol}://${window.location.host}/seb-config/${examId}`;
     document.getElementById('modalTitle').textContent = 'Safe Exam Browser requerido';
     document.getElementById('modalBody').innerHTML = `
         <div style="text-align:center;margin-bottom:16px">
@@ -4701,40 +4864,49 @@ function openSebRequiredModal(examId) {
         </div>
         <div style="font-size:14px;line-height:1.75;color:var(--text-body);margin-bottom:16px">
             <p><strong>&quot;${htmlEscape(examTitle)}&quot;</strong> está configurada para presentarse exclusivamente mediante <strong>Safe Exam Browser</strong>, una herramienta que bloquea el acceso a otras aplicaciones y sitios web durante el examen.</p>
-            <p style="margin-top:10px"><strong>Pasos para continuar:</strong></p>
-            <ol style="margin:8px 0 0 18px;padding:0">
-                <li>Descarga e instala Safe Exam Browser desde <a href="https://safeexambrowser.org/download_en.html" target="_blank">safeexambrowser.org</a>.</li>
-                <li>Descarga el archivo de configuración <strong>.seb</strong> para este examen usando el botón de abajo.</li>
-                <li>Abre el archivo <strong>.seb</strong> descargado; Safe Exam Browser se lanzará automáticamente.</li>
-                <li>Dentro de SEB, regresa a este curso e inicia la evaluación nuevamente.</li>
-            </ol>
         </div>
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <div style="text-align:center;margin-bottom:16px">
+            <a class="btn btn-teal" href="${sebHref}" style="font-size:16px;padding:12px 24px">
+                Abrir en Safe Exam Browser
+            </a>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);text-align:center">
+            Si el botón no funciona, <a href="https://safeexambrowser.org/download_en.html" target="_blank">instala SEB</a> o
+            <a href="/api/exams/${examId}/seb-config" download="${htmlEscape(examTitle.replace(/\s+/g, '_'))}.seb">descarga la configuración manualmente</a>.
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
             <button class="btn btn-outline" onclick="closeModal()">Cerrar</button>
-            <a class="btn btn-teal" href="/api/exams/${examId}/seb-config" download="${htmlEscape(examTitle.replace(/\s+/g, '_'))}.seb">Descargar configuración .seb</a>
         </div>`;
     srtSetModalSize('lg');
     document.getElementById('modalBackdrop').classList.add('show');
 }
 
-async function startStudentExam(examId) {
+function canRetryExam(exam, attempts) {
+    const maxAttempts = exam.maxAttempts != null ? parseInt(exam.maxAttempts, 10) : 1;
+    const finishedCount = (attempts || []).filter(a => a.status === 'submitted' || a.status === 'graded').length;
+    return finishedCount < maxAttempts;
+}
+
+async function startStudentExam(examId, forceNew = false) {
     const exam = courseExams.find(e => String(e.id) === String(examId));
     if (!exam) { showToast('Evaluación no encontrada', 'error'); return; }
     const attempts = (studentExamAttempts || []).filter(a => a.examId === exam.id).sort((a, b) => new Date(b.startedAt || 0) - new Date(a.startedAt || 0));
     const lastAttempt = attempts[0];
     if (lastAttempt && (lastAttempt.status === 'submitted' || lastAttempt.status === 'graded')) {
-        examTakerState = {
-            attemptId: lastAttempt.id,
-            exam: exam,
-            questions: (exam.questions || []).sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0)),
-            currentIndex: 0,
-            answers: {},
-            timerInterval: null,
-            timeLeftSeconds: 0,
-            startedAt: new Date(lastAttempt.startedAt || Date.now())
-        };
-        showStudentExamResults(lastAttempt);
-        return;
+        if (!forceNew || !canRetryExam(exam, attempts)) {
+            examTakerState = {
+                attemptId: lastAttempt.id,
+                exam: exam,
+                questions: (exam.questions || []).sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0)),
+                currentIndex: 0,
+                answers: {},
+                timerInterval: null,
+                timeLeftSeconds: 0,
+                startedAt: new Date(lastAttempt.startedAt || Date.now())
+            };
+            showStudentExamResults(lastAttempt);
+            return;
+        }
     }
     const cfg = safeJsonParse(exam.configJson, {});
     if (exam.requireSeb || cfg.requireSeb) {
@@ -5048,6 +5220,7 @@ function showStudentExamResults(result) {
                 ${detailsHtml}
                 <div style="text-align:center;margin-top:24px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
                     <button class="btn btn-teal" onclick="returnToCourseAfterExam()">Volver al curso</button>
+                    ${isSebBrowser() ? `<button class="btn btn-outline" onclick="window.location.href='/student-dashboard'">Salir de Safe Exam Browser</button>` : ''}
                 </div>
             </div>
         </div>

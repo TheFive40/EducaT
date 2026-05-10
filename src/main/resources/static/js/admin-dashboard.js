@@ -1,5 +1,6 @@
 const API = '';
 let activeSessionUser = null;
+let currentEffectivePermissions = [];
 
 function buildRuntimeStore() {
     const data = Object.create(null);
@@ -476,6 +477,35 @@ function escapeJsSingle(text) {
         .replace(/\n/g, '\\n');
 }
 
+function hasAnyPermissionAdmin(permissions) {
+    const granted = Array.isArray(currentEffectivePermissions) ? currentEffectivePermissions : [];
+    return (permissions || []).some(p => granted.includes(String(p || '')));
+}
+
+function isAdminFullAccess() {
+    return hasAnyPermissionAdmin(['portal.admin']);
+}
+
+function applyAdminPermissionVisibility() {
+    const sectionPermissions = {
+        cursos: ['cursos.crear','cursos.editar','cursos.eliminar','cursos.asignar','niveles.crear','niveles.asignar'],
+        roles: ['roles.crear','roles.permisos'],
+        certificados: ['certificados.emitir','certificados.eliminar'],
+        instructivos: ['instructivos.crear','instructivos.editar'],
+        formularios: ['formularios.editar','formularios.reportes'],
+        configuracion: ['notas.configurar'],
+        auditoria: ['portal.admin']
+    };
+    document.querySelectorAll('.sidebar-nav .nav-item[data-section]').forEach(btn => {
+        const section = btn.dataset.section;
+        if (!section || section === 'overview') return;
+        const required = sectionPermissions[section];
+        if (!required || required.length === 0) return;
+        const visible = isAdminFullAccess() || hasAnyPermissionAdmin(required);
+        btn.style.display = visible ? '' : 'none';
+    });
+}
+
 function normalizeAdminSection(section) {
     let normalized = String(section || '').trim().toLowerCase();
     if (normalized === 'calificacion') normalized = 'configuracion';
@@ -535,6 +565,9 @@ function navigateTo(section, options) {
     }[section] || 'Administrador';
     document.getElementById('pageTitle').textContent = title;
     if (!opts.skipPersist) writeAdminNavigationState(section, true);
+    if (section === 'auditoria') {
+        loadAuditLogs();
+    }
 }
 window.navigateTo = navigateTo;
 
@@ -7955,6 +7988,7 @@ function bindEvents() {
         });
     });
 
+    bindAuditEvents();
     bindClick('btnCreateCourse', createCourse);
     bindClickIfFn('btnCreateTestTeachers', 'createTestTeachers');
     bindClickIfFn('btnCreateLevel', 'createAcademicLevel');
@@ -8412,6 +8446,133 @@ function hideInitialBootLoader() {
     }, 230);
 }
 
+const auditState = {
+    page: 0,
+    pageSize: 20,
+    totalPages: 0,
+    logs: [],
+    action: '',
+    entityType: '',
+    actor: '',
+    fromDate: '',
+    toDate: ''
+};
+
+async function loadAuditLogs() {
+    const params = new URLSearchParams();
+    params.set('page', String(auditState.page));
+    params.set('size', String(auditState.pageSize));
+    if (auditState.action) params.set('action', auditState.action);
+    if (auditState.entityType) params.set('entityType', auditState.entityType);
+    if (auditState.actor) params.set('actorEmail', auditState.actor);
+    if (auditState.fromDate) params.set('fromDate', auditState.fromDate + 'T00:00:00');
+    if (auditState.toDate) params.set('toDate', auditState.toDate + 'T23:59:59');
+    try {
+        const result = await api('/api/admin/audit/logs?' + params.toString());
+        auditState.logs = asArray((result || {}).content);
+        auditState.totalPages = (result || {}).totalPages || 1;
+        auditState.page = (result || {}).number || 0;
+    } catch (e) {
+        auditState.logs = [];
+        auditState.totalPages = 1;
+        showToast('No se pudieron cargar los logs de auditoría', 'error');
+    }
+    renderAuditLogs();
+}
+
+function formatAuditDate(iso) {
+    if (!iso) return '-';
+    try {
+        const d = new Date(iso);
+        return d.toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'medium' });
+    } catch (e) { return iso; }
+}
+
+function renderAuditLogs() {
+    const host = document.getElementById('auditTableWrap');
+    const pager = document.getElementById('auditPager');
+    if (!host) return;
+    const rows = auditState.logs.map(log => `
+        <tr>
+            <td style="white-space:nowrap">${escapeHtml(formatAuditDate(log.createdAt))}</td>
+            <td>${escapeHtml(log.actorEmail || 'system')}</td>
+            <td><span class="badge badge-info">${escapeHtml(log.action || '')}</span></td>
+            <td>${escapeHtml(log.entityType || '')}</td>
+            <td>${escapeHtml(log.entityId || '')}</td>
+            <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(log.details || '')}</td>
+        </tr>
+    `).join('');
+    host.innerHTML = auditState.logs.length
+        ? `<table class="table">
+            <thead>
+                <tr>
+                    <th>Fecha</th>
+                    <th>Actor</th>
+                    <th>Acción</th>
+                    <th>Entidad</th>
+                    <th>ID Entidad</th>
+                    <th>Detalles</th>
+                </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>`
+        : '<div class="muted">No hay registros de auditoría para los filtros seleccionados.</div>';
+    if (pager) {
+        pager.innerHTML = `
+            <button class="btn btn-sm btn-outline" ${auditState.page <= 0 ? 'disabled' : ''} onclick="auditPrevPage()">Anterior</button>
+            <span>Página ${auditState.page + 1} de ${auditState.totalPages}</span>
+            <button class="btn btn-sm btn-outline" ${auditState.page + 1 >= auditState.totalPages ? 'disabled' : ''} onclick="auditNextPage()">Siguiente</button>
+        `;
+    }
+}
+
+function auditPrevPage() {
+    if (auditState.page > 0) {
+        auditState.page -= 1;
+        loadAuditLogs();
+    }
+}
+
+function auditNextPage() {
+    if (auditState.page + 1 < auditState.totalPages) {
+        auditState.page += 1;
+        loadAuditLogs();
+    }
+}
+
+function bindAuditEvents() {
+    const btnSearch = document.getElementById('btnAuditSearch');
+    const btnClear = document.getElementById('btnAuditClear');
+    if (btnSearch) btnSearch.addEventListener('click', () => {
+        auditState.action = String((document.getElementById('auditActionFilter') || {}).value || '');
+        auditState.entityType = String((document.getElementById('auditEntityFilter') || {}).value || '');
+        auditState.actor = String((document.getElementById('auditActorFilter') || {}).value || '').trim();
+        auditState.fromDate = String((document.getElementById('auditFromDate') || {}).value || '');
+        auditState.toDate = String((document.getElementById('auditToDate') || {}).value || '');
+        auditState.page = 0;
+        loadAuditLogs();
+    });
+    if (btnClear) btnClear.addEventListener('click', () => {
+        const af = document.getElementById('auditActionFilter');
+        const ef = document.getElementById('auditEntityFilter');
+        const ac = document.getElementById('auditActorFilter');
+        const fd = document.getElementById('auditFromDate');
+        const td = document.getElementById('auditToDate');
+        if (af) af.value = '';
+        if (ef) ef.value = '';
+        if (ac) ac.value = '';
+        if (fd) fd.value = '';
+        if (td) td.value = '';
+        auditState.action = '';
+        auditState.entityType = '';
+        auditState.actor = '';
+        auditState.fromDate = '';
+        auditState.toDate = '';
+        auditState.page = 0;
+        loadAuditLogs();
+    });
+}
+
 async function init() {
     try {
         const me = await api('/api/auth/me').catch(() => null);
@@ -8420,6 +8581,12 @@ async function init() {
             return;
         }
         activeSessionUser = me;
+        try {
+            const effectiveAccess = await api('/api/access/me');
+            currentEffectivePermissions = asArray((effectiveAccess || {}).permissions).map(String);
+        } catch (e) {
+            currentEffectivePermissions = [];
+        }
         const publicForm = getSearchParam('publicForm');
         const publicSurvey = getSearchParam('publicSurvey');
         bindEvents();
@@ -8447,6 +8614,7 @@ async function init() {
             return;
         }
         renderAll();
+        applyAdminPermissionVisibility();
         navigateTo(readAdminNavigationState(), { skipPersist: false });
         applyBuilderFullscreenModeIfNeeded();
         if (!surveyLiveTimer) {

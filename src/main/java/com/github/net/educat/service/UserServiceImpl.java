@@ -1,5 +1,6 @@
 package com.github.net.educat.service;
 
+import com.github.net.educat.application.AuditLogService;
 import com.github.net.educat.domain.Role;
 import com.github.net.educat.domain.Student;
 import com.github.net.educat.domain.User;
@@ -14,6 +15,8 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +35,12 @@ public class UserServiceImpl implements UserService {
     private final StudentRepository studentRepository;
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
+    private final AuditLogService auditLogService;
+
+    private String currentActorEmail() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null ? auth.getName() : "system";
+    }
 
     @Override @Transactional(readOnly = true)
     public List<UserResponse> findAll() {
@@ -87,6 +96,8 @@ public class UserServiceImpl implements UserService {
         user.setStatus(request.getStatus() != null ? request.getStatus() : Boolean.TRUE);
         User saved = userRepository.save(user);
         ensureStudentProfileForRole(saved);
+        auditLogService.log(currentActorEmail(), "CREATE", "USER", String.valueOf(saved.getId()),
+                "Usuario creado: " + saved.getEmail() + " | rol=" + (saved.getRole() != null ? saved.getRole().getName() : "none"));
         return userMapper.toResponse(saved);
     }
     @Override
@@ -121,12 +132,17 @@ public class UserServiceImpl implements UserService {
         }
         User saved = userRepository.save(user);
         ensureStudentProfileForRole(saved);
+        auditLogService.log(currentActorEmail(), "UPDATE", "USER", String.valueOf(saved.getId()),
+                "Usuario actualizado: " + saved.getEmail() + " | rol=" + (saved.getRole() != null ? saved.getRole().getName() : "none") + " | status=" + saved.getStatus());
         return userMapper.toResponse(saved);
     }
     @Override
     public void delete(Integer id) {
         if (!userRepository.existsById(id)) throw new EntityNotFoundException("User not found: " + id);
+        User user = userRepository.findById(id).orElse(null);
         userRepository.deleteById(id);
+        auditLogService.log(currentActorEmail(), "DELETE", "USER", String.valueOf(id),
+                "Usuario eliminado: " + (user != null ? user.getEmail() : "unknown"));
     }
 
     private Role resolveRoleForRegistration(UserRequest request) {

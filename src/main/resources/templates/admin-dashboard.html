@@ -869,9 +869,52 @@
 
             <section class="section-panel" id="panel-auditoria">
                 <div class="card">
-                    <div class="card-header"><span class="card-title">Auditoria</span></div>
+                    <div class="card-header"><span class="card-title">Auditoría del Sistema</span></div>
                     <div class="card-body">
-                        <div class="alert alert-info">Aquí podrás consultar trazabilidad, eventos y cambios del sistema.</div>
+                        <div class="alert alert-info" style="margin-bottom:14px">Consulta trazabilidad de acciones críticas: cambios de permisos, roles, usuarios y eventos de seguridad.</div>
+                        <div class="form-row" style="margin-bottom:12px">
+                            <div class="form-group">
+                                <label class="form-label">Acción</label>
+                                <select class="form-input" id="auditActionFilter">
+                                    <option value="">Todas</option>
+                                    <option value="CREATE">Crear</option>
+                                    <option value="UPDATE">Actualizar</option>
+                                    <option value="DELETE">Eliminar</option>
+                                    <option value="PERMISSION_CHANGE">Cambio de permisos</option>
+                                    <option value="PORTAL_ACCESS_CHANGE">Cambio de acceso</option>
+                                    <option value="LOGIN">Inicio de sesión</option>
+                                    <option value="LOGOUT">Cierre de sesión</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Entidad</label>
+                                <select class="form-input" id="auditEntityFilter">
+                                    <option value="">Todas</option>
+                                    <option value="USER">Usuario</option>
+                                    <option value="ROLE">Rol</option>
+                                    <option value="COURSE">Curso</option>
+                                    <option value="PERMISSION">Permiso</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Actor (correo)</label>
+                                <input class="form-input" id="auditActorFilter" placeholder="Filtrar por correo...">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Desde</label>
+                                <input class="form-input" id="auditFromDate" type="date">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Hasta</label>
+                                <input class="form-input" id="auditToDate" type="date">
+                            </div>
+                            <div class="form-group" style="align-self:end">
+                                <button class="btn btn-teal" id="btnAuditSearch">Buscar</button>
+                                <button class="btn btn-outline" id="btnAuditClear">Limpiar</button>
+                            </div>
+                        </div>
+                        <div id="auditTableWrap" class="table-wrap"></div>
+                        <div class="pager" id="auditPager" style="margin-top:10px"></div>
                     </div>
                 </div>
             </section>

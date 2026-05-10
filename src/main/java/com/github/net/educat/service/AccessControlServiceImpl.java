@@ -1,6 +1,7 @@
 package com.github.net.educat.service;
 
 import com.github.net.educat.application.AccessControlService;
+import com.github.net.educat.application.AuditLogService;
 import com.github.net.educat.domain.Role;
 import com.github.net.educat.domain.RolePermission;
 import com.github.net.educat.domain.User;
@@ -16,6 +17,8 @@ import com.github.net.educat.repository.UserPermissionRepository;
 import com.github.net.educat.repository.UserPortalAccessRepository;
 import com.github.net.educat.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -90,6 +93,7 @@ public class AccessControlServiceImpl implements AccessControlService {
     private final UserPortalAccessRepository userPortalAccessRepository;
     private final RoleRepository roleRepository;
     private final UserRepository userRepository;
+    private final AuditLogService auditLogService;
 
     @Override
     @Transactional(readOnly = true)
@@ -100,6 +104,11 @@ public class AccessControlServiceImpl implements AccessControlService {
                 .userPerms(readUserPermissionsAll())
                 .userPortalAccess(readPortalAccessAll())
                 .build();
+    }
+
+    private String currentActorEmail() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null ? auth.getName() : "system";
     }
 
     @Override
@@ -129,6 +138,8 @@ public class AccessControlServiceImpl implements AccessControlService {
             rolePermissionRepository.flush();
         }
 
+        auditLogService.log(currentActorEmail(), "PERMISSION_CHANGE", "ROLE", String.valueOf(roleId),
+                "Permisos de rol actualizados: " + String.join(", ", sanitized));
         return sanitized;
     }
 
@@ -159,6 +170,8 @@ public class AccessControlServiceImpl implements AccessControlService {
             userPermissionRepository.flush();
         }
 
+        auditLogService.log(currentActorEmail(), "PERMISSION_CHANGE", "USER", String.valueOf(userId),
+                "Permisos directos de usuario actualizados: " + String.join(", ", sanitized));
         return sanitized;
     }
 
@@ -173,6 +186,8 @@ public class AccessControlServiceImpl implements AccessControlService {
         entity.setTeacher(access != null && access.isTeacher());
         entity.setStudent(access != null && access.isStudent());
         userPortalAccessRepository.save(entity);
+        auditLogService.log(currentActorEmail(), "PORTAL_ACCESS_CHANGE", "USER", String.valueOf(userId),
+                "Acceso a portales actualizado: admin=" + entity.getAdmin() + ", teacher=" + entity.getTeacher() + ", student=" + entity.getStudent());
         return PortalAccessResponse.builder()
                 .admin(entity.getAdmin())
                 .teacher(entity.getTeacher())
@@ -243,9 +258,9 @@ public class AccessControlServiceImpl implements AccessControlService {
         String roleName = user != null && user.getRole() != null
                 ? String.valueOf(user.getRole().getName()).toUpperCase(Locale.ROOT)
                 : "";
-        boolean admin = roleName.equals("ADMIN") || roleName.equals("ADMINISTRADOR");
-        boolean teacher = admin || roleName.equals("DOCENTE") || roleName.equals("TEACHER") || roleName.equals("PROFESOR");
-        boolean student = admin || roleName.equals("ESTUDIANTE") || roleName.equals("STUDENT");
+        boolean admin = roleName.contains("ADMIN") || roleName.contains("ADMINISTRADOR");
+        boolean teacher = admin || roleName.contains("DOCENTE") || roleName.contains("TEACHER") || roleName.contains("PROFESOR");
+        boolean student = admin || roleName.contains("ESTUDIANTE") || roleName.contains("STUDENT");
         return PortalAccessResponse.builder().admin(admin).teacher(teacher).student(student).build();
     }
 
