@@ -3,13 +3,17 @@ package com.github.net.educat.controller;
 import com.github.net.educat.application.AcademicGradeService;
 import com.github.net.educat.dto.request.AcademicGradeRequest;
 import com.github.net.educat.dto.response.AcademicGradeResponse;
+import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/academic-grades")
@@ -46,5 +50,23 @@ public class AcademicGradeController {
     public ResponseEntity<Void> delete(@PathVariable Integer id) {
         academicGradeService.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @ExceptionHandler(EntityNotFoundException.class)
+    public ResponseEntity<Map<String, String>> handleNotFound(EntityNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, String>> handleConflict(DataIntegrityViolationException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("error", "No se puede eliminar el grado porque está en uso por cursos, estudiantes u otros registros."));
+    }
+
+    @ExceptionHandler(EmptyResultDataAccessException.class)
+    public ResponseEntity<Map<String, String>> handleEmptyResult(EmptyResultDataAccessException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Grado no encontrado."));
     }
 }

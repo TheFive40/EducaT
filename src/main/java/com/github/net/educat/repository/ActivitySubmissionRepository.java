@@ -3,6 +3,8 @@ package com.github.net.educat.repository;
 import com.github.net.educat.domain.ActivitySubmission;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
+
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -12,4 +14,6 @@ public interface ActivitySubmissionRepository extends JpaRepository<ActivitySubm
     List<ActivitySubmission> findByStudentId(Integer studentId);
     Optional<ActivitySubmission> findByActivityIdAndStudentId(Integer activityId, Integer studentId);
     void deleteByActivity_Id(Integer activityId);
+    List<ActivitySubmission> findBySubmittedAtBefore(LocalDateTime date);
+    long countBySubmittedAtBefore(LocalDateTime date);
 }

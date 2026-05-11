@@ -50,4 +50,9 @@ public class ViewsController {
     public String adminDashboard() {
         return "admin-dashboard";
     }
+
+    @GetMapping("/public-survey")
+    public String publicSurvey() {
+        return "admin-dashboard";
+    }
 }

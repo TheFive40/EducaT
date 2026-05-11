@@ -2,6 +2,7 @@ package com.github.net.educat.service;
 
 import com.github.net.educat.domain.Role;
 import com.github.net.educat.domain.Student;
+import com.github.net.educat.application.AuditLogService;
 import com.github.net.educat.domain.User;
 import com.github.net.educat.dto.request.UserRequest;
 import com.github.net.educat.dto.response.UserResponse;
@@ -37,10 +38,12 @@ class UserServiceImplTest {
     private UserMapper userMapper;
     @Mock
     private PasswordEncoder passwordEncoder;
+    @Mock
+    private AuditLogService auditLogService;
 
     @Test
     void save_whenRoleIsStudent_createsStudentProfileIfMissing() {
-        UserServiceImpl service = new UserServiceImpl(userRepository, roleRepository, studentRepository, userMapper, passwordEncoder);
+        UserServiceImpl service = new UserServiceImpl(userRepository, roleRepository, studentRepository, userMapper, passwordEncoder, auditLogService);
         UserRequest request = UserRequest.builder()
                 .name("Ana")
                 .email("ana@test.com")
@@ -72,7 +75,7 @@ class UserServiceImplTest {
 
     @Test
     void save_whenRoleIsTeacher_doesNotCreateStudentProfile() {
-        UserServiceImpl service = new UserServiceImpl(userRepository, roleRepository, studentRepository, userMapper, passwordEncoder);
+        UserServiceImpl service = new UserServiceImpl(userRepository, roleRepository, studentRepository, userMapper, passwordEncoder, auditLogService);
         UserRequest request = UserRequest.builder()
                 .name("Luis")
                 .email("luis@test.com")

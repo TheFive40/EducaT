@@ -6,13 +6,13 @@ const ENROLLMENT_MAX_FILE_SIZE = 2 * 1024 * 1024; // 2 MB
 
 const DEFAULT_ENROLLMENT_FORM_FIELDS = [
     { id: 'studentName', section: 'Datos del estudiante', type: 'text', label: 'Nombre completo', placeholder: 'Nombre del estudiante', required: true },
+    { id: 'studentLastName', section: 'Datos del estudiante', type: 'text', label: 'Apellidos del estudiante', placeholder: 'Apellidos del estudiante', required: true },
     { id: 'studentDoc', section: 'Datos del estudiante', type: 'text', label: 'Documento', placeholder: 'CC / TI / Pasaporte', required: true },
     { id: 'studentBirthDate', section: 'Datos del estudiante', type: 'date', label: 'Fecha de nacimiento', placeholder: '', required: true },
     { id: 'studentGender', section: 'Datos del estudiante', type: 'select', label: 'Genero', placeholder: '', required: true, options: ['Femenino', 'Masculino', 'Otro', 'Prefiero no decirlo'] },
     { id: 'studentEmail', section: 'Datos del estudiante', type: 'email', label: 'Correo electronico del estudiante', placeholder: 'estudiante@dominio.com', required: true, immutable: true },
-    { id: 'level', section: 'Datos academicos', type: 'select', label: 'Nivel academico', placeholder: '', required: true, options: ['Preescolar', 'Primaria', 'Secundaria', 'Media'] },
-    { id: 'grade', section: 'Datos academicos', type: 'text', label: 'Grado', placeholder: 'Ej: 6A, 9B, 11', required: true },
-    { id: 'studentLastName', section: 'Datos del estudiante', type: 'text', label: 'Apellidos del estudiante', placeholder: 'Apellidos del estudiante', required: true },
+    { id: 'level', section: 'Datos academicos', type: 'select', label: 'Nivel academico', placeholder: '', required: true, options: [] },
+    { id: 'grade', section: 'Datos academicos', type: 'select', label: 'Grado', placeholder: '', required: true, options: [] },
     { id: 'guardianName', section: 'Acudiente y contacto', type: 'text', label: 'Nombre del acudiente', placeholder: 'Nombre del responsable', required: true },
     { id: 'guardianRelation', section: 'Acudiente y contacto', type: 'text', label: 'Parentesco', placeholder: 'Ej: Madre, Padre, Tutor', required: true },
     { id: 'contactPhone', section: 'Acudiente y contacto', type: 'tel', label: 'Telefono', placeholder: 'Celular o fijo', required: true },
@@ -30,7 +30,9 @@ const runtime = {
     fields: [],
     answers: {},
     files: {},
-    page: 1
+    page: 1,
+    academicLevels: [],
+    academicGrades: []
 };
 
 function normalize(value) { return String(value || '').trim(); }
@@ -78,8 +80,99 @@ function cloneField(field) {
         label: normalize(field.label) || 'Campo',
         placeholder: String(field.placeholder || ''),
         required: field.required !== false,
+        immutable: !!field.immutable,
         options: Array.isArray(field.options) ? field.options.map(String) : []
     };
+}
+
+async function loadAcademicData() {
+    try {
+        const [levelsRes, gradesRes] = await Promise.all([
+            fetch('/api/academic-levels').catch(() => null),
+            fetch('/api/academic-grades').catch(() => null)
+        ]);
+        if (levelsRes && levelsRes.ok) {
+            runtime.academicLevels = (await levelsRes.json()) || [];
+        }
+        if (gradesRes && gradesRes.ok) {
+            runtime.academicGrades = (await gradesRes.json()) || [];
+        }
+    } catch (e) {
+        runtime.academicLevels = [];
+        runtime.academicGrades = [];
+    }
+}
+
+function getLevelOptions() {
+    return (runtime.academicLevels || []).map(l => String(l.name || '')).filter(Boolean);
+}
+
+function getGradeOptionsForLevel(levelName) {
+    const level = (runtime.academicLevels || []).find(l => String(l.name || '').trim().toLowerCase() === String(levelName || '').trim().toLowerCase());
+    if (!level) return [];
+    const levelId = String(level.id || '');
+    return (runtime.academicGrades || []).filter(g => String(g.levelId || '') === levelId).map(g => String(g.name || '')).filter(Boolean);
+}
+
+function mergeEnrollmentFields(stored) {
+    if (!Array.isArray(stored) || !stored.length) {
+        return DEFAULT_ENROLLMENT_FORM_FIELDS.map(cloneField);
+    }
+    const defaults = DEFAULT_ENROLLMENT_FORM_FIELDS.map(cloneField);
+    const defaultsMap = new Map(defaults.map(f => [f.id, f]));
+    const storedIds = new Set((stored || []).map(f => normalize(f.id)).filter(Boolean));
+    // Respetar el orden y la composicion guardada por el admin
+    const merged = (stored || []).map(s => {
+        const id = normalize(s.id);
+        const def = defaultsMap.get(id);
+        if (!def) return cloneField(s); // campo custom
+        if (def.immutable) {
+            return { ...def, required: def.required };
+        }
+        return { ...def, ...cloneField(s), id: def.id, immutable: def.immutable };
+    });
+    // Asegurar que los campos inmutables del sistema siempre esten presentes
+    defaults.forEach(def => {
+        if (def.immutable && !storedIds.has(def.id)) {
+            merged.push(def);
+        }
+    });
+    return merged;
+}
+
+function hardenEnrollmentFormFields(fields) {
+    const list = (fields || []).map(cloneField);
+    // Ensure studentEmail exists, is required, immutable
+    const emailIdx = list.findIndex(f => f.id === 'studentEmail');
+    if (emailIdx >= 0) {
+        list[emailIdx].required = true;
+        list[emailIdx].immutable = true;
+    }
+    // Ensure studentLastName exists and is on first page (early in list)
+    const lastNameIdx = list.findIndex(f => f.id === 'studentLastName');
+    if (lastNameIdx >= 6) {
+        const [item] = list.splice(lastNameIdx, 1);
+        list.splice(1, 0, item); // Put right after studentName
+    } else if (lastNameIdx < 0) {
+        const def = DEFAULT_ENROLLMENT_FORM_FIELDS.find(f => f.id === 'studentLastName');
+        if (def) list.splice(1, 0, cloneField(def));
+    }
+    // Forzar nivel y grado a select siempre
+    ['level', 'grade'].forEach(key => {
+        const idx = list.findIndex(f => f.id === key);
+        if (idx >= 0) {
+            list[idx].type = 'select';
+            list[idx].options = [];
+        }
+    });
+    // Limit file fields
+    let fileSlots = ENROLLMENT_MAX_FILE_FIELDS;
+    return list.filter(f => {
+        if (f.type !== 'file') return true;
+        if (fileSlots <= 0) return false;
+        fileSlots -= 1;
+        return true;
+    });
 }
 
 function loadEnrollmentFields() {
@@ -90,22 +183,14 @@ function loadEnrollmentFields() {
         items = [];
     }
     const hasStored = Array.isArray(items) && items.length;
-    const fields = (hasStored ? items : DEFAULT_ENROLLMENT_FORM_FIELDS)
-        .map(cloneField)
-        .filter(f => f.id);
-    let fileSlots = ENROLLMENT_MAX_FILE_FIELDS;
-    const normalized = fields.filter(f => {
-        if (f.type !== 'file') return true;
-        if (fileSlots <= 0) return false;
-        fileSlots -= 1;
-        return true;
-    });
+    const merged = mergeEnrollmentFields(hasStored ? items : []);
+    const fields = hardenEnrollmentFormFields(merged);
 
-    if (!hasStored || normalized.length !== items.length) {
-        localStorage.setItem(ENROLLMENT_FORM_STORAGE_KEY, JSON.stringify(normalized));
+    if (!hasStored || fields.length !== items.length) {
+        localStorage.setItem(ENROLLMENT_FORM_STORAGE_KEY, JSON.stringify(fields));
     }
 
-    const allowedIds = new Set(normalized.map(f => f.id));
+    const allowedIds = new Set(fields.map(f => f.id));
     Object.keys(runtime.answers).forEach(key => {
         if (!allowedIds.has(key)) delete runtime.answers[key];
     });
@@ -113,7 +198,7 @@ function loadEnrollmentFields() {
         if (!allowedIds.has(key)) delete runtime.files[key];
     });
 
-    runtime.fields = normalized;
+    runtime.fields = fields;
 }
 
 function renderDynamicField(field) {
@@ -124,13 +209,36 @@ function renderDynamicField(field) {
         return `<div class="form-group"><label class="form-label" for="${fid}">${field.label}${field.required ? ' *' : ''}</label><textarea id="${fid}" class="form-input no-icon" style="min-height:100px" placeholder="${field.placeholder}"></textarea><div class="field-error" id="${errId}">Campo obligatorio.</div></div>`;
     }
     if (field.type === 'select') {
-        return `<div class="form-group"><label class="form-label" for="${fid}">${field.label}${field.required ? ' *' : ''}</label><select id="${fid}" class="form-select"><option value="">Selecciona</option>${field.options.map(opt => `<option value="${opt}">${opt}</option>`).join('')}</select><div class="field-error" id="${errId}">Campo obligatorio.</div></div>`;
+        let options = [];
+        if (field.id === 'level') {
+            options = getLevelOptions();
+        } else if (field.id === 'grade') {
+            const selectedLevel = runtime.answers['level'] || '';
+            options = getGradeOptionsForLevel(selectedLevel);
+        } else {
+            options = field.options || [];
+        }
+        return `<div class="form-group"><label class="form-label" for="${fid}">${field.label}${field.required ? ' *' : ''}</label><select id="${fid}" class="form-select"><option value="">Selecciona</option>${options.map(opt => `<option value="${opt}" ${String(value) === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select><div class="field-error" id="${errId}">Campo obligatorio.</div></div>`;
     }
     if (field.type === 'file') {
         return `<div class="form-group"><label class="form-label" for="${fid}">${field.label}${field.required ? ' *' : ''}</label><input id="${fid}" type="file" class="form-input no-icon" accept=".pdf,.jpg,.jpeg,.png,.webp"><div class="field-help">Formatos permitidos: PDF, JPG, PNG, WEBP.</div><div class="field-error" id="${errId}">Adjunta un archivo.</div></div>`;
     }
-    const type = ['email', 'tel', 'date', 'url'].includes(field.type) ? field.type : 'text';
-    return `<div class="form-group"><label class="form-label" for="${fid}">${field.label}${field.required ? ' *' : ''}</label><input id="${fid}" type="${type}" class="form-input no-icon" placeholder="${field.placeholder}"><div class="field-error" id="${errId}">Campo obligatorio.</div></div>`;
+    if (field.type === 'tel') {
+        const countryCode = normalize(runtime.answers[`${field.id}_country`] || '+57');
+        const phoneValue = normalize(value).replace(/^\+\d+\s*/, '');
+        return `<div class="form-group"><label class="form-label" for="${fid}">${field.label}${field.required ? ' *' : ''}</label><div style="display:flex;gap:8px;align-items:center"><select id="${fid}_country" class="form-select" style="max-width:110px;flex-shrink:0"><option value="+57" ${countryCode === '+57' ? 'selected' : ''}>🇨🇴 +57</option><option value="+1" ${countryCode === '+1' ? 'selected' : ''}>🇺🇸 +1</option><option value="+34" ${countryCode === '+34' ? 'selected' : ''}>🇪🇸 +34</option><option value="+52" ${countryCode === '+52' ? 'selected' : ''}>🇲🇽 +52</option><option value="+54" ${countryCode === '+54' ? 'selected' : ''}>🇦🇷 +54</option><option value="+51" ${countryCode === '+51' ? 'selected' : ''}>🇵🇪 +51</option><option value="+56" ${countryCode === '+56' ? 'selected' : ''}>🇨🇱 +56</option><option value="+58" ${countryCode === '+58' ? 'selected' : ''}>🇻🇪 +58</option></select><input id="${fid}" type="tel" class="form-input no-icon" style="flex:1" placeholder="${field.placeholder}" value="${phoneValue}"></div><div class="field-error" id="${errId}">Campo obligatorio.</div></div>`;
+    }
+    const type = ['email', 'date', 'url'].includes(field.type) ? field.type : 'text';
+    return `<div class="form-group"><label class="form-label" for="${fid}">${field.label}${field.required ? ' *' : ''}</label><input id="${fid}" type="${type}" class="form-input no-icon" placeholder="${field.placeholder}" value="${escapeHtml(String(value))}"><div class="field-error" id="${errId}">Campo obligatorio.</div></div>`;
+}
+
+function escapeHtml(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function renderEnrollmentFormPage() {
@@ -166,6 +274,33 @@ function renderEnrollmentFormPage() {
         if (field.type === 'file') {
             input.addEventListener('change', () => {
                 runtime.files[field.id] = input.files && input.files[0] ? input.files[0] : null;
+            });
+        } else if (field.type === 'tel') {
+            const countrySelect = document.getElementById(`enr_${field.id}_country`);
+            input.value = String(runtime.answers[field.id] || '').replace(/^\+\d+\s*/, '');
+            input.addEventListener('input', () => {
+                const code = countrySelect ? normalize(countrySelect.value) : '+57';
+                runtime.answers[field.id] = code + ' ' + normalize(input.value);
+            });
+            input.addEventListener('change', () => {
+                const code = countrySelect ? normalize(countrySelect.value) : '+57';
+                runtime.answers[field.id] = code + ' ' + normalize(input.value);
+            });
+            if (countrySelect) {
+                countrySelect.addEventListener('change', () => {
+                    runtime.answers[`${field.id}_country`] = normalize(countrySelect.value);
+                    const code = normalize(countrySelect.value);
+                    runtime.answers[field.id] = code + ' ' + normalize(input.value);
+                });
+            }
+        } else if (field.type === 'select' && (field.id === 'level' || field.id === 'grade')) {
+            input.value = String(runtime.answers[field.id] || '');
+            input.addEventListener('change', () => {
+                runtime.answers[field.id] = input.value;
+                if (field.id === 'level') {
+                    runtime.answers['grade'] = '';
+                    renderEnrollmentFormPage();
+                }
             });
         } else {
             input.value = String(runtime.answers[field.id] || '');
@@ -358,9 +493,9 @@ async function handleSubmit(ev) {
         requests.unshift(payload);
         saveRequests(requests);
         clearForm();
-        setAlert('alertSuccess', true, 'Solicitud enviada. Pronto recibirás confirmación en el correo de contacto.');
+        setAlert('alertSuccess', true, 'Solicitud enviada. Pronto recibiras confirmacion en el correo de contacto.');
     } catch (e) {
-        console.error('Error al enviar solicitud de matrícula:', e);
+        console.error('Error al enviar solicitud de matricula:', e);
         const msg = e && e.message ? e.message : 'No se pudo enviar la solicitud. Intenta nuevamente.';
         setAlert('alertError', true, msg);
     } finally {
@@ -368,7 +503,25 @@ async function handleSubmit(ev) {
     }
 }
 
-function initEnrollmentForm() {
+async function syncEnrollmentFormFromBackend() {
+    try {
+        const res = await fetch('/api/config/enrollment-form-config');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.value) {
+            const parsed = JSON.parse(data.value);
+            if (Array.isArray(parsed) && parsed.length) {
+                localStorage.setItem(ENROLLMENT_FORM_STORAGE_KEY, JSON.stringify(parsed));
+            }
+        }
+    } catch (e) {
+        // ignorar: si falla, usaremos localStorage o defaults
+    }
+}
+
+async function initEnrollmentForm() {
+    await loadAcademicData();
+    await syncEnrollmentFormFromBackend();
     loadEnrollmentFields();
     renderEnrollmentFormPage();
     const form = document.getElementById('enrollmentForm');
@@ -378,9 +531,8 @@ function initEnrollmentForm() {
         loadEnrollmentFields();
         renderEnrollmentFormPage();
         setAlert('alertSuccess', false);
-        setAlert('alertError', true, 'El formulario fue actualizado por administración. Revisa los campos antes de enviar.');
+        setAlert('alertError', true, 'El formulario fue actualizado por administracion. Revisa los campos antes de enviar.');
     });
 }
 
 initEnrollmentForm();
-

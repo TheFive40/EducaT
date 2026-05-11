@@ -9,6 +9,7 @@ import com.github.net.educat.dto.response.EffectiveAccessResponse;
 import com.github.net.educat.repository.RolePermissionRepository;
 import com.github.net.educat.repository.RoleRepository;
 import com.github.net.educat.repository.UserPermissionRepository;
+import com.github.net.educat.application.AuditLogService;
 import com.github.net.educat.repository.UserPortalAccessRepository;
 import com.github.net.educat.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,8 @@ class AccessControlServiceImplTest {
 
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private AuditLogService auditLogService;
 
     @Test
     void getEffectiveAccess_whenRoleIsAdmin_enablesAllPortalsByDefault() {
@@ -55,7 +58,7 @@ class AccessControlServiceImplTest {
 
         AccessControlServiceImpl service = new AccessControlServiceImpl(
                 rolePermissionRepository, userPermissionRepository,
-                userPortalAccessRepository, roleRepository, userRepository
+                userPortalAccessRepository, roleRepository, userRepository, auditLogService
         );
         User user = User.builder()
                 .id(10)
@@ -74,16 +77,9 @@ class AccessControlServiceImplTest {
 
     @Test
     void getGrantedAuthorities_whenRoleIsAdmin_returnsAllPortalAuthorities() {
-        when(rolePermissionRepository.findByRole_Id(anyInt())).thenReturn(List.of(
-                RolePermission.builder().permissionKey("portal.admin").build(),
-                RolePermission.builder().permissionKey("portal.teacher").build(),
-                RolePermission.builder().permissionKey("portal.student").build()
-        ));
-        when(userPortalAccessRepository.findByUser_Id(anyInt())).thenReturn(Optional.empty());
-
         AccessControlServiceImpl service = new AccessControlServiceImpl(
                 rolePermissionRepository, userPermissionRepository,
-                userPortalAccessRepository, roleRepository, userRepository
+                userPortalAccessRepository, roleRepository, userRepository, auditLogService
         );
         User user = User.builder()
                 .id(12)

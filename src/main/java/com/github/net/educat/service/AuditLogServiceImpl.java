@@ -3,13 +3,16 @@ package com.github.net.educat.service;
 import com.github.net.educat.application.AuditLogService;
 import com.github.net.educat.domain.AuditLog;
 import com.github.net.educat.repository.AuditLogRepository;
+import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -53,6 +56,27 @@ public class AuditLogServiceImpl implements AuditLogService {
     @Override
     @Transactional(readOnly = true)
     public Page<AuditLog> search(String action, String entityType, String actorEmail, LocalDateTime fromDate, LocalDateTime toDate, Pageable pageable) {
-        return auditLogRepository.search(action, entityType, actorEmail, fromDate, toDate, pageable);
+        String emailPattern = actorEmail != null ? "%" + actorEmail + "%" : null;
+        Specification<AuditLog> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (action != null) {
+                predicates.add(cb.equal(root.get("action"), action));
+            }
+            if (entityType != null) {
+                predicates.add(cb.equal(root.get("entityType"), entityType));
+            }
+            if (emailPattern != null) {
+                predicates.add(cb.like(cb.lower(root.get("actorEmail")), emailPattern.toLowerCase()));
+            }
+            if (fromDate != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), fromDate));
+            }
+            if (toDate != null) {
+                predicates.add(cb.lessThanOrEqualTo(root.get("createdAt"), toDate));
+            }
+            query.orderBy(cb.desc(root.get("createdAt")));
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+        return auditLogRepository.findAll(spec, pageable);
     }
 }

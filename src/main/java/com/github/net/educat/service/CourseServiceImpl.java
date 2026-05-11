@@ -15,10 +15,13 @@ import com.github.net.educat.repository.EnrollmentRepository;
 import com.github.net.educat.repository.ScheduleRepository;
 import com.github.net.educat.repository.StudentRepository;
 import com.github.net.educat.repository.TeacherRepository;
+import com.github.net.educat.application.AuditLogService;
 import com.github.net.educat.application.CourseService;
 import com.github.net.educat.domain.Schedule;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
@@ -40,6 +43,12 @@ public class CourseServiceImpl implements CourseService {
     private final ScheduleRepository scheduleRepository;
     private final CourseMapper courseMapper;
     private final StudentMapper studentMapper;
+    private final AuditLogService auditLogService;
+
+    private String currentActorEmail() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null ? auth.getName() : "system";
+    }
 
     @Override
     public List<CourseResponse> findAll() {
@@ -65,6 +74,8 @@ public class CourseServiceImpl implements CourseService {
         String warning = syncCourseDefaultSchedule(saved);
         CourseResponse response = courseMapper.toResponse(saved);
         response.setScheduleWarning(warning);
+        auditLogService.log(currentActorEmail(), "CREATE", "COURSE", String.valueOf(saved.getId()),
+                "Curso creado: " + saved.getName() + " | code=" + saved.getCourseCode());
         return response;
     }
     @Override
@@ -92,12 +103,17 @@ public class CourseServiceImpl implements CourseService {
         String warning = syncCourseDefaultSchedule(saved);
         CourseResponse response = courseMapper.toResponse(saved);
         response.setScheduleWarning(warning);
+        auditLogService.log(currentActorEmail(), "UPDATE", "COURSE", String.valueOf(saved.getId()),
+                "Curso actualizado: " + saved.getName() + " | code=" + saved.getCourseCode());
         return response;
     }
     @Override
     public void delete(Integer id) {
         if (!courseRepository.existsById(id)) throw new EntityNotFoundException("Course not found: " + id);
+        Course course = courseRepository.findById(id).orElse(null);
         courseRepository.deleteById(id);
+        auditLogService.log(currentActorEmail(), "DELETE", "COURSE", String.valueOf(id),
+                "Curso eliminado: " + (course != null ? course.getName() : "unknown"));
     }
     @Override
     public List<CourseResponse> findByTeacherId(Integer teacherId) {
@@ -145,6 +161,8 @@ public class CourseServiceImpl implements CourseService {
             if (course.getTeacher() == null) {
                 course.setTeacher(teacher);
                 courseRepository.save(course);
+                auditLogService.log(currentActorEmail(), "COURSE_CLAIM", "COURSE", String.valueOf(course.getId()),
+                        "Docente asignado al curso " + course.getName() + " | teacherUserId=" + request.getUserId());
                 return CourseJoinByCodeResponse.builder()
                         .success(true)
                         .status("COURSE_CLAIMED")
@@ -185,6 +203,8 @@ public class CourseServiceImpl implements CourseService {
                     .enrollmentDate(LocalDateTime.now())
                     .build();
             enrollmentRepository.save(enrollment);
+            auditLogService.log(currentActorEmail(), "ENROLL", "COURSE", String.valueOf(course.getId()),
+                    "Estudiante matriculado en curso " + course.getName() + " | studentUserId=" + request.getUserId());
             return CourseJoinByCodeResponse.builder()
                     .success(true)
                     .status("ENROLLED")

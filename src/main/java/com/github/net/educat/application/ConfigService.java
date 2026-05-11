@@ -13,4 +13,8 @@ public interface ConfigService {
     ConfigResponse saveAssignmentRules(String rules);
     ConfigResponse getCutPeriods();
     ConfigResponse saveCutPeriods(String periods);
+    ConfigResponse getCourseGrades();
+    ConfigResponse saveCourseGrades(String courseGrades);
+    ConfigResponse getStudentGrades();
+    ConfigResponse saveStudentGrades(String studentGrades);
 }

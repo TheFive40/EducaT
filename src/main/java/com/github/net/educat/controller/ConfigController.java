@@ -61,4 +61,24 @@ public class ConfigController {
     public ResponseEntity<ConfigResponse> saveCutPeriods(@RequestBody String periods) {
         return ResponseEntity.ok(configService.saveCutPeriods(periods));
     }
+
+    @GetMapping("/course-grades")
+    public ResponseEntity<ConfigResponse> getCourseGrades() {
+        return ResponseEntity.ok(configService.getCourseGrades());
+    }
+
+    @PutMapping("/course-grades")
+    public ResponseEntity<ConfigResponse> saveCourseGrades(@RequestBody String courseGrades) {
+        return ResponseEntity.ok(configService.saveCourseGrades(courseGrades));
+    }
+
+    @GetMapping("/student-grades")
+    public ResponseEntity<ConfigResponse> getStudentGrades() {
+        return ResponseEntity.ok(configService.getStudentGrades());
+    }
+
+    @PutMapping("/student-grades")
+    public ResponseEntity<ConfigResponse> saveStudentGrades(@RequestBody String studentGrades) {
+        return ResponseEntity.ok(configService.saveStudentGrades(studentGrades));
+    }
 }

@@ -125,8 +125,8 @@ const DEFAULT_ENROLLMENT_FORM_FIELDS = [
     { id: 'studentBirthDate', section: 'Datos del estudiante', type: 'date', label: 'Fecha de nacimiento', placeholder: '', required: true },
     { id: 'studentGender', section: 'Datos del estudiante', type: 'select', label: 'Genero', placeholder: '', required: true, options: ['Femenino', 'Masculino', 'Otro', 'Prefiero no decirlo'] },
     { id: 'studentEmail', section: 'Datos del estudiante', type: 'email', label: 'Correo electronico del estudiante', placeholder: 'estudiante@dominio.com', required: true, immutable: true },
-    { id: 'level', section: 'Datos academicos', type: 'select', label: 'Nivel academico', placeholder: '', required: true, options: ['Preescolar', 'Primaria', 'Secundaria', 'Media'] },
-    { id: 'grade', section: 'Datos academicos', type: 'text', label: 'Grado', placeholder: 'Ej: 6A, 9B, 11', required: true },
+    { id: 'level', section: 'Datos academicos', type: 'select', label: 'Nivel academico', placeholder: '', required: true, options: [] },
+    { id: 'grade', section: 'Datos academicos', type: 'select', label: 'Grado', placeholder: '', required: true, options: [] },
     { id: 'studentLastName', section: 'Datos del estudiante', type: 'text', label: 'Apellidos del estudiante', placeholder: 'Apellidos del estudiante', required: true },
     { id: 'guardianName', section: 'Acudiente y contacto', type: 'text', label: 'Nombre del acudiente', placeholder: 'Nombre del responsable', required: true },
     { id: 'guardianRelation', section: 'Acudiente y contacto', type: 'text', label: 'Parentesco', placeholder: 'Ej: Madre, Padre, Tutor', required: true },
@@ -156,6 +156,7 @@ const state = {
     formResponses: [],
     formShares: {},
     surveys: [],
+    certTemplates: [],
     permissionCatalog: [],
     rolePerms: {},
     userPerms: {},
@@ -350,6 +351,13 @@ const modalState = {
 let surveyLiveTimer = null;
 let publicSurveyLiveTimer = null;
 let storageListenersBound = false;
+const storageMonitorState = {
+    details: null,
+    lastLoaded: 0,
+    loading: false,
+    refreshMs: 15000,
+    timer: null
+};
 const publicFormRuntime = {
     type: '',
     title: '',
@@ -397,6 +405,16 @@ async function api(path, options = {}) {
     }
     if (res.status === 204) return null;
     return res.json();
+}
+
+async function fetchBlob(path, options = {}) {
+    const res = await fetch(API + path, {
+        ...options,
+        credentials: 'include',
+        headers: { ...headers(false), ...(options.headers || {}) }
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.blob();
 }
 
 function readStorage(key, fallback) {
@@ -447,6 +465,8 @@ function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function safeJsonParse(str, fallback) { try { return JSON.parse(str); } catch (e) { return fallback; } }
+
 function showToast(msg, type) {
     const tc = document.getElementById('toastContainer');
     const t = document.createElement('div');
@@ -475,6 +495,20 @@ function escapeJsSingle(text) {
         .replace(/'/g, "\\'")
         .replace(/\r/g, '\\r')
         .replace(/\n/g, '\\n');
+}
+
+function formatBytes(bytes) {
+    const value = Math.max(0, Number(bytes) || 0);
+    if (value < 1024) return `${value.toFixed(0)} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function clampPercent(value) {
+    const v = Number(value);
+    if (!Number.isFinite(v)) return 0;
+    return Math.max(0, Math.min(100, v));
 }
 
 function hasAnyPermissionAdmin(permissions) {
@@ -568,11 +602,14 @@ function navigateTo(section, options) {
     if (section === 'auditoria') {
         loadAuditLogs();
     }
+    if (section === 'configuracion') {
+        callIfFn('renderStorageMonitorSection');
+    }
 }
 window.navigateTo = navigateTo;
 
-function openModal(title, bodyHtml) {
-    setAdminModalSize('lg');
+function openModal(title, bodyHtml, size) {
+    setAdminModalSize(size || 'lg');
     document.getElementById('modalTitle').textContent = title;
     document.getElementById('modalBody').innerHTML = bodyHtml;
     document.getElementById('modalBackdrop').classList.add('show');
@@ -817,6 +854,34 @@ function renderOverview() {
         <div class="muted">Rango de parciales: ${p.examMinPercent}% - ${p.examMaxPercent}%</div>
     `;
     callIfFn('renderEvaluationReportSection');
+    loadActiveSurveysForAdmin();
+}
+
+async function loadActiveSurveysForAdmin() {
+    const container = document.getElementById('overviewSurveys');
+    const countBadge = document.getElementById('adminSurveyCount');
+    if (!container) return;
+    const roleName = String((((activeSessionUser || {}).role || {}).name) || 'ADMINISTRADOR').toUpperCase();
+    const surveys = await api('/api/surveys/active-for-role?role=' + encodeURIComponent(roleName)).catch(() => []);
+    if (!Array.isArray(surveys) || surveys.length === 0) {
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:13px">No hay encuestas activas para tu rol en este momento.</div>';
+        if (countBadge) countBadge.style.display = 'none';
+        return;
+    }
+    if (countBadge) { countBadge.textContent = surveys.length; countBadge.style.display = ''; }
+    container.innerHTML = surveys.map(s => {
+        const question = escapeHtml(s.question || 'Encuesta sin título');
+        const options = safeJsonParse(s.optionsJson, []);
+        const optsPreview = options.slice(0, 3).map(o => escapeHtml(o.text || 'Opción')).join(', ') + (options.length > 3 ? '...' : '');
+        return `<div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid rgba(11,31,58,0.05)">
+            <div style="width:9px;height:9px;border-radius:50%;background:var(--navy);flex-shrink:0"></div>
+            <div style="flex:1">
+                <div style="font-weight:600;font-size:13.5px">${question}</div>
+                <div style="font-size:11.5px;color:var(--text-muted)">${optsPreview || 'Sin opciones'}</div>
+            </div>
+            <a class="btn btn-sm btn-teal" href="/public-survey?publicSurvey=${encodeURIComponent(s.id)}" title="Votar">Votar</a>
+        </div>`;
+    }).join('');
 }
 
 function userNameFrom(obj) {
@@ -1620,7 +1685,7 @@ function openLevelDetailsModal(levelId) {
             <div>${grades.length ? grades.map(g => `
                 <span class="card-check" style="display:inline-flex;align-items:center;gap:6px;margin:4px 4px 0 0">
                     <span>${escapeHtml(g.name || 'Grado')}</span>
-                    <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px" onclick="deleteAcademicGradeFromDetails('${String(g.id)}','${id}')">Eliminar</button>
+                    <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px" onclick="deleteAcademicGradeFromDetails('${escapeJsSingle(String(g.id))}','${escapeJsSingle(id)}')">Eliminar</button>
                 </span>
             `).join('') : '<span class="muted">Sin grados</span>'}</div>
         </div>
@@ -1635,12 +1700,11 @@ function openLevelDetailsModal(levelId) {
     `);
 }
 
-function deleteAcademicGradeFromDetails(gradeId, levelId) {
+async function deleteAcademicGradeFromDetails(gradeId, levelId) {
     const target = (state.academicGrades || []).find(g => String(g.id) === String(gradeId));
     if (!target) return;
-    deleteAcademicGrade(gradeId);
+    await deleteAcademicGrade(gradeId);
     openLevelDetailsModal(levelId);
-    showToast(`Grado eliminado: ${target.name || 'N/A'}`, 'success');
 }
 
 function assignTeacherToLevel() {
@@ -2842,17 +2906,72 @@ function cloneEnrollmentField(field) {
         label: String(item.label || 'Campo').trim(),
         placeholder: String(item.placeholder || ''),
         required: item.required !== false,
+        immutable: !!item.immutable,
         options: asArray(item.options).map(String)
     };
 }
 
+function mergeEnrollmentFields(stored) {
+    const defaults = DEFAULT_ENROLLMENT_FORM_FIELDS.map(cloneEnrollmentField);
+    const storedMap = new Map((stored || []).map(f => [String((f || {}).id || ''), cloneEnrollmentField(f)]));
+    const merged = defaults.map(def => {
+        const storedField = storedMap.get(def.id);
+        if (!storedField) return def;
+        if (def.immutable) {
+            return { ...def, required: def.required };
+        }
+        return { ...def, ...storedField, id: def.id, immutable: def.immutable };
+    });
+    const defaultIds = new Set(defaults.map(f => f.id));
+    (stored || []).forEach(f => {
+        const id = String((f || {}).id || '');
+        if (id && !defaultIds.has(id)) {
+            merged.push(cloneEnrollmentField(f));
+        }
+    });
+    return merged;
+}
+
+function hardenEnrollmentFormFields(fields) {
+    const list = (fields || []).map(cloneEnrollmentField);
+    const emailIdx = list.findIndex(f => f.id === 'studentEmail');
+    if (emailIdx >= 0) {
+        list[emailIdx].required = true;
+        list[emailIdx].immutable = true;
+    }
+    const lastNameIdx = list.findIndex(f => f.id === 'studentLastName');
+    if (lastNameIdx >= 6) {
+        const [item] = list.splice(lastNameIdx, 1);
+        list.splice(1, 0, item);
+    } else if (lastNameIdx < 0) {
+        const def = DEFAULT_ENROLLMENT_FORM_FIELDS.find(f => f.id === 'studentLastName');
+        if (def) list.splice(1, 0, cloneEnrollmentField(def));
+    }
+    // Forzar nivel y grado a select siempre
+    ['level', 'grade'].forEach(key => {
+        const idx = list.findIndex(f => f.id === key);
+        if (idx >= 0) {
+            list[idx].type = 'select';
+            list[idx].options = [];
+        }
+    });
+    let fileSlots = ENROLLMENT_FORM_MAX_FILE_FIELDS;
+    return list.filter(f => {
+        if (f.type !== 'file') return true;
+        if (fileSlots <= 0) return false;
+        fileSlots -= 1;
+        return true;
+    });
+}
+
 function getEnrollmentFormConfigDraft() {
-    const draft = asArray(state.ui.enrollmentFormBuilderDraft).map(cloneEnrollmentField);
-    if (draft.length) return draft;
+    const current = asArray(state.ui.enrollmentFormBuilderDraft);
+    if (current.length) return current; // devolver referencia mutable directamente
     const stored = asArray(state.ui.enrollmentFormConfigLoaded).map(cloneEnrollmentField);
     const baseline = stored.length ? stored : DEFAULT_ENROLLMENT_FORM_FIELDS.map(cloneEnrollmentField);
-    state.ui.enrollmentFormBuilderDraft = baseline;
-    return baseline;
+    const hardened = hardenEnrollmentFormFields(baseline);
+    state.ui.enrollmentFormBuilderDraft = hardened;
+    return hardened;
 }
 
 function countEnrollmentFileFields(fields) {
@@ -2873,19 +2992,32 @@ function normalizeEnrollmentFormDraft(fields) {
 }
 
 function saveEnrollmentFormBuilderDraft() {
-    const normalized = normalizeEnrollmentFormDraft(getEnrollmentFormConfigDraft());
+    const draft = getEnrollmentFormConfigDraft();
+    const normalized = hardenEnrollmentFormFields(normalizeEnrollmentFormDraft(draft));
+    // Asegurar que el draft mutable también refleje la normalización
     state.ui.enrollmentFormBuilderDraft = normalized;
+    // Guardar en localStorage para que el estudiante lo reciba en tiempo real via storage event
+    try {
+        localStorage.setItem(STORAGE_KEYS.enrollmentFormConfig, JSON.stringify(normalized));
+    } catch (e) {
+        // ignorar errores de quota
+    }
     api('/api/config/enrollment-form-config', { method: 'PUT', headers: headers(), body: JSON.stringify(normalized) }).catch(() => {});
 }
 
 function addEnrollmentFormField(type) {
     const nextType = String(type || 'text');
-    const draft = getEnrollmentFormConfigDraft();
-    if (nextType === 'file' && countEnrollmentFileFields(draft) >= ENROLLMENT_FORM_MAX_FILE_FIELDS) {
+    const draft = state.ui.enrollmentFormBuilderDraft;
+    if (!Array.isArray(draft) || !draft.length) {
+        // Inicializar si está vacío
+        state.ui.enrollmentFormBuilderDraft = hardenEnrollmentFormFields(DEFAULT_ENROLLMENT_FORM_FIELDS.map(cloneEnrollmentField));
+    }
+    const effectiveDraft = state.ui.enrollmentFormBuilderDraft;
+    if (nextType === 'file' && countEnrollmentFileFields(effectiveDraft) >= ENROLLMENT_FORM_MAX_FILE_FIELDS) {
         showToast('Máximo 4 campos de adjuntos. Para más archivos, usa campo URL.', 'error');
         return;
     }
-    draft.push(cloneEnrollmentField({
+    effectiveDraft.push(cloneEnrollmentField({
         id: 'custom-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
         section: 'Campos adicionales',
         type: nextType,
@@ -2894,12 +3026,13 @@ function addEnrollmentFormField(type) {
         required: false,
         options: []
     }));
-    state.ui.enrollmentFormBuilderPage = Math.max(1, Math.ceil(draft.length / (state.ui.enrollmentFormBuilderPageSize || 6)));
+    state.ui.enrollmentFormBuilderPage = Math.max(1, Math.ceil(effectiveDraft.length / (state.ui.enrollmentFormBuilderPageSize || 6)));
     renderEnrollmentFormBuilderSection();
 }
 
 function updateEnrollmentFormField(index, key, value, rerender) {
-    const draft = getEnrollmentFormConfigDraft();
+    const draft = state.ui.enrollmentFormBuilderDraft;
+    if (!Array.isArray(draft)) return;
     const idx = parseInt(index || '-1', 10);
     if (idx < 0 || idx >= draft.length) return;
     const field = draft[idx];
@@ -2925,7 +3058,8 @@ function updateEnrollmentFormField(index, key, value, rerender) {
 }
 
 function deleteEnrollmentFormField(index) {
-    const draft = getEnrollmentFormConfigDraft();
+    const draft = state.ui.enrollmentFormBuilderDraft;
+    if (!Array.isArray(draft)) return;
     const idx = parseInt(index || '-1', 10);
     if (idx < 0 || idx >= draft.length) return;
     if (draft[idx].immutable) {
@@ -2948,7 +3082,7 @@ function enrollmentFormBuilderNextPage() {
 }
 
 function resetEnrollmentFormBuilderDefault() {
-    state.ui.enrollmentFormBuilderDraft = DEFAULT_ENROLLMENT_FORM_FIELDS.map(cloneEnrollmentField);
+    state.ui.enrollmentFormBuilderDraft = hardenEnrollmentFormFields(DEFAULT_ENROLLMENT_FORM_FIELDS.map(cloneEnrollmentField));
     state.ui.enrollmentFormBuilderPage = 1;
     renderEnrollmentFormBuilderSection();
     showToast('Formulario por defecto cargado en editor', 'info');
@@ -3473,11 +3607,13 @@ function renderEnrollmentFormBuilderSection() {
     const draft = getEnrollmentFormConfigDraft();
     const paged = paginateItems(draft, state.ui.enrollmentFormBuilderPage, state.ui.enrollmentFormBuilderPageSize || 6);
     state.ui.enrollmentFormBuilderPage = paged.page;
+    const pageSize = state.ui.enrollmentFormBuilderPageSize || 6;
+    const offset = (paged.page - 1) * pageSize;
 
     const typeOptions = ['text', 'textarea', 'email', 'tel', 'date', 'select', 'file', 'url'];
     listEl.innerHTML = paged.items.length
-        ? paged.items.map(item => {
-            const absoluteIndex = draft.findIndex(f => String(f.id) === String(item.id));
+        ? paged.items.map((item, relativeIdx) => {
+            const absoluteIndex = offset + relativeIdx;
             const isSelect = String(item.type) === 'select';
             const isImmutable = !!item.immutable;
             const disabledAttr = isImmutable ? 'disabled' : '';
@@ -5720,7 +5856,7 @@ function submitPublicForm(type) {
         const value = answers[q.id];
         const empty = Array.isArray(value) ? value.length === 0 : String(value || '').trim() === '';
         if (q.required !== false && empty) {
-            alert('Responde todas las preguntas obligatorias.');
+            showToast('Responde todas las preguntas obligatorias.', 'warning');
             return;
         }
     }
@@ -5732,7 +5868,7 @@ function submitPublicForm(type) {
         createdAt: new Date().toISOString()
     });
     saveStorage(STORAGE_KEYS.formResponses, state.formResponses);
-    alert('Respuesta enviada. Gracias.');
+    showToast('Respuesta enviada. Gracias.', 'success');
 }
 
 function renderPublicFormPageContent() {
@@ -5829,17 +5965,102 @@ function renderPublicFormPage(type) {
     renderPublicFormPageContent();
 }
 
-function submitPublicSurveyVote(surveyId) {
+function showPublicSurveyModal(htmlContent, onCloseAction) {
+    let overlay = document.getElementById('publicSurveyModal');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'publicSurveyModal';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(11,31,58,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;opacity:0;transition:opacity .25s ease';
+        document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+        <div style="background:#fff;border-radius:14px;box-shadow:0 24px 64px rgba(11,31,58,0.28);max-width:420px;width:100%;max-height:90vh;overflow:auto;transform:scale(.94);transition:transform .25s ease" id="publicSurveyModalBox">
+            <div style="padding:28px 22px">${htmlContent}</div>
+        </div>
+    `;
+    requestAnimationFrame(() => {
+        overlay.style.opacity = '1';
+        document.getElementById('publicSurveyModalBox').style.transform = 'scale(1)';
+    });
+    overlay.onclick = function(e) {
+        if (e.target === overlay) closePublicSurveyModal(onCloseAction);
+    };
+}
+
+function closePublicSurveyModal(onCloseAction) {
+    const overlay = document.getElementById('publicSurveyModal');
+    if (!overlay) return;
+    overlay.style.opacity = '0';
+    const box = document.getElementById('publicSurveyModalBox');
+    if (box) box.style.transform = 'scale(.94)';
+    setTimeout(() => {
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        if (onCloseAction) onCloseAction();
+    }, 260);
+}
+
+function showVoteSuccessModal(message, onClose) {
+    const html = `
+        <div style="text-align:center">
+            <div style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#10b981,#059669);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 8px 24px rgba(16,185,129,0.28)">
+                <svg width="36" height="36" fill="none" stroke="#fff" stroke-width="3" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div style="font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:700;color:var(--text-dark);margin-bottom:8px">¡Gracias!</div>
+            <div style="font-size:15px;color:var(--text-body);max-width:320px;margin:0 auto;line-height:1.5">${escapeHtml(message || 'Tu voto ha sido registrado correctamente.')}</div>
+            <button class="btn btn-teal" style="margin-top:22px;min-width:140px" onclick="closePublicSurveyModal(function(){${onClose ? onClose : ''}})">Aceptar</button>
+        </div>
+    `;
+    showPublicSurveyModal(html);
+}
+
+function showAlreadyVotedModal(message, onClose) {
+    const html = `
+        <div style="text-align:center">
+            <div style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#2563eb);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 8px 24px rgba(59,130,246,0.28)">
+                <svg width="36" height="36" fill="none" stroke="#fff" stroke-width="3" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            </div>
+            <div style="font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:700;color:var(--text-dark);margin-bottom:8px">Voto registrado</div>
+            <div style="font-size:15px;color:var(--text-body);max-width:320px;margin:0 auto;line-height:1.5">${escapeHtml(message || 'Ya has participado en esta encuesta.')}</div>
+            <button class="btn btn-primary" style="margin-top:22px;min-width:140px" onclick="closePublicSurveyModal(function(){${onClose ? onClose : ''}})">Aceptar</button>
+        </div>
+    `;
+    showPublicSurveyModal(html);
+}
+
+function showVoteErrorModal(message, onClose) {
+    const html = `
+        <div style="text-align:center">
+            <div style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#ef4444,#dc2626);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 8px 24px rgba(239,68,68,0.28)">
+                <svg width="36" height="36" fill="none" stroke="#fff" stroke-width="3" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+            </div>
+            <div style="font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:700;color:var(--text-dark);margin-bottom:8px">No se pudo votar</div>
+            <div style="font-size:15px;color:var(--text-body);max-width:320px;margin:0 auto;line-height:1.5">${escapeHtml(message || 'Ocurrió un error al registrar tu voto.')}</div>
+            <button class="btn btn-outline" style="margin-top:22px;min-width:140px" onclick="closePublicSurveyModal(function(){${onClose ? onClose : ''}})">Aceptar</button>
+        </div>
+    `;
+    showPublicSurveyModal(html);
+}
+
+async function submitPublicSurveyVote(surveyId) {
     const survey = asArray(state.surveys).find(s => String(s.id) === String(surveyId));
     const roleName = getActiveUserRoleName();
     const optionId = String(modalState.surveyVoteSelections[String(surveyId)] || '');
-    const result = registerVoteForSurvey(survey, roleName, optionId);
-    if (!result.ok) {
-        alert(result.message || 'No se pudo registrar el voto');
+    if (!optionId) {
+        showVoteErrorModal('Selecciona una opción antes de registrar tu voto.');
         return;
     }
-    alert('Voto registrado. Gracias.');
-    renderPublicSurveyPage(surveyId);
+    const result = await registerVoteForSurvey(survey, roleName, optionId);
+    if (!result.ok) {
+        const msg = result.message || '';
+        const isAlreadyVoted = msg.toLowerCase().includes('ya registraste') || msg.toLowerCase().includes('already voted');
+        if (isAlreadyVoted) {
+            showAlreadyVotedModal('Ya has emitido tu voto en esta encuesta. No es posible votar más de una vez.', "renderPublicSurveyPage('" + escapeJsSingle(String(surveyId || '')) + "')");
+        } else {
+            showVoteErrorModal(msg || 'No se pudo registrar el voto. Intenta de nuevo más tarde.');
+        }
+        return;
+    }
+    showVoteSuccessModal('¡Gracias! Tu voto ha sido registrado correctamente.', "renderPublicSurveyPage('" + escapeJsSingle(String(surveyId || '')) + "')");
 }
 
 function getPublicSurveyVotePage(surveyId, totalPages) {
@@ -5874,6 +6095,683 @@ function getSurveyLiveSignature(survey) {
         opts
     ].join('#');
 }
+
+function renderStorageMonitorSection() {
+    const panel = document.getElementById('storageMonitorPanel');
+    if (!panel) return;
+    if (!storageMonitorState.timer) {
+        storageMonitorState.timer = setInterval(() => loadStorageDetails(false), storageMonitorState.refreshMs);
+    }
+    loadStorageDetails(true);
+    loadStorageSettings();
+}
+
+async function loadStorageDetails(force) {
+    if (storageMonitorState.loading) return;
+    const now = Date.now();
+    if (!force && storageMonitorState.lastLoaded && (now - storageMonitorState.lastLoaded) < (storageMonitorState.refreshMs / 2)) {
+        return;
+    }
+    storageMonitorState.loading = true;
+    try {
+        storageMonitorState.details = await api('/api/admin/storage/details');
+        storageMonitorState.lastLoaded = Date.now();
+        renderStorageMonitorPanel();
+    } catch (e) {
+        // Evitar spam: solo avisar si no hay datos previos.
+        if (!storageMonitorState.details) {
+            showToast('No se pudieron cargar métricas de almacenamiento.', 'error');
+        }
+    } finally {
+        storageMonitorState.loading = false;
+    }
+}
+
+function renderStorageMonitorPanel() {
+    const data = storageMonitorState.details;
+    if (!data) return;
+
+    const summary = data.summary || {};
+    const used = Math.max(0, Number(summary.totalBytesUsed) || 0);
+    const limit = Math.max(0, Number(summary.totalBytesLimit) || 0);
+    const pct = limit > 0 ? (used / limit) * 100 : 0;
+    const usageText = document.getElementById('storageUsageText');
+    if (usageText) {
+        usageText.textContent = limit > 0
+            ? `${formatBytes(used)} / ${formatBytes(limit)} (${pct.toFixed(1)}%)`
+            : `${formatBytes(used)} usados`;
+    }
+    const usageBar = document.getElementById('storageUsageBar');
+    if (usageBar) {
+        const fillPct = clampPercent(pct);
+        usageBar.style.width = `${fillPct}%`;
+        usageBar.className = `progress-bar-fill ${fillPct >= 90 ? 'danger' : (fillPct >= 75 ? 'warning' : '')}`;
+    }
+
+    const compressedCount = Number(summary.compressedFilesCount) || 0;
+    const compressionRatio = (Number(summary.compressionRatio) || 0) * 100;
+    const statCompression = document.getElementById('statCompression');
+    if (statCompression) statCompression.textContent = `${compressedCount} · ${compressionRatio.toFixed(1)}%`;
+    const statOrphaned = document.getElementById('statOrphaned');
+    if (statOrphaned) statOrphaned.textContent = String(Number(summary.orphanedFiles) || 0);
+    const statDedupSavings = document.getElementById('statDedupSavings');
+    if (statDedupSavings) statDedupSavings.textContent = formatBytes(Number(summary.deduplicationSavings) || 0);
+    const statAuditLogs = document.getElementById('statAuditLogs');
+    if (statAuditLogs) statAuditLogs.textContent = `${Number(summary.auditLogsCount) || 0} · ${formatBytes(Number(summary.auditLogsSizeEstimate) || 0)}`;
+
+    const byTypeHost = document.getElementById('storageByType');
+    if (byTypeHost) {
+        const rows = asArray(data.byFileType).map(item => {
+            const pctVal = clampPercent(item.percentage);
+            return `<div class="storage-chart-row"><div class="storage-chart-label">${escapeHtml(item.extension || 'Otro')}</div><div class="storage-chart-bar-wrap"><div class="storage-chart-bar" style="width:${pctVal}%"></div></div><div class="storage-chart-value">${formatBytes(Number(item.totalSize) || 0)}</div></div>`;
+        });
+        byTypeHost.innerHTML = rows.length ? rows.join('') : '<div class="muted">Sin datos de tipos.</div>';
+    }
+
+    const byModuleHost = document.getElementById('storageByModule');
+    if (byModuleHost) {
+        const rows = asArray(data.byModule).map(item => {
+            const pctVal = clampPercent(item.percentage);
+            const label = escapeHtml(item.entityType || 'Zona');
+            return `<div class="storage-chart-row"><div class="storage-chart-label" title="${label}">${label}</div><div class="storage-chart-bar-wrap"><div class="storage-chart-bar" style="width:${pctVal}%"></div></div><div class="storage-chart-value">${formatBytes(Number(item.totalSize) || 0)}</div></div>`;
+        });
+        byModuleHost.innerHTML = rows.length ? rows.join('') : '<div class="muted">Sin datos por zona.</div>';
+    }
+
+    renderStoragePieChart(data.byModule);
+    renderCleanupModuleCards(data.byModule);
+
+    const topFilesHost = document.getElementById('storageTopFiles');
+    if (topFilesHost) {
+        const rows = asArray(data.topFiles).map(item => {
+            const pctVal = clampPercent(item.percentage);
+            const name = escapeHtml(item.fileName || 'Archivo');
+            const refs = Number(item.referenceCount) || 0;
+            const zones = asArray(item.entityTypes).length ? asArray(item.entityTypes).map(z => escapeHtml(z)).join(', ') : 'N/A';
+            return `<div class="storage-topfile-item">
+                <div class="storage-topfile-head">
+                    <div class="storage-topfile-name" title="${name}">${name}</div>
+                    <div class="storage-topfile-meta">${formatBytes(Number(item.storedSize) || 0)} · ${refs} refs · ${zones}</div>
+                </div>
+                <div class="storage-topfile-bar-wrap"><div class="storage-topfile-bar" style="width:${pctVal}%"></div></div>
+            </div>`;
+        });
+        topFilesHost.innerHTML = rows.length ? `<div class="storage-topfile-list">${rows.join('')}</div>` : '<div class="muted">Sin datos de archivos.</div>';
+    }
+
+    const dailyHost = document.getElementById('storageDailyChart');
+    if (dailyHost) {
+        const series = asArray(data.last7Days);
+        const maxVal = Math.max(1, ...series.map(d => Number(d.bytesAdded) || 0));
+        dailyHost.innerHTML = series.length ? `<div class="storage-daily-chart">${series.map(d => {
+            const val = Math.max(0, Number(d.bytesAdded) || 0);
+            const height = Math.round((val / maxVal) * 100);
+            const label = String(d.date || '').slice(5) || 'N/A';
+            return `<div class="storage-daily-col" title="${formatBytes(val)}"><div class="storage-daily-bar" style="height:${height}%"></div><div class="storage-daily-label">${escapeHtml(label)}</div></div>`;
+        }).join('')}</div>` : '<div class="muted">Sin datos recientes.</div>';
+    }
+
+    const retentionInfo = document.getElementById('storageRetentionInfo');
+    if (retentionInfo) {
+        const retention = data.retention || {};
+        retentionInfo.textContent = `Auditoría: ${retention.auditRetentionDays || 0} días · Entregas: ${retention.submissionRetentionDays || 0} días · Certificados: ${retention.certificateRetentionDays || 0} días`;
+    }
+    const alertsHost = document.getElementById('storageAlerts');
+    if (alertsHost) {
+        const alerts = asArray(data.alerts);
+        alertsHost.innerHTML = alerts.length
+            ? alerts.map(a => `<div class="storage-alert ${escapeHtml(a.level || 'info')}"><strong>${escapeHtml(a.title || 'ALERTA')}</strong> · ${escapeHtml(a.message || '')}</div>`).join('')
+            : '<div class="muted">Sin alertas activas.</div>';
+    }
+}
+
+function renderStoragePieChart(moduleData) {
+    const canvas = document.getElementById('storagePieChart');
+    const tooltip = document.getElementById('storagePieTooltip');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const items = asArray(moduleData).filter(m => Number(m.totalSize) > 0);
+    if (!items.length) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Sin datos', canvas.width / 2, canvas.height / 2);
+        return;
+    }
+
+    const colors = [
+        '#0b2138', '#1a4a7a', '#b8933a', '#10b981', '#ef4444',
+        '#8b5cf6', '#f59e0b', '#06b6d4', '#ec4899', '#6366f1'
+    ];
+
+    const total = items.reduce((s, it) => s + (Number(it.totalSize) || 0), 0);
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    const radius = Math.min(cx, cy) - 14;
+    const innerRadius = radius * 0.45;
+
+    let startAngle = -0.5 * Math.PI;
+    const slices = items.map((it, i) => {
+        const size = Number(it.totalSize) || 0;
+        const angle = (size / total) * 2 * Math.PI;
+        const endAngle = startAngle + angle;
+        const slice = {
+            entityType: String(it.entityType || 'Otro'),
+            totalSize: size,
+            percentage: total > 0 ? (size / total) * 100 : 0,
+            color: colors[i % colors.length],
+            startAngle,
+            endAngle,
+            midAngle: startAngle + angle / 2
+        };
+        startAngle = endAngle;
+        return slice;
+    });
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        slices.forEach(s => {
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, radius, s.startAngle, s.endAngle);
+            ctx.closePath();
+            ctx.fillStyle = s.color;
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#fff';
+            ctx.stroke();
+        });
+        // donut hole
+        ctx.beginPath();
+        ctx.arc(cx, cy, innerRadius, 0, 2 * Math.PI);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+
+        // center text
+        ctx.fillStyle = '#0b2138';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(formatBytes(total), cx, cy - 7);
+        ctx.fillStyle = '#64748b';
+        ctx.font = '10px sans-serif';
+        ctx.fillText('Total', cx, cy + 8);
+    }
+    draw();
+
+    let activeIndex = -1;
+    function hitTest(ev) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const x = (ev.clientX - rect.left) * scaleX - cx;
+        const y = (ev.clientY - rect.top) * scaleY - cy;
+        const dist = Math.sqrt(x * x + y * y);
+        if (dist < innerRadius || dist > radius) return -1;
+        let angle = Math.atan2(y, x);
+        if (angle < -0.5 * Math.PI) angle += 2 * Math.PI;
+        if (angle < -0.5 * Math.PI) angle += 2 * Math.PI; // normalize
+        // Adjust because startAngle starts at -0.5 PI
+        const norm = angle + 0.5 * Math.PI;
+        let acc = 0;
+        for (let i = 0; i < slices.length; i++) {
+            const sliceAngle = slices[i].endAngle - slices[i].startAngle;
+            if (norm >= acc && norm < acc + sliceAngle) return i;
+            acc += sliceAngle;
+        }
+        return -1;
+    }
+
+    canvas.onmousemove = function(ev) {
+        const idx = hitTest(ev);
+        if (idx !== activeIndex) {
+            activeIndex = idx;
+            draw();
+            if (idx >= 0) {
+                const s = slices[idx];
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.arc(cx, cy, radius + 4, s.startAngle, s.endAngle);
+                ctx.closePath();
+                ctx.fillStyle = s.color;
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#fff';
+                ctx.stroke();
+                // redraw hole
+                ctx.beginPath();
+                ctx.arc(cx, cy, innerRadius, 0, 2 * Math.PI);
+                ctx.fillStyle = '#ffffff';
+                ctx.fill();
+                ctx.fillStyle = '#0b2138';
+                ctx.font = 'bold 12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(formatBytes(total), cx, cy - 7);
+                ctx.fillStyle = '#64748b';
+                ctx.font = '10px sans-serif';
+                ctx.fillText('Total', cx, cy + 8);
+            }
+        }
+        if (idx >= 0 && tooltip) {
+            const s = slices[idx];
+            tooltip.style.display = 'block';
+            tooltip.textContent = `${escapeHtml(s.entityType)}: ${formatBytes(s.totalSize)} (${s.percentage.toFixed(1)}%)`;
+            const rect = canvas.getBoundingClientRect();
+            const wrap = canvas.parentElement.getBoundingClientRect();
+            tooltip.style.left = (ev.clientX - wrap.left + 12) + 'px';
+            tooltip.style.top = (ev.clientY - wrap.top - 8) + 'px';
+        } else if (tooltip) {
+            tooltip.style.display = 'none';
+        }
+    };
+
+    canvas.onmouseleave = function() {
+        activeIndex = -1;
+        if (tooltip) tooltip.style.display = 'none';
+        draw();
+    };
+}
+
+let storageCleanupPreviewData = [];
+let cleanupSort = 'sizeDesc';
+let cleanupPage = 1;
+let cleanupPageSize = 20;
+let cleanupSelectedIds = new Set();
+let cleanupTotalCount = 0;
+let cleanupTotalPages = 1;
+
+function getCleanupItemKey(item) {
+    return String(item.storedFileId || '') + ':' + String(item.entityType || 'UNKNOWN') + ':' + String(item.entityId || '');
+}
+
+function getCleanupFilters() {
+    const modules = Array.from(document.querySelectorAll('.cleanup-module:checked')).map(cb => cb.value);
+    const minSizeVal = parseFloat(document.getElementById('cleanupMinSize').value || '0') || 0;
+    const unit = parseInt(document.getElementById('cleanupSizeUnit').value || '1024', 10) || 1024;
+    const minSizeBytes = Math.floor(minSizeVal * unit);
+    const olderThan = parseInt(document.getElementById('cleanupOlderThan').value || '0', 10) || 0;
+    return { modules, minSizeBytes, olderThanDays: olderThan > 0 ? olderThan : null };
+}
+
+async function previewStorageCleanup(targetPage) {
+    const { modules, minSizeBytes, olderThanDays } = getCleanupFilters();
+    const params = new URLSearchParams();
+    modules.forEach(m => params.append('modules', m));
+    if (minSizeBytes > 0) params.set('minSizeBytes', String(minSizeBytes));
+    if (olderThanDays) params.set('olderThanDays', String(olderThanDays));
+    params.set('includeOrphaned', 'true');
+    params.set('includeEmbedded', 'true');
+    params.set('page', String(targetPage || 1));
+    params.set('pageSize', String(cleanupPageSize));
+
+    try {
+        const response = await api('/api/admin/storage/files?' + params.toString());
+        storageCleanupPreviewData = asArray(response.items);
+        cleanupTotalCount = response.totalCount || 0;
+        cleanupTotalPages = response.totalPages || 1;
+        cleanupPage = response.page || 1;
+        cleanupSelectedIds.clear();
+        renderCleanupPreview(storageCleanupPreviewData);
+    } catch (e) {
+        showToast('Error cargando vista previa: ' + (e.message || ''), 'error');
+    }
+}
+
+function sortCleanupPreview(sortBy) {
+    cleanupSort = sortBy;
+    storageCleanupPreviewData.sort((a, b) => {
+        switch (cleanupSort) {
+            case 'sizeDesc': return (Number(b.sizeBytes) || 0) - (Number(a.sizeBytes) || 0);
+            case 'sizeAsc': return (Number(a.sizeBytes) || 0) - (Number(b.sizeBytes) || 0);
+            case 'name': return String(a.fileName || '').localeCompare(String(b.fileName || ''));
+            case 'module': return String(a.entityType || '').localeCompare(String(b.entityType || ''));
+            case 'date': return String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || ''));
+            default: return 0;
+        }
+    });
+    renderCleanupPreview(storageCleanupPreviewData);
+}
+
+function toggleSelectAllCleanup(checked) {
+    storageCleanupPreviewData.forEach(item => {
+        const key = getCleanupItemKey(item);
+        if (checked) cleanupSelectedIds.add(key); else cleanupSelectedIds.delete(key);
+    });
+    renderCleanupPreview(storageCleanupPreviewData);
+    updateCleanupSelectionCount();
+}
+
+function onCleanupItemCheck(itemKey, checked) {
+    if (checked) cleanupSelectedIds.add(itemKey); else cleanupSelectedIds.delete(itemKey);
+    updateCleanupSelectionCount();
+    const allPageSelected = storageCleanupPreviewData.length > 0 && storageCleanupPreviewData.every(it => cleanupSelectedIds.has(getCleanupItemKey(it)));
+    const selectAll = document.getElementById('cleanupSelectAll');
+    if (selectAll) selectAll.checked = allPageSelected;
+}
+
+function updateCleanupSelectionCount() {
+    const el = document.getElementById('cleanupSelectedCount');
+    if (el) el.textContent = cleanupSelectedIds.size + ' seleccionado' + (cleanupSelectedIds.size !== 1 ? 's' : '');
+}
+
+function renderCleanupPagination() {
+    const host = document.getElementById('cleanupPagination');
+    if (!host) return;
+    if (cleanupTotalPages <= 1) { host.innerHTML = ''; return; }
+
+    let html = '<div class="cleanup-pagination">';
+    html += '<button class="btn btn-sm btn-ghost" ' + (cleanupPage <= 1 ? 'disabled' : 'onclick="changeCleanupPage(' + (cleanupPage - 1) + ')"') + '>&laquo; Ant.</button>';
+    html += '<span class="cleanup-page-info">Página <strong>' + cleanupPage + '</strong> de ' + cleanupTotalPages + ' (' + cleanupTotalCount + ' archivos)</span>';
+    html += '<button class="btn btn-sm btn-ghost" ' + (cleanupPage >= cleanupTotalPages ? 'disabled' : 'onclick="changeCleanupPage(' + (cleanupPage + 1) + ')"') + '>Sig. &raquo;</button>';
+    html += '<select class="form-input" style="min-width:70px;padding:4px 8px;font-size:12px" onchange="setCleanupPageSize(this.value)">'
+        + '<option value="10"' + (cleanupPageSize == 10 ? ' selected' : '') + '>10</option>'
+        + '<option value="20"' + (cleanupPageSize == 20 ? ' selected' : '') + '>20</option>'
+        + '<option value="50"' + (cleanupPageSize == 50 ? ' selected' : '') + '>50</option>'
+        + '<option value="100"' + (cleanupPageSize == 100 ? ' selected' : '') + '>100</option>'
+        + '</select>';
+    html += '</div>';
+    host.innerHTML = html;
+}
+
+function changeCleanupPage(page) {
+    previewStorageCleanup(page);
+}
+
+function setCleanupPageSize(size) {
+    cleanupPageSize = parseInt(size, 10) || 20;
+    previewStorageCleanup(1);
+}
+
+function renderCleanupPreview(items) {
+    const listHost = document.getElementById('storageCleanupList');
+    const summary = document.getElementById('storageCleanupSummary');
+    const toolbar = document.getElementById('cleanupToolbar');
+    if (!listHost) return;
+
+    const pageItems = asArray(items);
+    const totalBytes = pageItems.reduce((s, it) => s + (Number(it.sizeBytes) || 0), 0);
+    if (summary) {
+        summary.textContent = cleanupTotalCount + ' archivos encontrados · ' + formatBytes(totalBytes) + ' en esta página';
+    }
+
+    if (!pageItems.length) {
+        if (toolbar) toolbar.style.display = 'none';
+        listHost.innerHTML = '<div class="muted" style="padding:12px 0">Ningun archivo coincide con los filtros.</div>';
+        renderCleanupPagination();
+        return;
+    }
+
+    if (toolbar) toolbar.style.display = 'flex';
+
+    const allPageSelected = pageItems.length > 0 && pageItems.every(it => cleanupSelectedIds.has(getCleanupItemKey(it)));
+    const selectAll = document.getElementById('cleanupSelectAll');
+    if (selectAll) selectAll.checked = allPageSelected;
+
+    const rows = pageItems.map(item => {
+        const name = escapeHtml(item.fileName || 'Archivo');
+        const type = escapeHtml(item.entityType || 'Otro');
+        const size = formatBytes(Number(item.sizeBytes) || 0);
+        const embedded = item.embedded ? '<span class="cleanup-file-tag warn">embebido</span>' : '';
+        const refs = item.referenceCount != null ? '<span class="cleanup-file-tag">' + item.referenceCount + ' refs</span>' : '';
+        const date = item.uploadedAt ? new Date(item.uploadedAt).toLocaleDateString() : '';
+        const key = getCleanupItemKey(item);
+        const checked = cleanupSelectedIds.has(key) ? 'checked' : '';
+        return '<div class="cleanup-file-item ' + (cleanupSelectedIds.has(key) ? 'selected' : '') + '">'
+            + '<input type="checkbox" class="cleanup-select cleanup-file-checkbox" ' + checked + ' onchange="onCleanupItemCheck(\'' + key + '\', this.checked)">'
+            + '<div class="cleanup-file-info">'
+            + '<div class="cleanup-file-name" title="' + name + '">' + name + '</div>'
+            + '<div class="cleanup-file-tags">'
+            + '<span class="cleanup-file-tag">' + type + '</span>'
+            + embedded
+            + refs
+            + '</div></div>'
+            + '<div class="cleanup-file-size">' + size + '</div>'
+            + '<div class="cleanup-file-date">' + date + '</div>'
+            + '</div>';
+    });
+    listHost.innerHTML = '<div class="cleanup-file-list">' + rows.join('') + '</div>';
+    renderCleanupPagination();
+    updateCleanupSelectionCount();
+}
+
+async function runStorageCleanup() {
+    const { modules, minSizeBytes, olderThanDays } = getCleanupFilters();
+    const previewCount = storageCleanupPreviewData.length;
+    if (!previewCount) {
+        showToast('Primero usa "Vista previa" para revisar los archivos a limpiar.', 'info');
+        return;
+    }
+    const totalBytes = storageCleanupPreviewData.reduce((s, it) => s + (Number(it.sizeBytes) || 0), 0);
+    const selectedCount = cleanupSelectedIds.size;
+    const extra = selectedCount > 0 ? ' (' + selectedCount + ' seleccionados)' : '';
+
+    openConfirmModal('Confirmar limpieza',
+        'Se eliminaran archivos de los modulos seleccionados (' + previewCount + ' archivos' + extra + ' · ' + formatBytes(totalBytes) + '). Esta accion no se puede deshacer.',
+        async () => {
+            try {
+                const response = await api('/api/admin/storage/cleanup', {
+                    method: 'POST',
+                    headers: headers(),
+                    body: JSON.stringify({
+                        modules,
+                        minSizeBytes: minSizeBytes > 0 ? minSizeBytes : null,
+                        olderThanDays,
+                        includeOrphaned: modules.includes('ORPHANED'),
+                        includeEmbedded: true,
+                        dryRun: false
+                    })
+                });
+                const dryRunText = response.dryRun ? ' (simulacion)' : '';
+                showToast('Limpieza completa' + dryRunText + ': ' + response.deletedFiles + ' archivos · ' + formatBytes(response.freedBytes) + ' liberados', 'success');
+                if (response.errors && response.errors.length) {
+                    showToast(response.errors.length + ' errores. Revisa consola.', 'warning');
+                }
+                loadStorageDetails(true);
+                storageCleanupPreviewData = [];
+                renderCleanupPreview([]);
+                const toolbar = document.getElementById('cleanupToolbar');
+                if (toolbar) toolbar.style.display = 'none';
+            } catch (e) {
+                showToast('Error en limpieza: ' + (e.message || ''), 'error');
+            }
+        },
+        'Limpiar'
+    );
+}
+
+async function cleanupOrphanedFiles() {
+    openConfirmModal('Limpiar archivos huerfanos',
+        'Se eliminaran todos los archivos sin referencias del sistema de archivos.',
+        async () => {
+            try {
+                const response = await api('/api/admin/storage/cleanup/orphaned', {
+                    method: 'POST',
+                    headers: headers(false)
+                });
+                showToast('Huerfanos eliminados: ' + response.deletedFiles + ' · ' + formatBytes(response.freedBytes) + ' liberados', 'success');
+                loadStorageDetails(true);
+            } catch (e) {
+                showToast('Error limpiando huerfanos: ' + (e.message || ''), 'error');
+            }
+        },
+        'Limpiar huerfanos'
+    );
+}
+
+function updateCleanupChips() {
+    document.querySelectorAll('.cleanup-chip').forEach(chip => {
+        const cb = chip.querySelector('.cleanup-module');
+        if (cb) chip.classList.toggle('active', cb.checked);
+    });
+}
+
+function filterCleanupByModule(module) {
+    if (!module) return;
+    document.querySelectorAll('.cleanup-module').forEach(cb => cb.checked = (cb.value === module));
+    updateCleanupChips();
+    previewStorageCleanup();
+}
+
+async function cleanupModule(module) {
+    if (!module) return;
+    document.querySelectorAll('.cleanup-module').forEach(cb => cb.checked = (cb.value === module));
+    updateCleanupChips();
+    document.getElementById('cleanupMinSize').value = '0';
+    document.getElementById('cleanupSizeUnit').value = '1024';
+    document.getElementById('cleanupOlderThan').value = '0';
+    await previewStorageCleanup();
+    const count = storageCleanupPreviewData.length;
+    if (!count) {
+        showToast('No hay archivos para limpiar en ' + module, 'info');
+        return;
+    }
+    const totalBytes = storageCleanupPreviewData.reduce((s, it) => s + (Number(it.sizeBytes) || 0), 0);
+    openConfirmModal('Limpiar seccion: ' + module,
+        'Se eliminaran ' + count + ' archivos (' + formatBytes(totalBytes) + ') del modulo ' + module + '. Esta accion no se puede deshacer.',
+        async () => {
+            try {
+                const response = await api('/api/admin/storage/cleanup', {
+                    method: 'POST',
+                    headers: headers(),
+                    body: JSON.stringify({
+                        modules: [module],
+                        minSizeBytes: null,
+                        olderThanDays: null,
+                        includeOrphaned: module === 'ORPHANED',
+                        includeEmbedded: true,
+                        dryRun: false
+                    })
+                });
+                showToast(module + ': ' + response.deletedFiles + ' archivos eliminados · ' + formatBytes(response.freedBytes) + ' liberados', 'success');
+                loadStorageDetails(true);
+                storageCleanupPreviewData = [];
+                renderCleanupPreview([]);
+                const toolbar = document.getElementById('cleanupToolbar');
+                if (toolbar) toolbar.style.display = 'none';
+            } catch (e) {
+                showToast('Error: ' + (e.message || ''), 'error');
+            }
+        },
+        'Limpiar ' + count + ' archivos'
+    );
+}
+
+function renderCleanupModuleCards(byModule) {
+    const host = document.getElementById('cleanupModuleCards');
+    if (!host) return;
+    const rows = asArray(byModule).map(item => {
+        const label = escapeHtml(item.entityType || 'Zona');
+        const size = formatBytes(Number(item.totalSize) || 0);
+        const pct = clampPercent(item.percentage);
+        return '<div class="cleanup-module-card">'
+            + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px">'
+            + '<div class="cleanup-module-name">' + label + '</div>'
+            + '<div style="font-size:11px;font-weight:700;color:var(--text-dark)">' + size + '</div>'
+            + '</div>'
+            + '<div class="cleanup-module-bar"><div style="width:' + pct + '%"></div></div>'
+            + '<div class="cleanup-module-meta">' + pct.toFixed(1) + '% del total</div>'
+            + '<div class="cleanup-module-actions">'
+            + '<button class="btn btn-sm btn-ghost" onclick="filterCleanupByModule(\'' + (item.entityType || '') + '\')">Ver archivos</button>'
+            + '<button class="btn btn-sm btn-danger" onclick="cleanupModule(\'' + (item.entityType || '') + '\')">Limpiar seccion</button>'
+            + '</div></div>';
+    });
+    host.innerHTML = rows.length ? rows.join('') : '<div class="muted">Sin datos por modulo.</div>';
+}
+
+async function loadStorageSettings() {
+    try {
+        const settings = await api('/api/admin/storage/settings');
+        const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+        const setChecked = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
+        setVal('storageGlobalLimitGb', ((settings.globalLimitBytes || 0) / 1073741824).toFixed(0));
+        setVal('storageWarningThreshold', settings.warningThresholdPercent || 75);
+        setVal('storageDangerThreshold', settings.dangerThresholdPercent || 90);
+        setVal('storageAuditRetention', settings.auditRetentionDays || 90);
+        setVal('storageSubmissionRetention', settings.submissionRetentionDays || 180);
+        setVal('storageCertificateRetention', settings.certificateRetentionDays || 730);
+        setChecked('storageAutoCompression', settings.autoCompressionEnabled);
+        setChecked('storageAutoDeduplication', settings.autoDeduplicationEnabled);
+        setChecked('storageEcoMode', settings.ecoModeEnabled);
+        setChecked('storageOrphanCleanup', settings.orphanCleanupEnabled);
+    } catch (e) {
+        // ignore, keep defaults
+    }
+}
+
+async function saveStorageSettings() {
+    const getVal = (id) => { const el = document.getElementById(id); return el ? parseInt(el.value, 10) || 0 : 0; };
+    const getChecked = (id) => { const el = document.getElementById(id); return el ? el.checked : false; };
+    const body = {
+        globalLimitBytes: Math.round(parseFloat(document.getElementById('storageGlobalLimitGb').value || '100') * 1073741824),
+        warningThresholdPercent: getVal('storageWarningThreshold'),
+        dangerThresholdPercent: getVal('storageDangerThreshold'),
+        auditRetentionDays: getVal('storageAuditRetention'),
+        submissionRetentionDays: getVal('storageSubmissionRetention'),
+        certificateRetentionDays: getVal('storageCertificateRetention'),
+        autoCompressionEnabled: getChecked('storageAutoCompression'),
+        autoDeduplicationEnabled: getChecked('storageAutoDeduplication'),
+        ecoModeEnabled: getChecked('storageEcoMode'),
+        orphanCleanupEnabled: getChecked('storageOrphanCleanup')
+    };
+    try {
+        await api('/api/admin/storage/settings', { method: 'POST', headers: headers(), body: JSON.stringify(body) });
+        showToast('Configuracion guardada.', 'success');
+        loadStorageDetails(true);
+    } catch (e) {
+        showToast('Error guardando configuracion: ' + (e.message || ''), 'error');
+    }
+}
+
+async function runStorageOptimize() {
+    openConfirmModal('Optimizar almacenamiento',
+        'Se ejecutara limpieza de huerfanos, compresion de PDFs y deduplicacion. Puede tardar unos segundos.',
+        async () => {
+            try {
+                const res = await api('/api/admin/storage/optimize', { method: 'POST', headers: headers() });
+                const parts = [];
+                if (res.orphanedDeleted) parts.push(res.orphanedDeleted + ' huerfanos');
+                if (res.compressedFiles) parts.push(res.compressedFiles + ' PDFs comprimidos');
+                if (res.duplicatesRemoved) parts.push(res.duplicatesRemoved + ' duplicados eliminados');
+                showToast('Optimizacion completa: ' + parts.join(', ') + ' · ' + formatBytes(res.totalFreedBytes) + ' liberados.', 'success');
+                loadStorageDetails(true);
+            } catch (e) {
+                showToast('Error en optimizacion: ' + (e.message || ''), 'error');
+            }
+        },
+        'Optimizar ahora'
+    );
+}
+
+async function runStorageCompress() {
+    try {
+        const res = await api('/api/admin/storage/compress', { method: 'POST', headers: headers() });
+        showToast('Compresion: ' + res.compressedFiles + ' archivos · ' + formatBytes(res.compressionSavedBytes) + ' ahorrados.', 'success');
+        loadStorageDetails(true);
+    } catch (e) {
+        showToast('Error en compresion: ' + (e.message || ''), 'error');
+    }
+}
+
+async function runStorageDedup() {
+    try {
+        const res = await api('/api/admin/storage/dedup', { method: 'POST', headers: headers() });
+        showToast('Deduplicacion: ' + res.duplicatesRemoved + ' duplicados · ' + formatBytes(res.dedupSavedBytes) + ' ahorrados.', 'success');
+        loadStorageDetails(true);
+    } catch (e) {
+        showToast('Error en deduplicacion: ' + (e.message || ''), 'error');
+    }
+}
+
+document.addEventListener('click', e => {
+    const chip = e.target.closest('.cleanup-chip');
+    if (!chip) return;
+    const cb = chip.querySelector('.cleanup-module');
+    if (!cb) return;
+    cb.checked = !cb.checked;
+    chip.classList.toggle('active', cb.checked);
+});
 
 function bindStorageListeners() {
     if (storageListenersBound) return;
@@ -6239,8 +7137,8 @@ async function createSurvey() {
         question,
         optionsJson: JSON.stringify(options.map((opt, idx) => ({ ...opt, id: opt.id || ('opt-' + Date.now() + '-' + idx) }))),
         rolesJson: JSON.stringify(roles),
-        startsAt,
-        endsAt,
+        startsAt: startsAt || null,
+        endsAt: endsAt || null,
         authRequired,
         questionMediaJson: JSON.stringify(questionMedia),
         status: 'active'
@@ -6344,27 +7242,34 @@ async function registerVoteForSurvey(survey, roleName, optionId) {
     if (!surveyAllowsNoRole(survey) && !(survey.roles || []).includes(roleValue)) {
         return { ok: false, message: 'Tu rol no tiene permiso para votar en esta encuesta' };
     }
-    survey.options = asArray(survey.options).map(opt => String(opt.id) === optionValue
-        ? { ...opt, votes: (parseInt(opt.votes || '0', 10) || 0) + 1 }
-        : opt);
-    survey.voteLedger[voterKey] = {
-        optionId: optionValue,
-        at: new Date().toISOString()
-    };
     const id = parseInt(survey.id, 10);
     if (!isNaN(id)) {
+        const payload = { optionId: optionValue };
+        const url = '/api/surveys/' + id + '/vote';
+        console.log('[Vote] Sending POST to', url, 'payload:', payload, 'headers:', headers());
         try {
-            await api('/api/surveys/' + id, { method: 'PUT', headers: headers(), body: JSON.stringify({
-                question: survey.question,
-                optionsJson: JSON.stringify(survey.options || []),
-                rolesJson: JSON.stringify(survey.roles || []),
-                startsAt: survey.startsAt || null,
-                endsAt: survey.endsAt || null,
-                authRequired: survey.authRequired !== false,
-                questionMediaJson: JSON.stringify(survey.questionMedia || null),
-                status: survey.status || 'active'
-            }) });
-        } catch (e) {}
+            await api(url, { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
+            // Sync local state after successful vote
+            survey.options = asArray(survey.options).map(opt => String(opt.id) === optionValue
+                ? { ...opt, votes: (parseInt(opt.votes || '0', 10) || 0) + 1 }
+                : opt);
+            survey.voteLedger[voterKey] = {
+                optionId: optionValue,
+                at: new Date().toISOString()
+            };
+        } catch (e) {
+            console.error('[Vote] Server error:', e.message || e);
+            return { ok: false, message: 'Error al registrar el voto en el servidor: ' + (e.message || '') };
+        }
+    } else {
+        // Fallback for offline/local surveys
+        survey.options = asArray(survey.options).map(opt => String(opt.id) === optionValue
+            ? { ...opt, votes: (parseInt(opt.votes || '0', 10) || 0) + 1 }
+            : opt);
+        survey.voteLedger[voterKey] = {
+            optionId: optionValue,
+            at: new Date().toISOString()
+        };
     }
     return { ok: true };
 }
@@ -6377,7 +7282,7 @@ async function submitSurveyVote(surveyId) {
     if (!result.ok) return showToast(result.message, 'error');
     modalState.surveyVoteSelections[String(surveyId)] = optionId;
     renderSurveyBoards();
-    showToast('Voto registrado', 'success');
+    showVoteSuccessModal('Tu voto ha sido registrado correctamente.');
 }
 
 function closeSurvey(surveyId) {
@@ -6423,7 +7328,7 @@ async function deleteSurvey(surveyId) {
 function shareSurveyLink(surveyId) {
     const sid = String(surveyId || '');
     if (!sid) return;
-    const url = `${window.location.origin}${window.location.pathname}?publicSurvey=${encodeURIComponent(sid)}`;
+    const url = `${window.location.origin}/public-survey?publicSurvey=${encodeURIComponent(sid)}`;
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(url)
             .then(() => showToast('Link copiado al portapapeles', 'success'))
@@ -7386,7 +8291,7 @@ function renderLevelsTable() {
             <td>
                 <div>${item.grades.length}</div>
                 <div class="muted" style="font-size:12px">${escapeHtml(buildCompactNames(item.gradeNames, 5))}</div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${item.grades.slice(0, 5).map(g => `<span style="display:inline-flex;align-items:center;gap:4px;background:#eef4fb;border-radius:999px;padding:2px 8px;font-size:11px">${escapeHtml(g.name)} <button type="button" style="border:none;background:transparent;color:#8a1529;cursor:pointer" onclick="deleteAcademicGrade('${String(g.id)}')">x</button></span>`).join('')}${item.grades.length > 5 ? `<button class="btn btn-sm btn-outline" onclick="openLevelDetailsModal('${String(item.level.id)}')">Ver más</button>` : ''}</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${item.grades.slice(0, 5).map(g => `<span style="display:inline-flex;align-items:center;gap:4px;background:#eef4fb;border-radius:999px;padding:2px 8px;font-size:11px">${escapeHtml(g.name)} <button type="button" style="border:none;background:transparent;color:#8a1529;cursor:pointer" onclick="deleteAcademicGrade('${escapeJsSingle(String(g.id))}')">x</button></span>`).join('')}${item.grades.length > 5 ? `<button class="btn btn-sm btn-outline" onclick="openLevelDetailsModal('${String(item.level.id)}')">Ver más</button>` : ''}</div>
             </td>
             <td>
                 <div>${item.courses.length}</div>
@@ -7486,69 +8391,127 @@ function saveNewGradeForLevel(levelId) {
 }
 
 async function deleteAcademicGrade(gradeId) {
-    const id = parseInt(gradeId, 10);
-    if (!isNaN(id)) {
-        try { await api('/api/academic-grades/' + id, { method: 'DELETE', headers: headers() }); } catch (e) {}
-    }
-    state.academicGrades = (state.academicGrades || []).filter(g => String(g.id) !== String(gradeId));
-    Object.keys(state.courseGrades || {}).forEach(cid => {
-        if (String(state.courseGrades[cid]) === String(gradeId)) delete state.courseGrades[cid];
-    });
-    Object.keys(state.teacherGrades || {}).forEach(tid => {
-        const byLevel = state.teacherGrades[tid] || {};
-        Object.keys(byLevel).forEach(lid => {
-            byLevel[lid] = (byLevel[lid] || []).filter(gid => String(gid) !== String(gradeId));
+    const target = (state.academicGrades || []).find(g => String(g.id) === String(gradeId));
+    if (!target) return;
+    const doDelete = async () => {
+        let serverError = null;
+        try {
+            const id = parseInt(gradeId, 10);
+            if (!isNaN(id)) {
+                const res = await fetch(API + '/api/academic-grades/' + id, {
+                    method: 'DELETE',
+                    credentials: 'include',
+                    headers: { ...headers(false) }
+                });
+                if (!res.ok && res.status !== 404) {
+                    const body = await res.text().catch(() => '');
+                    let msg = '';
+                    try { msg = JSON.parse(body).error || ''; } catch (e) {}
+                    if (res.status === 409) {
+                        serverError = msg || 'El grado está en uso y no se puede eliminar.';
+                    } else {
+                        serverError = msg || ('HTTP ' + res.status);
+                    }
+                }
+            }
+        } catch (e) {
+            serverError = 'Error de red';
+        }
+        // Siempre eliminar localmente para mantener la UI sincronizada
+        state.academicGrades = (state.academicGrades || []).filter(g => String(g.id) !== String(gradeId));
+        Object.keys(state.courseGrades || {}).forEach(cid => {
+            if (String(state.courseGrades[cid]) === String(gradeId)) delete state.courseGrades[cid];
         });
-    });
-    Object.keys(state.studentGrades || {}).forEach(sid => {
-        if (String(state.studentGrades[sid]) === String(gradeId)) delete state.studentGrades[sid];
-    });
-    cleanupStudentAcademicLinks();
-    cleanupAssistantSelections();
-    saveLevelsState();
-    saveCourseGradesToBackend();
-    saveStudentGradesToBackend();
-    renderCoursesSection();
+        Object.keys(state.teacherGrades || {}).forEach(tid => {
+            const byLevel = state.teacherGrades[tid] || {};
+            Object.keys(byLevel).forEach(lid => {
+                byLevel[lid] = (byLevel[lid] || []).filter(gid => String(gid) !== String(gradeId));
+            });
+        });
+        Object.keys(state.studentGrades || {}).forEach(sid => {
+            if (String(state.studentGrades[sid]) === String(gradeId)) delete state.studentGrades[sid];
+        });
+        cleanupStudentAcademicLinks();
+        cleanupAssistantSelections();
+        saveLevelsState();
+        saveCourseGradesToBackend();
+        saveStudentGradesToBackend();
+        renderCoursesSection();
+        if (serverError) {
+            showToast(serverError, 'error');
+        } else {
+            showToast(`Grado eliminado: ${target.name || 'N/A'}`, 'success');
+        }
+    };
+    openConfirmModal('Eliminar grado', `¿Eliminar el grado <strong>${escapeHtml(target.name || '')}</strong>?`, doDelete, 'Eliminar');
 }
 
 async function deleteAcademicLevel(levelId) {
-    const id = String(levelId);
-    const numericId = parseInt(levelId, 10);
-    if (!isNaN(numericId)) {
-        try { await api('/api/academic-levels/' + numericId, { method: 'DELETE', headers: headers() }); } catch (e) {}
-    }
-    const removedGrades = new Set((state.academicGrades || []).filter(g => String(g.levelId) === id).map(g => String(g.id)));
-    state.academicLevels = (state.academicLevels || []).filter(l => String(l.id) !== id);
-    state.academicGrades = (state.academicGrades || []).filter(g => String(g.levelId) !== id);
-    Object.keys(state.courseLevels || {}).forEach(cid => {
-        if (String(state.courseLevels[cid]) === id) {
-            delete state.courseLevels[cid];
-            delete state.courseGrades[cid];
+    const target = (state.academicLevels || []).find(l => String(l.id) === String(levelId));
+    if (!target) return;
+    const doDelete = async () => {
+        let serverError = null;
+        const id = String(levelId);
+        const numericId = parseInt(levelId, 10);
+        if (!isNaN(numericId)) {
+            try {
+                const res = await fetch(API + '/api/academic-levels/' + numericId, {
+                    method: 'DELETE',
+                    credentials: 'include',
+                    headers: { ...headers(false) }
+                });
+                if (!res.ok && res.status !== 404) {
+                    const body = await res.text().catch(() => '');
+                    let msg = '';
+                    try { msg = JSON.parse(body).error || ''; } catch (e) {}
+                    if (res.status === 409) {
+                        serverError = msg || 'El nivel tiene grados o registros vinculados y no se puede eliminar.';
+                    } else {
+                        serverError = msg || ('HTTP ' + res.status);
+                    }
+                }
+            } catch (e) {
+                serverError = 'Error de red';
+            }
         }
-    });
-    Object.keys(state.teacherLevels || {}).forEach(tid => {
-        state.teacherLevels[tid] = (state.teacherLevels[tid] || []).filter(lid => String(lid) !== id);
-    });
-    Object.keys(state.teacherGrades || {}).forEach(tid => {
-        const byLevel = state.teacherGrades[tid] || {};
-        delete byLevel[id];
-        Object.keys(byLevel).forEach(lid => {
-            byLevel[lid] = (byLevel[lid] || []).filter(gid => !removedGrades.has(String(gid)));
+        const removedGrades = new Set((state.academicGrades || []).filter(g => String(g.levelId) === id).map(g => String(g.id)));
+        state.academicLevels = (state.academicLevels || []).filter(l => String(l.id) !== id);
+        state.academicGrades = (state.academicGrades || []).filter(g => String(g.levelId) !== id);
+        Object.keys(state.courseLevels || {}).forEach(cid => {
+            if (String(state.courseLevels[cid]) === id) {
+                delete state.courseLevels[cid];
+                delete state.courseGrades[cid];
+            }
         });
-    });
-    Object.keys(state.studentLevels || {}).forEach(sid => {
-        if (String(state.studentLevels[sid]) === id) {
-            delete state.studentLevels[sid];
-            delete state.studentGrades[sid];
+        Object.keys(state.teacherLevels || {}).forEach(tid => {
+            state.teacherLevels[tid] = (state.teacherLevels[tid] || []).filter(lid => String(lid) !== id);
+        });
+        Object.keys(state.teacherGrades || {}).forEach(tid => {
+            const byLevel = state.teacherGrades[tid] || {};
+            delete byLevel[id];
+            Object.keys(byLevel).forEach(lid => {
+                byLevel[lid] = (byLevel[lid] || []).filter(gid => !removedGrades.has(String(gid)));
+            });
+        });
+        Object.keys(state.studentLevels || {}).forEach(sid => {
+            if (String(state.studentLevels[sid]) === id) {
+                delete state.studentLevels[sid];
+                delete state.studentGrades[sid];
+            }
+        });
+        cleanupStudentAcademicLinks();
+        cleanupAssistantSelections();
+        saveLevelsState();
+        saveCourseGradesToBackend();
+        saveStudentGradesToBackend();
+        renderCoursesSection();
+        if (serverError) {
+            showToast(serverError, 'error');
+        } else {
+            showToast('Nivel eliminado', 'success');
         }
-    });
-    cleanupStudentAcademicLinks();
-    cleanupAssistantSelections();
-    saveLevelsState();
-    saveCourseGradesToBackend();
-    saveStudentGradesToBackend();
-    renderCoursesSection();
-    showToast('Nivel eliminado', 'success');
+    };
+    openConfirmModal('Eliminar nivel', `¿Eliminar el nivel <strong>${escapeHtml(target.name || '')}</strong>? Esto también eliminará todos sus grados localmente.`, doDelete, 'Eliminar');
 }
 
 function applyLevelsSummaryFilters() {
@@ -8432,6 +9395,7 @@ function renderAll() {
     callIfFn('renderImportSection');
     callIfFn('renderGradePolicySection');
     callIfFn('renderCutPeriodsSection');
+    callIfFn('renderStorageMonitorSection');
 }
 
 function hideInitialBootLoader() {
@@ -8639,6 +9603,948 @@ async function init() {
         if (activeUser) document.getElementById('sidebarUserName').textContent = activeUser.name;
     } finally {
         hideInitialBootLoader();
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CERTIFICATE TEMPLATE MANAGER
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const CERT_TEMPLATE_FIELDS = [
+    { key: 'STUDENT_NAME', label: 'Nombre del estudiante', desc: 'Nombre completo del estudiante registrado en el sistema.', example: 'Valentina Pardo' },
+    { key: 'STUDENT_CODE', label: 'Código del estudiante', desc: 'Código único asignado al estudiante.', example: 'EST-1001' },
+    { key: 'STUDENT_EMAIL', label: 'Email del estudiante', desc: 'Correo electrónico registrado en la plataforma.', example: 'valentina.pardo@ejemplo.com' },
+    { key: 'GRADE_NAME', label: 'Grado académico', desc: 'Grado o curso en el que está matriculado.', example: '6A' },
+    { key: 'LEVEL_NAME', label: 'Nivel académico', desc: 'Nivel educativo al que pertenece el grado.', example: 'Secundaria' },
+    { key: 'COURSE_NAME', label: 'Nombre del curso', desc: 'Nombre del curso asignado al estudiante.', example: 'Matemáticas 6A' },
+    { key: 'TEACHER_NAME', label: 'Nombre del docente', desc: 'Docente asignado al curso del estudiante.', example: 'Prof. Laura Méndez' },
+    { key: 'AVERAGE_GRADE', label: 'Promedio general', desc: 'Promedio ponderado de todas las calificaciones.', example: '4.5' },
+    { key: 'DATE', label: 'Fecha actual', desc: 'Fecha de emisión en formato dd/MM/yyyy.', example: '11/05/2026' }
+];
+
+const CERT_TEMPLATE_CONDITIONS = [
+    { key: 'minAverageGrade', label: 'Promedio general mínimo', type: 'number' },
+    { key: 'minCourseCompletion', label: 'Completó al menos ___% del curso', type: 'percent' },
+    { key: 'maxAbsences', label: 'Máximo de inasistencias permitidas', type: 'number' },
+    { key: 'passingAllPeriods', label: 'Aprobó todos los periodos académicos', type: 'boolean' },
+    { key: 'passingAllUnits', label: 'Aprobó todas las unidades', type: 'boolean' },
+    { key: 'passingAllCuts', label: 'Aprobó todos los cortes', type: 'boolean' }
+];
+
+let certTemplateDraft = {
+    id: null,
+    name: '',
+    description: '',
+    headerText: '',
+    subtitleText: '',
+    bodyLines: [],
+    footerText: '',
+    conditions: {},
+    signatureImageData: '',
+    signatureType: 'none',
+    signatureLabel: 'Firma del Director(a)',
+    signatureImageData2: '',
+    signatureType2: 'none',
+    signatureLabel2: 'Firma del Coordinador(a)',
+    docxFilePath: '',
+    detectedVariables: []
+};
+
+let certTemplateFocusedLineIdx = -1;
+
+function readCertTemplateDraftFromDom() {
+    return {
+        id: certTemplateDraft.id,
+        name: String((document.getElementById('ctName') || {}).value || '').trim(),
+        description: String((document.getElementById('ctDesc') || {}).value || '').trim(),
+        conditions: certTemplateDraft.conditions,        conditions: certTemplateDraft.conditions,
+        signatureImageData: certTemplateDraft.signatureImageData,
+        signatureType: certTemplateDraft.signatureType,
+        signatureLabel: certTemplateDraft.signatureLabel,
+        signatureImageData2: certTemplateDraft.signatureImageData2,
+        signatureType2: certTemplateDraft.signatureType2,
+        signatureLabel2: certTemplateDraft.signatureLabel2,
+        docxFilePath: certTemplateDraft.docxFilePath,
+        detectedVariables: certTemplateDraft.detectedVariables
+    };
+}
+
+function renderBodyLinesEditor() {
+    const lines = asArray(certTemplateDraft.bodyLines);
+    if (!lines.length) {
+        certTemplateDraft.bodyLines = [''];
+    }
+    const container = document.getElementById('ctBodyLinesEditor');
+    if (!container) return;
+
+    const html = certTemplateDraft.bodyLines.map((line, idx) => {
+        const canMoveUp = idx > 0;
+        const canMoveDown = idx < certTemplateDraft.bodyLines.length - 1;
+        return `
+        <div class="ct-body-line-row" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <input type="text" class="form-input ct-body-line-input" data-idx="${idx}" value="${escapeHtml(line)}" 
+                placeholder="Escribe aquí el texto de esta línea..."
+                onfocus="certTemplateFocusedLineIdx=${idx}"
+                oninput="updateBodyLineFromDom()" style="flex:1">
+            <div style="display:flex;gap:4px;flex-shrink:0">
+                <button type="button" class="btn btn-sm btn-outline" title="Subir" ${canMoveUp ? '' : 'disabled'} onclick="moveBodyLine(${idx},-1)" style="padding:4px 8px;min-height:28px;font-size:11px">▲</button>
+                <button type="button" class="btn btn-sm btn-outline" title="Bajar" ${canMoveDown ? '' : 'disabled'} onclick="moveBodyLine(${idx},1)" style="padding:4px 8px;min-height:28px;font-size:11px">▼</button>
+                <button type="button" class="btn btn-sm btn-outline" title="Eliminar línea" onclick="removeBodyLine(${idx})" style="padding:4px 10px;min-height:28px;font-size:11px;color:#b91c1c">×</button>
+            </div>
+        </div>`;
+    }).join('');
+
+    container.innerHTML = html;
+}
+
+function updateBodyLineFromDom() {
+    const lineInputs = document.querySelectorAll('.ct-body-line-input');
+    const newLines = [];
+    lineInputs.forEach(inp => {
+        newLines.push(String(inp.value || ''));
+    });
+    certTemplateDraft.bodyLines = newLines;
+    scheduleCertTemplatePreview();
+}
+
+function addBodyLine() {
+    certTemplateDraft.bodyLines.push('');
+    renderBodyLinesEditor();
+    scheduleCertTemplatePreview();
+    // Focus the new line
+    setTimeout(() => {
+        const inputs = document.querySelectorAll('.ct-body-line-input');
+        if (inputs.length) {
+            inputs[inputs.length - 1].focus();
+            certTemplateFocusedLineIdx = inputs.length - 1;
+        }
+    }, 50);
+}
+
+function removeBodyLine(idx) {
+    certTemplateDraft.bodyLines.splice(idx, 1);
+    if (!certTemplateDraft.bodyLines.length) certTemplateDraft.bodyLines = [''];
+    renderBodyLinesEditor();
+    scheduleCertTemplatePreview();
+}
+
+function moveBodyLine(idx, direction) {
+    const newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= certTemplateDraft.bodyLines.length) return;
+    const temp = certTemplateDraft.bodyLines[idx];
+    certTemplateDraft.bodyLines[idx] = certTemplateDraft.bodyLines[newIdx];
+    certTemplateDraft.bodyLines[newIdx] = temp;
+    renderBodyLinesEditor();
+    scheduleCertTemplatePreview();
+}
+
+function insertPlaceholderIntoFocusedLine(placeholder) {
+    const editor = document.getElementById('ctHtmlEditor');
+    if (!editor) return;
+    editor.focus();
+    const sel = window.getSelection();
+
+    // Resolve the actual value from example student
+    const fieldKey = placeholder.replace('{{', '').replace('}}', '');
+    const exampleStudent = asArray(state.students)[0];
+    let displayValue = placeholder;
+    if (exampleStudent) {
+        const map = buildFrontendPlaceholders(exampleStudent);
+        if (map[fieldKey]) displayValue = map[fieldKey];
+    }
+
+    const span = createCertFieldSpan(fieldKey, displayValue);
+
+    if (!sel.rangeCount) {
+        editor.appendChild(span);
+        editor.appendChild(document.createTextNode(' '));
+        scheduleCertTemplatePreview();
+        return;
+    }
+    const range = sel.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) return;
+
+    range.deleteContents();
+    range.insertNode(span);
+    range.setStartAfter(span);
+    range.setEndAfter(span);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    scheduleCertTemplatePreview();
+}
+
+function createCertFieldSpan(fieldKey, displayValue) {
+    const span = document.createElement('span');
+    span.className = 'cert-field';
+    span.setAttribute('data-field', fieldKey);
+    span.setAttribute('contenteditable', 'true');
+    span.textContent = displayValue;
+    return span;
+}
+
+function buildFrontendPlaceholders(student) {
+    const map = {};
+    map['STUDENT_NAME'] = student.user ? student.user.name : 'Nombre del Estudiante';
+    map['STUDENT_CODE'] = student.studentCode || 'COD-0000';
+    map['STUDENT_EMAIL'] = student.user ? student.user.email : 'email@ejemplo.com';
+    map['DATE'] = new Date().toLocaleDateString('es-ES');
+    map['GRADE_NAME'] = 'Grado';
+    map['COURSE_NAME'] = 'Curso';
+    map['TEACHER_NAME'] = 'Docente';
+    map['AVERAGE_GRADE'] = '4.5';
+    map['LEVEL_NAME'] = 'Nivel';
+    return map;
+}
+
+async function onChangeBaseDocx(resourceName) {
+    certTemplateDraft.baseDocxResource = resourceName;
+    certTemplateDraft.editableHtml = '<p style="text-align:center;color:#999">Cargando plantilla...</p>';
+    renderCertificateTemplateEditor();
+    try {
+        const res = await api('/api/certificate-templates/base-docx-html/' + resourceName);
+        certTemplateDraft.editableHtml = res.html || '';
+        const editor = document.getElementById('ctHtmlEditor');
+        if (editor) editor.innerHTML = certTemplateDraft.editableHtml;
+        scheduleCertTemplatePreview();
+    } catch (e) {
+        showToast('Error cargando plantilla base', 'error');
+    }
+}
+
+const CERT_TEMPLATE_PRESETS = {
+    'pdf-modern-vintage': {
+        headerFontSize: 32, headerColor: '#2c1810',
+        bodyFontSize: 14, bodyColor: '#4a3b32',
+        footerFontSize: 11, footerColor: '#5c4a3d',
+        alignment: 'center', preset: 'pdf-modern-vintage',
+        basePdfResource: 'pdf-modern-vintage'
+    },
+    'pdf-vintage-beige-dorado': {
+        headerFontSize: 34, headerColor: '#1a3a6b',
+        bodyFontSize: 14, bodyColor: '#333333',
+        footerFontSize: 11, footerColor: '#666666',
+        alignment: 'center', preset: 'pdf-vintage-beige-dorado',
+        basePdfResource: 'pdf-vintage-beige-dorado'
+    },
+    'pdf-negro-dorado': {
+        headerFontSize: 32, headerColor: '#c8962e',
+        bodyFontSize: 14, bodyColor: '#e0e0e0',
+        footerFontSize: 11, footerColor: '#aaaaaa',
+        alignment: 'center', preset: 'pdf-negro-dorado',
+        basePdfResource: 'pdf-negro-dorado'
+    },
+    'pdf-beige-negro': {
+        headerFontSize: 32, headerColor: '#1a1a1a',
+        bodyFontSize: 14, bodyColor: '#2c2c2c',
+        footerFontSize: 11, footerColor: '#555555',
+        alignment: 'center', preset: 'pdf-beige-negro',
+        basePdfResource: 'pdf-beige-negro'
+    }
+};
+
+function applyCertTemplatePreset(presetKey) {
+    const preset = CERT_TEMPLATE_PRESETS[presetKey] || CERT_TEMPLATE_PRESETS['pdf-modern-vintage'];
+    certTemplateDraft.styleConfig = { ...certTemplateDraft.styleConfig, ...preset };
+    certTemplateDraft.basePdfResource = preset.basePdfResource || presetKey;
+    renderCertificateTemplateEditor();
+}
+
+function ctExecCmd(command, value) {
+    document.execCommand(command, false, value || null);
+    const editor = document.getElementById('ctHtmlEditor');
+    if (editor) editor.focus();
+    scheduleCertTemplatePreview();
+}
+
+function changeCertTemplateSigType(type) {
+    certTemplateDraft.signatureType = type;
+    const uploadWrap = document.getElementById('ctSigUploadWrap');
+    const drawWrap = document.getElementById('ctSigDrawWrap');
+    if (uploadWrap) uploadWrap.style.display = type === 'upload' ? 'block' : 'none';
+    if (drawWrap) drawWrap.style.display = type === 'draw' ? 'block' : 'none';
+    if (type === 'draw') {
+        setTimeout(initCertTemplateSignatureCanvas, 50);
+    }
+    scheduleCertTemplatePreview();
+}
+
+function changeCertTemplateSigType2(type) {
+    certTemplateDraft.signatureType2 = type;
+    const uploadWrap = document.getElementById('ctSigUploadWrap2');
+    const drawWrap = document.getElementById('ctSigDrawWrap2');
+    if (uploadWrap) uploadWrap.style.display = type === 'upload' ? 'block' : 'none';
+    if (drawWrap) drawWrap.style.display = type === 'draw' ? 'block' : 'none';
+    if (type === 'draw') {
+        setTimeout(initCertTemplateSignatureCanvas2, 50);
+    }
+    scheduleCertTemplatePreview();
+}
+
+function onCertTemplateSignatureFileSelected(input) {
+    const file = input.files && input.files[0] ? input.files[0] : null;
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        certTemplateDraft.signatureImageData = reader.result;
+        certTemplateDraft.signatureType = 'upload';
+        const preview = document.getElementById('ctSigPreview');
+        if (preview) preview.innerHTML = '<img src="' + reader.result + '" style="max-width:200px;max-height:80px;border-radius:6px;border:1px solid rgba(11,31,58,0.12)">';
+        scheduleCertTemplatePreview();
+    };
+    reader.readAsDataURL(file);
+}
+
+function onCertTemplateSignatureFileSelected2(input) {
+    const file = input.files && input.files[0] ? input.files[0] : null;
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        certTemplateDraft.signatureImageData2 = reader.result;
+        certTemplateDraft.signatureType2 = 'upload';
+        const preview = document.getElementById('ctSigPreview2');
+        if (preview) preview.innerHTML = '<img src="' + reader.result + '" style="max-width:200px;max-height:80px;border-radius:6px;border:1px solid rgba(11,31,58,0.12)">';
+        scheduleCertTemplatePreview();
+    };
+    reader.readAsDataURL(file);
+}
+
+let ctSigCanvasCtx = null;
+let ctSigDrawing = false;
+let ctSigCanvasCtx2 = null;
+let ctSigDrawing2 = false;
+
+function initCertTemplateSignatureCanvas() {
+    const canvas = document.getElementById('ctSigCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctSigCanvasCtx = ctx;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#0b2138';
+
+    // Load existing signature if any
+    if (certTemplateDraft.signatureImageData && certTemplateDraft.signatureType === 'draw') {
+        const img = new Image();
+        img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        img.src = certTemplateDraft.signatureImageData;
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+        ctSigDrawing = true;
+        const rect = canvas.getBoundingClientRect();
+        ctx.beginPath();
+        ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+    });
+    canvas.addEventListener('mousemove', (e) => {
+        if (!ctSigDrawing) return;
+        const rect = canvas.getBoundingClientRect();
+        ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+        ctx.stroke();
+    });
+    canvas.addEventListener('mouseup', () => { ctSigDrawing = false; });
+    canvas.addEventListener('mouseleave', () => { ctSigDrawing = false; });
+
+    // Touch support
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        ctSigDrawing = true;
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches[0];
+        ctx.beginPath();
+        ctx.moveTo(touch.clientX - rect.left, touch.clientY - rect.top);
+    }, { passive: false });
+    canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        if (!ctSigDrawing) return;
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches[0];
+        ctx.lineTo(touch.clientX - rect.left, touch.clientY - rect.top);
+        ctx.stroke();
+    }, { passive: false });
+    canvas.addEventListener('touchend', () => { ctSigDrawing = false; });
+}
+
+function initCertTemplateSignatureCanvas2() {
+    const canvas = document.getElementById('ctSigCanvas2');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctSigCanvasCtx2 = ctx;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#0b2138';
+
+    // Load existing signature if any
+    if (certTemplateDraft.signatureImageData2 && certTemplateDraft.signatureType2 === 'draw') {
+        const img = new Image();
+        img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        img.src = certTemplateDraft.signatureImageData2;
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+        ctSigDrawing2 = true;
+        const rect = canvas.getBoundingClientRect();
+        ctx.beginPath();
+        ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+    });
+    canvas.addEventListener('mousemove', (e) => {
+        if (!ctSigDrawing2) return;
+        const rect = canvas.getBoundingClientRect();
+        ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+        ctx.stroke();
+    });
+    canvas.addEventListener('mouseup', () => { ctSigDrawing2 = false; });
+    canvas.addEventListener('mouseleave', () => { ctSigDrawing2 = false; });
+
+    // Touch support
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        ctSigDrawing2 = true;
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches[0];
+        ctx.beginPath();
+        ctx.moveTo(touch.clientX - rect.left, touch.clientY - rect.top);
+    }, { passive: false });
+    canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        if (!ctSigDrawing2) return;
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches[0];
+        ctx.lineTo(touch.clientX - rect.left, touch.clientY - rect.top);
+        ctx.stroke();
+    }, { passive: false });
+    canvas.addEventListener('touchend', () => { ctSigDrawing2 = false; });
+}
+
+function clearCertTemplateSignatureCanvas() {
+    const canvas = document.getElementById('ctSigCanvas');
+    if (!canvas || !ctSigCanvasCtx) return;
+    ctSigCanvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+    certTemplateDraft.signatureImageData = '';
+    scheduleCertTemplatePreview();
+}
+
+function clearCertTemplateSignatureCanvas2() {
+    const canvas = document.getElementById('ctSigCanvas2');
+    if (!canvas || !ctSigCanvasCtx2) return;
+    ctSigCanvasCtx2.clearRect(0, 0, canvas.width, canvas.height);
+    certTemplateDraft.signatureImageData2 = '';
+    scheduleCertTemplatePreview();
+}
+
+function saveCertTemplateSignatureCanvas() {
+    const canvas = document.getElementById('ctSigCanvas');
+    if (!canvas) return;
+    certTemplateDraft.signatureImageData = canvas.toDataURL('image/png');
+    certTemplateDraft.signatureType = 'draw';
+    showToast('Firma aplicada', 'success');
+    scheduleCertTemplatePreview();
+}
+
+function saveCertTemplateSignatureCanvas2() {
+    const canvas = document.getElementById('ctSigCanvas2');
+    if (!canvas) return;
+    certTemplateDraft.signatureImageData2 = canvas.toDataURL('image/png');
+    certTemplateDraft.signatureType2 = 'draw';
+    showToast('Firma 2 aplicada', 'success');
+    scheduleCertTemplatePreview();
+}
+
+async function openCertificateTemplateManager() {
+    await loadCertificateTemplates();
+    renderCertificateTemplateList();
+}
+
+async function loadCertificateTemplates() {
+    state.certTemplates = asArray(await api('/api/certificate-templates').catch(() => []));
+}
+
+function renderCertificateTemplateList() {
+    const items = asArray(state.certTemplates);
+    const listHtml = items.length
+        ? items.map(t => `<div class="card-check" style="justify-content:space-between;gap:10px;align-items:center">
+            <span><strong>${escapeHtml(t.name)}</strong> <span class="muted">${escapeHtml(t.description || '')}</span></span>
+            <span style="display:flex;gap:6px;flex-wrap:wrap">
+                <button class="btn btn-sm btn-outline" onclick="openCertificateTemplateEditor(${t.id})">Editar</button>
+                <button class="btn btn-sm btn-teal" onclick="generateFromTemplateModal(${t.id})">Usar plantilla</button>
+                <button class="btn btn-sm btn-outline" onclick="autoIssueFromTemplateModal(${t.id})">Auto-emitir</button>
+                <button class="btn btn-sm btn-outline" onclick="deleteCertificateTemplate(${t.id})">Eliminar</button>
+            </span>
+        </div>`).join('')
+        : '<div class="muted">No hay plantillas de certificado creadas.</div>';
+
+    const html = `
+        <div style="padding:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                <div style="font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700">Plantillas de certificado</div>
+                <button class="btn btn-teal" onclick="openCertificateTemplateEditor()">+ Nueva plantilla</button>
+            </div>
+            <div class="card-list">${listHtml}</div>
+        </div>
+    `;
+    openModal('Plantillas', html);
+}
+
+async function openCertificateTemplateEditor(templateId) {
+    certTemplateLastSavedId = null;
+    const existing = templateId ? asArray(state.certTemplates).find(t => String(t.id) === String(templateId)) : null;
+    if (existing) {
+        certTemplateDraft = {
+            id: existing.id,
+            name: existing.name || '',
+            description: existing.description || '',
+            conditions: safeJsonParse(existing.conditionsJson, {}),
+            signatureImageData: existing.signatureImageData || '',
+            signatureType: existing.signatureType || 'none',
+            signatureLabel: existing.signatureLabel || 'Firma del Director(a)',
+            signatureImageData2: existing.signatureImageData2 || '',
+            signatureType2: existing.signatureType2 || 'none',
+            signatureLabel2: existing.signatureLabel2 || 'Firma del Coordinador(a)',
+            docxFilePath: existing.docxFilePath || '',
+            detectedVariables: []
+        };
+    } else {
+        certTemplateDraft = {
+            id: null,
+            name: '',
+            description: '',
+            conditions: {},
+            signatureImageData: '',
+            signatureType: 'none',
+            signatureLabel: 'Firma del Director(a)',
+            signatureImageData2: '',
+            signatureType2: 'none',
+            signatureLabel2: 'Firma del Coordinador(a)',
+            docxFilePath: '',
+            detectedVariables: []
+        };
+    }
+    renderCertificateTemplateEditor();
+}
+
+let certTemplatePreviewTimer = null;
+let certTemplateLastSavedId = null;
+
+function renderCertificateTemplateEditor() {
+    const exampleStudent = asArray(state.students)[0];
+
+    const detectedSet = new Set(asArray(certTemplateDraft.detectedVariables));
+    const standardVarsHtml = CERT_TEMPLATE_FIELDS.map(f => {
+        const isDetected = detectedSet.has(f.key);
+        const badge = isDetected
+            ? `<span style="display:inline-block;background:var(--teal);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;margin-left:6px">Detectada</span>`
+            : '';
+        return `<tr style="border-bottom:1px solid rgba(11,31,58,0.06)">
+            <td style="padding:8px 6px;font-size:13px;white-space:nowrap;font-family:monospace;color:var(--navy)"><b>{${escapeHtml(f.key)}}</b>${badge}</td>
+            <td style="padding:8px 6px;font-size:12px;color:var(--text-body)">${escapeHtml(f.label)}<div class="muted" style="font-size:11px;margin-top:2px">${escapeHtml(f.desc)}</div></td>
+            <td style="padding:8px 6px;font-size:12px;color:var(--text-muted);white-space:nowrap">${escapeHtml(f.example)}</td>
+        </tr>`;
+    }).join('');
+
+    const unknownDetected = asArray(certTemplateDraft.detectedVariables).filter(v => !CERT_TEMPLATE_FIELDS.some(f => f.key === v));
+    const unknownVarsHtml = unknownDetected.length
+        ? `<div style="margin-top:10px"><div class="muted" style="font-size:12px;margin-bottom:6px">Variables detectadas sin descripcion conocida:</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">${unknownDetected.map(v => `<span class="cert-field-chip" style="cursor:default">${escapeHtml('{' + v + '}')}</span>`).join('')}</div></div>`
+        : '';
+
+    const variablesHtml = `
+        <div style="max-height:260px;overflow:auto;border:1px solid rgba(11,31,58,0.08);border-radius:8px;background:#fff">
+            <table style="width:100%;border-collapse:collapse">
+                <thead style="position:sticky;top:0;background:#f8f9fb">
+                    <tr>
+                        <th style="padding:8px 6px;text-align:left;font-size:12px;color:var(--text-muted);font-weight:600;width:1%">Variable</th>
+                        <th style="padding:8px 6px;text-align:left;font-size:12px;color:var(--text-muted);font-weight:600">Significado</th>
+                        <th style="padding:8px 6px;text-align:left;font-size:12px;color:var(--text-muted);font-weight:600;width:1%">Ejemplo</th>
+                    </tr>
+                </thead>
+                <tbody>${standardVarsHtml}</tbody>
+            </table>
+        </div>
+        ${unknownVarsHtml}
+        <div class="muted" style="font-size:12px;margin-top:8px">Escribe cualquiera de las variables entre llaves <code>{ }</code> en tu documento .docx. Se reemplazaran automaticamente al generar el certificado.</div>
+    `;
+
+    const conditionsHtml = CERT_TEMPLATE_CONDITIONS.map(cond => {
+        const enabled = !!certTemplateDraft.conditions[cond.key];
+        const val = certTemplateDraft.conditions[cond.key];
+        const inputWrapStyle = 'width:140px;flex-shrink:0;display:flex;align-items:center;justify-content:flex-end';
+        let inputHtml = '';
+        if (cond.type === 'boolean') {
+            inputHtml = `<div style="${inputWrapStyle}"><input type="checkbox" id="ctCond_${cond.key}" ${enabled ? 'checked' : ''} onchange="updateCertTemplateCondition('${cond.key}', this.checked)" style="width:18px;height:18px;cursor:pointer"></div>`;
+        } else if (cond.type === 'percent') {
+            inputHtml = `<div style="${inputWrapStyle}"><input type="number" class="form-input" style="width:100%" min="0" max="100" id="ctCond_${cond.key}" value="${escapeHtml(val !== undefined ? String(val) : '')}" placeholder="%" oninput="updateCertTemplateCondition('${cond.key}', this.value)"></div>`;
+        } else {
+            inputHtml = `<div style="${inputWrapStyle}"><input type="number" class="form-input" style="width:100%" step="0.1" id="ctCond_${cond.key}" value="${escapeHtml(val !== undefined ? String(val) : '')}" placeholder="Valor" oninput="updateCertTemplateCondition('${cond.key}', this.value)"></div>`;
+        }
+        return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <div style="flex:1;font-size:13px">${escapeHtml(cond.label)}</div>
+            ${inputHtml}
+        </div>`;
+    }).join('');
+
+    const html = `
+        <div style="padding:24px;max-height:88vh;overflow:auto">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+                <div style="font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:700">Editor de plantilla</div>
+                <div style="display:flex;gap:10px">
+                    <button class="btn btn-sm btn-outline" onclick="openCertificateTemplateManager()">Volver</button>
+                </div>
+            </div>
+            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:20px">
+                <div class="form-group" style="flex:1;min-width:260px;margin-bottom:0">
+                    <label class="form-label">Nombre de la plantilla</label>
+                    <input class="form-input" id="ctName" value="${escapeHtml(certTemplateDraft.name)}" placeholder="Ej: Certificado de promocion">
+                </div>
+                <div class="form-group" style="flex:1;min-width:260px;margin-bottom:0">
+                    <label class="form-label">Estudiante de ejemplo</label>
+                    <select class="form-input" id="ctExampleStudent">
+                        ${asArray(state.students).map(s => `<option value="${s.id}" ${exampleStudent && s.id === exampleStudent.id ? 'selected' : ''}>${escapeHtml(s.user ? s.user.name : 'Estudiante')}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            <div class="form-group" style="margin-bottom:16px">
+                <label class="form-label">Descripcion</label>
+                <textarea class="form-input" id="ctDesc" rows="2" placeholder="Describe el uso de esta plantilla...">${escapeHtml(certTemplateDraft.description)}</textarea>
+            </div>
+            <div style="display:flex;gap:24px;flex-wrap:wrap">
+                <div style="flex:1;min-width:360px;max-width:560px">
+                    <div class="form-group" style="margin-bottom:14px">
+                        <label class="form-label">Archivo de plantilla (.docx)</label>
+                        <div style="border:1px dashed rgba(11,31,58,0.25);border-radius:10px;padding:14px;background:rgba(11,31,58,0.02)">
+                            <input type="file" id="ctDocxFile" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onchange="onCertTemplateDocxSelected(this)" style="display:block;margin-bottom:8px">
+                            <div id="ctDocxInfo">
+                                ${certTemplateDraft.docxFilePath ? `<div style="font-size:13px;margin-bottom:4px"><strong>Archivo:</strong> <span class="muted">${escapeHtml(certTemplateDraft.docxFilePath.split(/[\\/]/).pop())}</span></div>` : ''}
+                                ${variablesHtml}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="assign-head" style="margin-bottom:10px;font-size:14px">Condiciones de emision automatica</div>
+                    <div style="background:#fff;border:1px solid rgba(11,31,58,0.08);border-radius:10px;padding:12px;margin-bottom:14px">
+                        ${conditionsHtml}
+                    </div>
+
+                    <div style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap">
+                        <button class="btn btn-teal" onclick="saveCertificateTemplate()">Guardar plantilla</button>
+                    </div>
+                </div>
+                <div style="flex:1;min-width:360px;max-width:560px;display:flex;flex-direction:column;gap:12px">
+                    <div class="assign-head" style="margin:0;font-size:14px">Acciones</div>
+                    <div style="background:#fff;border:1px solid rgba(11,31,58,0.08);border-radius:10px;padding:16px">
+                        <div style="font-size:13px;color:var(--text-body);margin-bottom:12px;line-height:1.6">
+                            <strong>Como funciona:</strong>
+                            <ol style="margin:8px 0 0 18px;padding:0">
+                                <li>Sube tu archivo .docx con variables como <code>{STUDENT_NAME}</code></li>
+                                <li>Guarda la plantilla</li>
+                                <li>Selecciona un estudiante de ejemplo</li>
+                                <li>Descarga el certificado para ver el resultado</li>
+                            </ol>
+                        </div>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap">
+                            <button class="btn btn-teal" onclick="downloadCertTemplateDocx()">Descargar DOCX</button>
+                            <button class="btn btn-sm btn-outline" onclick="emitCertTemplatePreview()">Emitir certificado (ejemplo)</button>
+                        </div>
+                        <div id="ctDownloadStatus" class="muted" style="font-size:12px;margin-top:10px"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    openModal(certTemplateDraft.id ? 'Editar plantilla' : 'Nueva plantilla de certificado', html, 'xxl');
+}
+function changeCertTemplateExampleStudent(studentId) {
+    // No-op: preview removed, student selection is only used for downloads
+}
+
+function downloadCertTemplateDocx() {
+    const draft = readCertTemplateDraftFromDom();
+    const exampleStudent = asArray(state.students)[0];
+    if (!exampleStudent) return showToast('No hay estudiante de ejemplo', 'error');
+    if (!certTemplateLastSavedId && !draft.id) return showToast('Guarda la plantilla primero', 'error');
+    const templateId = certTemplateLastSavedId || draft.id;
+    const url = '/api/certificate-templates/' + templateId + '/generate-docx/' + exampleStudent.id;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (draft.name || 'certificado') + '.docx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+}
+
+async function emitCertTemplatePreview() {
+    const draft = readCertTemplateDraftFromDom();
+    const exampleStudent = asArray(state.students)[0];
+    if (!exampleStudent) return showToast('No hay estudiante de ejemplo', 'error');
+    if (!certTemplateLastSavedId && !draft.id) return showToast('Guarda la plantilla primero', 'error');
+
+    const templateId = certTemplateLastSavedId || draft.id;
+    try {
+        const blob = await fetchBlob('/api/certificate-templates/' + templateId + '/generate-docx/' + exampleStudent.id);
+        const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+        await api('/api/certificates', {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify({
+                studentId: exampleStudent.id,
+                name: draft.name || 'Certificado',
+                filePath: base64,
+                issuedAt: new Date().toISOString().split('T')[0],
+                status: 'available'
+            })
+        });
+        showToast('Certificado emitido para ' + (exampleStudent.user ? exampleStudent.user.name : 'estudiante'), 'success');
+        await api('/api/certificates').then(data => { state.certificates = asArray(data); renderCertificatesSection(); renderOverview(); }).catch(() => {});
+    } catch (e) {
+        showToast('Error emitiendo certificado: ' + (e.message || ''), 'error');
+    }
+}
+
+async function saveCertificateTemplate() {
+    const draft = readCertTemplateDraftFromDom();
+    if (!draft.name) return showToast('Ingresa un nombre para la plantilla', 'error');
+
+    const payload = {
+        name: draft.name,
+        description: draft.description,
+        conditionsJson: JSON.stringify(draft.conditions),
+        docxFilePath: draft.docxFilePath || ''
+    };
+
+    try {
+        if (draft.id) {
+            await api('/api/certificate-templates/' + draft.id, { method: 'PUT', headers: headers(), body: JSON.stringify(payload) });
+            certTemplateLastSavedId = draft.id;
+        } else {
+            const saved = await api('/api/certificate-templates', { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
+            certTemplateDraft.id = saved.id;
+            certTemplateLastSavedId = saved.id;
+        }
+        showToast('Plantilla guardada', 'success');
+        await loadCertificateTemplates();
+        openCertificateTemplateManager();
+    } catch (e) {
+        showToast('Error guardando plantilla: ' + (e.message || ''), 'error');
+    }
+}
+
+async function deleteCertificateTemplate(id) {
+    openConfirmModal('Eliminar plantilla', '¿Eliminar esta plantilla de certificado? Esta acción no se puede deshacer.', async () => {
+        try {
+            await api('/api/certificate-templates/' + id, { method: 'DELETE', headers: headers(false) });
+            showToast('Plantilla eliminada', 'success');
+            await loadCertificateTemplates();
+            renderCertificateTemplateList();
+        } catch (e) {
+            showToast('Error eliminando plantilla', 'error');
+        }
+    }, 'Eliminar');
+}
+
+async function previewCertificateTemplate() {
+    showToast('Vista previa en vivo desactivada. Descarga el DOCX para ver el resultado.', 'info');
+}
+
+function generateFromTemplateModal(templateId) {
+    const template = asArray(state.certTemplates).find(t => String(t.id) === String(templateId));
+    if (!template) return showToast('Plantilla no encontrada', 'error');
+
+    const selectedStudentIds = asArray(state.ui.certSelectedStudentIds).map(String).filter(Boolean);
+
+    const html = `
+        <div style="padding:8px">
+            <div style="font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;margin-bottom:8px">${escapeHtml(template.name)}</div>
+            <div class="muted" style="margin-bottom:14px">${escapeHtml(template.description || '')}</div>
+            <div class="assign-head">Estudiantes seleccionados</div>
+            <div class="muted" style="margin-bottom:12px">${selectedStudentIds.length} estudiante(s) seleccionado(s) desde el panel de certificados.</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+                <button class="btn btn-teal" onclick="generateCertificatesFromTemplate(${templateId})">Generar certificados</button>
+                <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+            </div>
+            <div id="ctGenResult" style="margin-top:14px"></div>
+        </div>
+    `;
+    openModal('Generar certificados', html);
+}
+
+async function generateCertificatesFromTemplate(templateId) {
+    const selectedStudentIds = asArray(state.ui.certSelectedStudentIds).map(String).filter(Boolean);
+    if (!selectedStudentIds.length) return showToast('Selecciona estudiantes primero en el panel de certificados', 'error');
+
+    const resultWrap = document.getElementById('ctGenResult');
+    if (resultWrap) resultWrap.innerHTML = '<div class="loading"><div class="spinner"></div>Generando...</div>';
+
+    let created = 0;
+    let failed = 0;
+    const errors = [];
+
+    for (const studentId of selectedStudentIds) {
+        try {
+            const blob = await fetchBlob('/api/certificate-templates/' + templateId + '/generate-docx/' + studentId);
+            const base64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+            const student = asArray(state.students).find(s => String(s.id) === String(studentId));
+            const template = asArray(state.certTemplates).find(t => String(t.id) === String(templateId));
+            await api('/api/certificates', {
+                method: 'POST',
+                headers: headers(),
+                body: JSON.stringify({
+                    studentId: parseInt(studentId, 10),
+                    name: template ? template.name : 'Certificado',
+                    filePath: base64,
+                    issuedAt: new Date().toISOString().split('T')[0],
+                    status: 'available'
+                })
+            });
+            created++;
+        } catch (e) {
+            failed++;
+            errors.push(e.message || 'Error');
+        }
+    }
+
+    if (resultWrap) {
+        resultWrap.innerHTML = `<div class="alert ${failed > 0 ? 'alert-warning' : 'alert-success'}">
+            <strong>${created}</strong> certificado(s) generado(s). ${failed > 0 ? '<strong>' + failed + '</strong> fallido(s).' : ''}
+        </div>`;
+    }
+
+    if (failed > 0) showToast(`Generados: ${created}. Fallidos: ${failed}.`, 'error');
+    else showToast(`${created} certificado(s) generado(s)`, 'success');
+
+    await api('/api/certificates').then(data => { state.certificates = asArray(data); renderCertificatesSection(); renderOverview(); }).catch(() => {});
+}
+
+function updateCertTemplateCondition(key, value) {
+    if (value === false || value === '' || value === null || value === undefined) {
+        delete certTemplateDraft.conditions[key];
+    } else {
+        const cond = CERT_TEMPLATE_CONDITIONS.find(c => c.key === key);
+        if (cond && cond.type === 'boolean') {
+            certTemplateDraft.conditions[key] = true;
+        } else if (cond && cond.type === 'percent') {
+            const num = parseInt(value, 10);
+            certTemplateDraft.conditions[key] = isNaN(num) ? '' : num;
+        } else {
+            const num = parseFloat(value);
+            certTemplateDraft.conditions[key] = isNaN(num) ? '' : num;
+        }
+    }
+}
+
+async function onCertTemplateDocxSelected(input) {
+    const file = input.files && input.files[0] ? input.files[0] : null;
+    if (!file) return;
+    console.log('[Upload] Selected file:', file.name, 'size:', file.size, 'type:', file.type);
+    
+    const isNew = !certTemplateDraft.id;
+    const url = isNew
+        ? '/api/certificate-templates/upload-docx'
+        : '/api/certificate-templates/' + certTemplateDraft.id + '/upload-docx';
+    console.log('[Upload] URL:', API + url);
+    
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        console.log('[Upload] Sending request...');
+        const res = await fetch(API + url, {
+            method: 'POST',
+            credentials: 'include',
+            body: formData
+        });
+        console.log('[Upload] Response status:', res.status);
+        
+        if (!res.ok) {
+            const errorText = await res.text();
+            console.error('[Upload] Server error:', errorText);
+            throw new Error('HTTP ' + res.status + ': ' + errorText);
+        }
+        
+        const data = await res.json();
+        console.log('[Upload] Response data:', data);
+        
+        if (data.error) throw new Error(data.error);
+        
+        certTemplateDraft.docxFilePath = data.filePath || '';
+        certTemplateDraft.detectedVariables = asArray(data.variables);
+        renderCertificateTemplateEditor();
+        showToast('Archivo .docx subido y variables detectadas', 'success');
+    } catch (e) {
+        console.error('[Upload] Error:', e);
+        showToast('Error subiendo .docx: ' + (e.message || 'Error de conexion'), 'error');
+    }
+}
+
+function autoIssueFromTemplateModal(templateId) {
+    const template = asArray(state.certTemplates).find(t => String(t.id) === String(templateId));
+    if (!template) return showToast('Plantilla no encontrada', 'error');
+    const html = `
+        <div style="padding:8px">
+            <div style="font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;margin-bottom:8px">${escapeHtml(template.name)}</div>
+            <div class="muted" style="margin-bottom:14px">${escapeHtml(template.description || '')}</div>
+            <div class="assign-head">Ambito de emision automatica</div>
+            <div style="margin-bottom:14px">
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:8px;cursor:pointer">
+                    <input type="radio" name="autoIssueScope" value="all" checked> Todos los estudiantes
+                </label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+                    <input type="radio" name="autoIssueScope" value="selected"> Solo estudiantes seleccionados (${state.ui.certSelectedStudentIds.length})
+                </label>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+                <button class="btn btn-teal" onclick="executeAutoIssue(${templateId})">Ejecutar emision automatica</button>
+                <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+            </div>
+            <div id="ctAutoIssueResult" style="margin-top:14px"></div>
+        </div>
+    `;
+    openModal('Emision automatica por condiciones', html);
+}
+
+async function executeAutoIssue(templateId) {
+    const scope = document.querySelector('input[name="autoIssueScope"]:checked');
+    const mode = scope ? scope.value : 'all';
+    const resultWrap = document.getElementById('ctAutoIssueResult');
+    if (resultWrap) resultWrap.innerHTML = '<div class="loading"><div class="spinner"></div>Evaluando condiciones y generando...</div>';
+
+    let studentIds = null;
+    if (mode === 'selected') {
+        studentIds = asArray(state.ui.certSelectedStudentIds).map(s => parseInt(s, 10)).filter(Boolean);
+        if (!studentIds.length) {
+            if (resultWrap) resultWrap.innerHTML = '<div class="alert alert-warning">No hay estudiantes seleccionados.</div>';
+            return;
+        }
+    }
+
+    try {
+        const res = await api('/api/certificate-templates/' + templateId + '/mass-generate', {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify(studentIds)
+        });
+        if (resultWrap) {
+            resultWrap.innerHTML = `<div class="alert ${res.failed > 0 ? 'alert-warning' : 'alert-success'}">
+                <strong>${res.created}</strong> certificado(s) creado(s).
+                <strong>${res.skipped}</strong> omitido(s) por no cumplir condiciones.
+                ${res.failed > 0 ? '<strong>' + res.failed + '</strong> fallido(s).' : ''}
+            </div>`;
+        }
+        if (res.failed > 0) showToast(`Creados: ${res.created}. Omitidos: ${res.skipped}. Fallidos: ${res.failed}.`, 'error');
+        else showToast(`${res.created} certificado(s) creado(s). ${res.skipped} omitido(s).`, 'success');
+        await api('/api/certificates').then(data => { state.certificates = asArray(data); renderCertificatesSection(); renderOverview(); }).catch(() => {});
+    } catch (e) {
+        if (resultWrap) resultWrap.innerHTML = '<div class="alert alert-warning">Error: ' + escapeHtml(e.message || '') + '</div>';
+        showToast('Error en emision automatica: ' + (e.message || ''), 'error');
     }
 }
 

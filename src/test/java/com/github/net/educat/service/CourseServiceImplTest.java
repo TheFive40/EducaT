@@ -1,10 +1,13 @@
 package com.github.net.educat.service;
 
+import com.github.net.educat.application.AuditLogService;
 import com.github.net.educat.dto.request.CourseJoinByCodeRequest;
 import com.github.net.educat.dto.response.CourseJoinByCodeResponse;
 import com.github.net.educat.mapper.CourseMapper;
+import com.github.net.educat.mapper.StudentMapper;
 import com.github.net.educat.repository.CourseRepository;
 import com.github.net.educat.repository.EnrollmentRepository;
+import com.github.net.educat.repository.ScheduleRepository;
 import com.github.net.educat.repository.StudentRepository;
 import com.github.net.educat.repository.TeacherRepository;
 import org.junit.jupiter.api.Test;
@@ -33,7 +36,13 @@ class CourseServiceImplTest {
     @Mock
     private EnrollmentRepository enrollmentRepository;
     @Mock
+    private ScheduleRepository scheduleRepository;
+    @Mock
     private CourseMapper courseMapper;
+    @Mock
+    private StudentMapper studentMapper;
+    @Mock
+    private AuditLogService auditLogService;
 
     @InjectMocks
     private CourseServiceImpl courseService;

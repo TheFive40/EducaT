@@ -89,4 +89,34 @@ public class ConfigServiceImpl implements ConfigService {
         institutionSettingsRepository.save(settings);
         return ConfigResponse.builder().key("cutPeriods").value(settings.getCutPeriodsJson()).build();
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ConfigResponse getCourseGrades() {
+        InstitutionSettings settings = getOrCreateSettings();
+        return ConfigResponse.builder().key("courseGrades").value(settings.getCourseGradesJson()).build();
+    }
+
+    @Override
+    public ConfigResponse saveCourseGrades(String courseGrades) {
+        InstitutionSettings settings = getOrCreateSettings();
+        settings.setCourseGradesJson(courseGrades);
+        institutionSettingsRepository.save(settings);
+        return ConfigResponse.builder().key("courseGrades").value(settings.getCourseGradesJson()).build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ConfigResponse getStudentGrades() {
+        InstitutionSettings settings = getOrCreateSettings();
+        return ConfigResponse.builder().key("studentGrades").value(settings.getStudentGradesJson()).build();
+    }
+
+    @Override
+    public ConfigResponse saveStudentGrades(String studentGrades) {
+        InstitutionSettings settings = getOrCreateSettings();
+        settings.setStudentGradesJson(studentGrades);
+        institutionSettingsRepository.save(settings);
+        return ConfigResponse.builder().key("studentGrades").value(settings.getStudentGradesJson()).build();
+    }
 }

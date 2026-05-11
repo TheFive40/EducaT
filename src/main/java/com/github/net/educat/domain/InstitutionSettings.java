@@ -29,4 +29,10 @@ public class InstitutionSettings {
     private String cutPeriodsJson;
     @Column(name = "psychology_availability_json", columnDefinition = "TEXT")
     private String psychologyAvailabilityJson;
+    @Column(name = "course_grades_json", columnDefinition = "TEXT")
+    private String courseGradesJson;
+    @Column(name = "student_grades_json", columnDefinition = "TEXT")
+    private String studentGradesJson;
+    @Column(name = "storage_settings_json", columnDefinition = "TEXT")
+    private String storageSettingsJson;
 }

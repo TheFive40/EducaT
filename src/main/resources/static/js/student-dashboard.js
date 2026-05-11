@@ -1249,7 +1249,35 @@ async function loadOverview() {
     courseActivities = Array.isArray(actData) ? actData.filter(a => allowedCourseIds.has(String((((a || {}).course || {}).id) || ''))) : [];
     courseExams = Array.isArray(examData) ? examData.filter(x => allowedCourseIds.has(String((((x || {}).course || {}).id) || ''))) : [];
     renderOverviewContent();
+    await loadActiveSurveys();
     if (currentSection === 'cursos') await loadCursos({ skipRemoteFetch: true });
+}
+
+async function loadActiveSurveys() {
+    const container = document.getElementById('overviewSurveys');
+    const countBadge = document.getElementById('studentSurveyCount');
+    if (!container) return;
+    const roleName = String((((currentUser || {}).role || {}).name) || 'ESTUDIANTE').toUpperCase();
+    const surveys = await tryFetch('/api/surveys/active-for-role?role=' + encodeURIComponent(roleName));
+    if (!Array.isArray(surveys) || surveys.length === 0) {
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:13px">No hay encuestas activas para tu rol en este momento.</div>';
+        if (countBadge) countBadge.style.display = 'none';
+        return;
+    }
+    if (countBadge) { countBadge.textContent = surveys.length; countBadge.style.display = ''; }
+    container.innerHTML = surveys.map(s => {
+        const question = escapeHtml(s.question || 'Encuesta sin título');
+        const options = safeJsonParse(s.optionsJson, []);
+        const optsPreview = options.slice(0, 3).map(o => escapeHtml(o.text || 'Opción')).join(', ') + (options.length > 3 ? '...' : '');
+        return `<div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid rgba(11,31,58,0.05)">
+            <div style="width:9px;height:9px;border-radius:50%;background:var(--navy);flex-shrink:0"></div>
+            <div style="flex:1">
+                <div style="font-weight:600;font-size:13.5px">${question}</div>
+                <div style="font-size:11.5px;color:var(--text-muted)">${optsPreview || 'Sin opciones'}</div>
+            </div>
+            <a class="btn btn-sm btn-teal" href="/public-survey?publicSurvey=${encodeURIComponent(s.id)}" title="Votar">Votar</a>
+        </div>`;
+    }).join('');
 }
 
 async function reloadStudentEnrollments() {
@@ -2010,10 +2038,12 @@ function apViewCertificate(certId) {
     document.getElementById('modalTitle').textContent = cert.name || 'Certificado';
     document.getElementById('modalBody').innerHTML = `
         <div style="display:flex;flex-direction:column;gap:14px">
-            <div style="font-size:12.5px;color:var(--text-muted)">Previsualización del certificado</div>
-            <iframe src="${safeUrl}" title="Vista de certificado" style="width:100%;height:60vh;border:1px solid rgba(11,31,58,0.1);border-radius:8px;background:#fff"></iframe>
-            <div style="display:flex;justify-content:flex-end">
-                <button class="btn btn-primary" onclick="apDownloadCertificate(${certId})">Descargar</button>
+            <div style="font-size:12.5px;color:var(--text-muted)">Vista previa no disponible para archivos DOCX. Descarga el archivo para abrirlo en Word.</div>
+            <div style="padding:40px;text-align:center;background:#f8f9fb;border:1px dashed rgba(11,31,58,0.15);border-radius:10px">
+                <div style="font-size:48px;margin-bottom:12px">📄</div>
+                <div style="font-weight:600;margin-bottom:6px">${escapeHtml(cert.name || 'Certificado')}.docx</div>
+                <div class="muted" style="font-size:13px;margin-bottom:16px">Emitido el ${cert.issuedAt ? new Date(cert.issuedAt + 'T00:00:00').toLocaleDateString('es-CO') : 'No informado'}</div>
+                <button class="btn btn-primary" onclick="apDownloadCertificate(${certId})">Descargar DOCX</button>
             </div>
         </div>
     `;
@@ -2031,11 +2061,11 @@ function apDownloadCertificate(certId) {
     link.href = cert.filePath;
     link.target = '_blank';
     link.rel = 'noopener';
-    link.download = (cert.name || 'certificado') + '.pdf';
+    link.download = (cert.name || 'certificado') + '.docx';
     document.body.appendChild(link);
     link.click();
     link.remove();
-    showToast('Descarga iniciada', 'success');
+    showToast('Descarga de DOCX iniciada', 'success');
 }
 
 // ── 2 & 3. Evaluación Docente / Autoevaluación ───────────────────
@@ -3564,17 +3594,18 @@ async function apFillPsychPendingSection() {
 }
 
 async function apCancelPsychAppointment(id) {
-    if (!confirm('¿Seguro que deseas cancelar esta cita?')) return;
-    try {
-        const res = await apiFetch('/api/student/psychology/appointments/' + id, { method: 'DELETE' });
-        if (!res || !res.ok) throw new Error('Error');
-        showToast('Cita cancelada', 'success');
-        await apLoadPsychologyAppointments();
-        apFillPsychPendingSection();
-        apOpenPsychHistoryModal();
-    } catch (e) {
-        showToast('No se pudo cancelar la cita', 'error');
-    }
+    openStudentConfirmModal('Cancelar cita', '¿Seguro que deseas cancelar esta cita psicológica?', 'Cancelar cita', async () => {
+        try {
+            const res = await apiFetch('/api/student/psychology/appointments/' + id, { method: 'DELETE' });
+            if (!res || !res.ok) throw new Error('Error');
+            showToast('Cita cancelada', 'success');
+            await apLoadPsychologyAppointments();
+            apFillPsychPendingSection();
+            apOpenPsychHistoryModal();
+        } catch (e) {
+            showToast('No se pudo cancelar la cita', 'error');
+        }
+    });
 }
 
 const PSYCH_NOTIFIED_KEY = 'educat_psych_cancel_notified';
@@ -4375,7 +4406,7 @@ async function submitActivity(actId) {
 async function leaveActivityGroup(actId) {
     const sid = currentStudent ? currentStudent.id : null;
     if (!sid) return;
-    openConfirmModal('Abandonar grupo', '¿Seguro que quieres abandonar este grupo? Tu entrega será eliminada y tendrás que volver a entregar la actividad.', async () => {
+    openStudentConfirmModal('Abandonar grupo', '¿Seguro que quieres abandonar este grupo? Tu entrega será eliminada y tendrás que volver a entregar la actividad.', 'Abandonar', async () => {
         try {
             await apiFetch('/api/activity-submissions/activity/' + actId + '/student/' + sid + '/leave-group', { method: 'POST' });
             delete activitySubmissionCache[sid + '_' + actId];
@@ -4384,7 +4415,7 @@ async function leaveActivityGroup(actId) {
         } catch (e) {
             showToast('Error al abandonar el grupo', 'error');
         }
-    }, 'Abandonar');
+    });
 }
 
 function renderUnit(idx, options) {

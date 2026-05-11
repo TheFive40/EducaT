@@ -2085,6 +2085,34 @@ ${diff !== null ? `<span style="font-size:11px;font-weight:700;color:${col};flex
     }).join('') || '<div style="color:var(--text-muted);font-size:13px">Sin evaluaciones programadas.</div>';
 
     initTeacherModerationOverview(teacherCourses || []);
+    await loadActiveSurveys();
+}
+
+async function loadActiveSurveys() {
+    const container = document.getElementById('overviewSurveys');
+    const countBadge = document.getElementById('teacherSurveyCount');
+    if (!container) return;
+    const roleName = String((((currentUser || {}).role || {}).name) || 'DOCENTE').toUpperCase();
+    const surveys = await tryFetch('/api/surveys/active-for-role?role=' + encodeURIComponent(roleName));
+    if (!Array.isArray(surveys) || surveys.length === 0) {
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:13px">No hay encuestas activas para tu rol en este momento.</div>';
+        if (countBadge) countBadge.style.display = 'none';
+        return;
+    }
+    if (countBadge) { countBadge.textContent = surveys.length; countBadge.style.display = ''; }
+    container.innerHTML = surveys.map(s => {
+        const question = escapeHtml(s.question || 'Encuesta sin título');
+        const options = safeJsonParse(s.optionsJson, []);
+        const optsPreview = options.slice(0, 3).map(o => escapeHtml(o.text || 'Opción')).join(', ') + (options.length > 3 ? '...' : '');
+        return `<div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid rgba(11,31,58,0.05)">
+            <div style="width:9px;height:9px;border-radius:50%;background:var(--navy);flex-shrink:0"></div>
+            <div style="flex:1">
+                <div style="font-weight:600;font-size:13.5px">${question}</div>
+                <div style="font-size:11.5px;color:var(--text-muted)">${optsPreview || 'Sin opciones'}</div>
+            </div>
+            <a class="btn btn-sm btn-teal" href="/public-survey?publicSurvey=${encodeURIComponent(s.id)}" title="Votar">Votar</a>
+        </div>`;
+    }).join('');
 }
 
 async function loadCursos() {
