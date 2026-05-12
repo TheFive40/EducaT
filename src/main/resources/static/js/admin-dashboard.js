@@ -528,7 +528,8 @@ function applyAdminPermissionVisibility() {
         instructivos: ['instructivos.crear','instructivos.editar'],
         formularios: ['formularios.editar','formularios.reportes'],
         configuracion: ['notas.configurar'],
-        auditoria: ['portal.admin']
+        auditoria: ['portal.admin'],
+        contenido: ['news.create','news.edit','events.create','events.edit','articles.create','articles.edit']
     };
     document.querySelectorAll('.sidebar-nav .nav-item[data-section]').forEach(btn => {
         const section = btn.dataset.section;
@@ -595,7 +596,8 @@ function navigateTo(section, options) {
         formularios: 'Formularios',
         importacion: 'Importar Datos',
         configuracion: 'Configuracion',
-        auditoria: 'Auditoria'
+        auditoria: 'Auditoria',
+        contenido: 'Contenido institucional'
     }[section] || 'Administrador';
     document.getElementById('pageTitle').textContent = title;
     if (!opts.skipPersist) writeAdminNavigationState(section, true);
@@ -604,6 +606,9 @@ function navigateTo(section, options) {
     }
     if (section === 'configuracion') {
         callIfFn('renderStorageMonitorSection');
+    }
+    if (section === 'contenido') {
+        loadContentSection();
     }
 }
 window.navigateTo = navigateTo;
@@ -9172,6 +9177,9 @@ function bindEvents() {
     bindClickIfFn('btnSaveGrading', 'saveGradePolicy');
     bindClickIfFn('btnAddCutPeriod', 'addCutPeriod');
     bindClickIfFn('btnSaveCutPeriods', 'saveCutPeriods');
+
+    bindClick('btnSaveAboutContent', saveAboutContent);
+    bindClick('btnResetAboutContent', resetAboutContent);
 }
 
 const adminEvalReportState = { data: [], filtered: [], page: 1, pageSize: 6, query: '', teacherFilter: 'all', courseFilter: 'all' };
@@ -10546,6 +10554,334 @@ async function executeAutoIssue(templateId) {
         if (resultWrap) resultWrap.innerHTML = '<div class="alert alert-warning">Error: ' + escapeHtml(e.message || '') + '</div>';
         showToast('Error en emision automatica: ' + (e.message || ''), 'error');
     }
+}
+
+// ==================== Gestión de Contenido Institucional ====================
+
+let contentStateAdmin = {
+    news: [],
+    events: [],
+    articles: []
+};
+
+async function loadContentSection() {
+    try {
+        const [news, events, articles] = await Promise.all([
+            api('/api/news').catch(() => []),
+            api('/api/events').catch(() => []),
+            api('/api/articles').catch(() => [])
+        ]);
+        contentStateAdmin.news = asArray(news);
+        contentStateAdmin.events = asArray(events);
+        contentStateAdmin.articles = asArray(articles);
+        renderAdminContentLists();
+        loadAboutContentEditor();
+    } catch (e) {
+        showToast('Error cargando contenido institucional', 'error');
+    }
+}
+
+const defaultAboutContent = {
+    sectionTitle: 'Quiénes somos',
+    mission: { title: 'Formación con excelencia', text: 'Formar profesionales íntegros con excelencia académica, valores humanos sólidos y capacidad de transformar positivamente su entorno social y profesional mediante una educación innovadora y pertinente.' },
+    vision: { title: 'Líderes en innovación', text: 'Ser reconocida en el año 2030 como la institución educativa líder en innovación pedagógica y formación de competencias digitales, referente de calidad y transformación educativa en la región.' },
+    values: { title: 'Principios que nos guían', text: 'Nuestros valores orientan cada decisión e iniciativa institucional.', tags: ['Excelencia','Integridad','Innovación','Inclusión','Responsabilidad','Compromiso'] },
+    location: { address: 'Carrera 45 #76-103, Barranquilla, Atlántico, Colombia', schedule: 'Lun–Vie 7:00 AM – 6:00 PM · Sáb 8:00 AM – 12:00 PM' },
+    contact: { phone: '+57 (5) 360-0000', email: 'info@educat.edu.co', website: 'www.educat.edu.co' }
+};
+
+async function loadAboutContentEditor() {
+    try {
+        const res = await api('/api/config/about-content');
+        const data = res && res.value ? JSON.parse(res.value) : { ...defaultAboutContent };
+        document.getElementById('aboutSectionTitle').value = data.sectionTitle || '';
+        document.getElementById('aboutMissionTitle').value = data.mission?.title || '';
+        document.getElementById('aboutMissionText').value = data.mission?.text || '';
+        document.getElementById('aboutVisionTitle').value = data.vision?.title || '';
+        document.getElementById('aboutVisionText').value = data.vision?.text || '';
+        document.getElementById('aboutValuesTitle').value = data.values?.title || '';
+        document.getElementById('aboutValuesText').value = data.values?.text || '';
+        document.getElementById('aboutValuesTags').value = (data.values?.tags || []).join(', ');
+        document.getElementById('aboutAddress').value = data.location?.address || '';
+        document.getElementById('aboutSchedule').value = data.location?.schedule || '';
+        document.getElementById('aboutPhone').value = data.contact?.phone || '';
+        document.getElementById('aboutEmail').value = data.contact?.email || '';
+        document.getElementById('aboutWebsite').value = data.contact?.website || '';
+    } catch (e) {
+        console.error('Error cargando about content', e);
+    }
+}
+
+async function saveAboutContent() {
+    const payload = {
+        sectionTitle: document.getElementById('aboutSectionTitle').value.trim(),
+        mission: { title: document.getElementById('aboutMissionTitle').value.trim(), text: document.getElementById('aboutMissionText').value.trim() },
+        vision: { title: document.getElementById('aboutVisionTitle').value.trim(), text: document.getElementById('aboutVisionText').value.trim() },
+        values: { title: document.getElementById('aboutValuesTitle').value.trim(), text: document.getElementById('aboutValuesText').value.trim(), tags: document.getElementById('aboutValuesTags').value.split(',').map(s => s.trim()).filter(Boolean) },
+        location: { address: document.getElementById('aboutAddress').value.trim(), schedule: document.getElementById('aboutSchedule').value.trim() },
+        contact: { phone: document.getElementById('aboutPhone').value.trim(), email: document.getElementById('aboutEmail').value.trim(), website: document.getElementById('aboutWebsite').value.trim() }
+    };
+    console.log('Saving about-content payload:', payload);
+    try {
+        const res = await api('/api/config/about-content', { method: 'PUT', body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' } });
+        console.log('Save about-content response:', res);
+        showToast('Contenido institucional guardado correctamente', 'success');
+    } catch (e) {
+        console.error('Save about-content error:', e);
+        showToast('Error guardando contenido institucional', 'error');
+    }
+}
+
+function resetAboutContent() {
+    document.getElementById('aboutSectionTitle').value = defaultAboutContent.sectionTitle;
+    document.getElementById('aboutMissionTitle').value = defaultAboutContent.mission.title;
+    document.getElementById('aboutMissionText').value = defaultAboutContent.mission.text;
+    document.getElementById('aboutVisionTitle').value = defaultAboutContent.vision.title;
+    document.getElementById('aboutVisionText').value = defaultAboutContent.vision.text;
+    document.getElementById('aboutValuesTitle').value = defaultAboutContent.values.title;
+    document.getElementById('aboutValuesText').value = defaultAboutContent.values.text;
+    document.getElementById('aboutValuesTags').value = defaultAboutContent.values.tags.join(', ');
+    document.getElementById('aboutAddress').value = defaultAboutContent.location.address;
+    document.getElementById('aboutSchedule').value = defaultAboutContent.location.schedule;
+    document.getElementById('aboutPhone').value = defaultAboutContent.contact.phone;
+    document.getElementById('aboutEmail').value = defaultAboutContent.contact.email;
+    document.getElementById('aboutWebsite').value = defaultAboutContent.contact.website;
+}
+
+function renderAdminContentLists() {
+    renderAdminNewsList();
+    renderAdminEventsList();
+    renderAdminArticlesList();
+}
+
+function renderAdminNewsList() {
+    const host = document.getElementById('adminNewsList');
+    if (!host) return;
+    const items = contentStateAdmin.news;
+    if (!items.length) {
+        host.innerHTML = '<div class="muted" style="padding:12px 0">No hay noticias registradas.</div>';
+        return;
+    }
+    host.innerHTML = `<div class="table-wrap"><table class="simple-table">
+        <thead><tr><th>Título</th><th>Autor</th><th>Publicación</th><th style="width:120px">Acciones</th></tr></thead>
+        <tbody>${items.map(n => `<tr>
+            <td><strong>${escapeHtml(n.title)}</strong></td>
+            <td>${escapeHtml(n.author || '—')}</td>
+            <td>${formatContentDate(n.publishedAt)}</td>
+            <td style="display:flex;gap:6px">
+                <button class="btn btn-sm btn-outline" onclick="editContentItem('news', ${n.id})">Editar</button>
+                <button class="btn btn-sm btn-outline" onclick="deleteContentItem('news', ${n.id})">Eliminar</button>
+            </td>
+        </tr>`).join('')}</tbody>
+    </table></div>`;
+}
+
+function renderAdminEventsList() {
+    const host = document.getElementById('adminEventsList');
+    if (!host) return;
+    const items = contentStateAdmin.events;
+    if (!items.length) {
+        host.innerHTML = '<div class="muted" style="padding:12px 0">No hay eventos registrados.</div>';
+        return;
+    }
+    host.innerHTML = `<div class="table-wrap"><table class="simple-table">
+        <thead><tr><th>Título</th><th>Lugar</th><th>Fecha del evento</th><th style="width:120px">Acciones</th></tr></thead>
+        <tbody>${items.map(e => `<tr>
+            <td><strong>${escapeHtml(e.title)}</strong></td>
+            <td>${escapeHtml(e.location || '—')}</td>
+            <td>${formatContentDate(e.eventDate)}</td>
+            <td style="display:flex;gap:6px">
+                <button class="btn btn-sm btn-outline" onclick="editContentItem('event', ${e.id})">Editar</button>
+                <button class="btn btn-sm btn-outline" onclick="deleteContentItem('event', ${e.id})">Eliminar</button>
+            </td>
+        </tr>`).join('')}</tbody>
+    </table></div>`;
+}
+
+function renderAdminArticlesList() {
+    const host = document.getElementById('adminArticlesList');
+    if (!host) return;
+    const items = contentStateAdmin.articles;
+    if (!items.length) {
+        host.innerHTML = '<div class="muted" style="padding:12px 0">No hay artículos registrados.</div>';
+        return;
+    }
+    host.innerHTML = `<div class="table-wrap"><table class="simple-table">
+        <thead><tr><th>Título</th><th>Autor</th><th>Publicación</th><th style="width:120px">Acciones</th></tr></thead>
+        <tbody>${items.map(a => `<tr>
+            <td><strong>${escapeHtml(a.title)}</strong></td>
+            <td>${escapeHtml(a.author || '—')}</td>
+            <td>${formatContentDate(a.publishedAt)}</td>
+            <td style="display:flex;gap:6px">
+                <button class="btn btn-sm btn-outline" onclick="editContentItem('article', ${a.id})">Editar</button>
+                <button class="btn btn-sm btn-outline" onclick="deleteContentItem('article', ${a.id})">Eliminar</button>
+            </td>
+        </tr>`).join('')}</tbody>
+    </table></div>`;
+}
+
+function formatContentDate(dateStr) {
+    if (!dateStr) return '—';
+    const d = new Date(dateStr);
+    return isNaN(d) ? '—' : d.toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function openContentEditor(type, id) {
+    const isEdit = !!id;
+    let item = null;
+    if (isEdit) {
+        const list = type === 'news' ? contentStateAdmin.news : type === 'event' ? contentStateAdmin.events : contentStateAdmin.articles;
+        item = list.find(x => x.id === id);
+        if (!item) return showToast('Elemento no encontrado', 'error');
+    }
+
+    const title = isEdit ? 'Editar ' + typeLabel(type) : 'Crear ' + typeLabel(type);
+    const fields = buildContentFormFields(type, item);
+    openModal(title, `
+        <div style="display:flex;flex-direction:column;gap:14px">
+            ${fields}
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+                <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+                <button class="btn btn-teal" onclick="saveContentItem('${type}', ${isEdit ? id : 'null'})">Guardar</button>
+            </div>
+        </div>
+    `, 'lg');
+}
+
+function typeLabel(type) {
+    return type === 'news' ? 'noticia' : type === 'event' ? 'evento' : 'artículo';
+}
+
+function buildContentFormFields(type, item) {
+    const title = escapeHtml(item ? item.title : '');
+    const cover = escapeHtml(item ? item.coverImage || '' : '');
+    const location = escapeHtml(item && item.location ? item.location : '');
+    const eventDate = item && item.eventDate ? item.eventDate.substring(0, 16) : '';
+    const author = escapeHtml(item && item.author ? item.author : '');
+    const summary = escapeHtml(item && item.summary ? item.summary : '');
+    const content = escapeHtml(item && item.content ? item.content : '');
+
+    let html = '';
+    html += `<div class="form-group"><label class="form-label">Título</label><input class="form-input" id="contentTitle" value="${title}" placeholder="Título"></div>`;
+
+    html += `<div class="form-group">
+        <label class="form-label">Portada (imagen)</label>
+        <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
+            <input type="file" class="form-input" id="contentCoverFile" accept="image/*" style="flex:1;min-width:200px" onchange="handleContentCoverPreview()">
+            <input type="hidden" id="contentCover" value="${cover}">
+        </div>
+        <div id="contentCoverPreviewWrap" style="margin-top:8px;display:${cover ? 'block' : 'none'}">
+            <img id="contentCoverPreview" src="${cover}" style="max-width:100%;max-height:180px;border-radius:8px;border:1px solid rgba(11,31,58,0.1)" onerror="this.style.display='none'">
+        </div>
+    </div>`;
+
+    if (type === 'event') {
+        html += `<div class="form-row"><div class="form-group"><label class="form-label">Lugar</label><input class="form-input" id="contentLocation" value="${location}" placeholder="Lugar del evento"></div><div class="form-group"><label class="form-label">Fecha y hora del evento</label><input class="form-input" id="contentEventDate" type="datetime-local" value="${eventDate}"></div></div>`;
+    } else {
+        html += `<div class="form-row"><div class="form-group"><label class="form-label">Autor</label><input class="form-input" id="contentAuthor" value="${author}" placeholder="Nombre del autor"></div></div>`;
+        html += `<div class="form-group"><label class="form-label">Resumen</label><textarea class="form-input" id="contentSummary" rows="2" placeholder="Breve resumen">${summary}</textarea></div>`;
+        html += `<div class="form-group"><label class="form-label">Contenido</label><textarea class="form-input" id="contentBody" rows="6" placeholder="Cuerpo completo">${content}</textarea></div>`;
+    }
+    return html;
+}
+
+function handleContentCoverPreview() {
+    const input = document.getElementById('contentCoverFile');
+    const preview = document.getElementById('contentCoverPreview');
+    const wrap = document.getElementById('contentCoverPreviewWrap');
+    if (input && input.files && input.files[0]) {
+        const reader = new FileReader();
+        reader.onload = e => {
+            if (preview) { preview.src = e.target.result; preview.style.display = ''; }
+            if (wrap) wrap.style.display = 'block';
+        };
+        reader.readAsDataURL(input.files[0]);
+    }
+}
+
+async function uploadContentCoverFile() {
+    const input = document.getElementById('contentCoverFile');
+    if (!input || !input.files || !input.files[0]) return null;
+    const file = input.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('entityType', 'CONTENT');
+    formData.append('entityId', 'temp');
+    formData.append('fieldName', 'coverImage');
+
+    const res = await fetch(API + '/api/files/upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: formData
+    });
+    if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || ('HTTP ' + res.status));
+    }
+    const stored = await res.json();
+    return stored && stored.id ? (API + '/api/files/view/' + stored.id) : null;
+}
+
+async function saveContentItem(type, id) {
+    const title = document.getElementById('contentTitle').value.trim();
+    if (!title) return showToast('El título es obligatorio', 'error');
+
+    let coverImage = document.getElementById('contentCover').value.trim();
+    try {
+        const uploadedUrl = await uploadContentCoverFile();
+        if (uploadedUrl) coverImage = uploadedUrl;
+    } catch (e) {
+        return showToast('Error subiendo imagen: ' + (e.message || ''), 'error');
+    }
+
+    let payload = { title, coverImage };
+    let endpoint = '';
+    let method = id ? 'PUT' : 'POST';
+
+    if (type === 'news') {
+        payload.content = document.getElementById('contentBody').value;
+        payload.summary = document.getElementById('contentSummary').value;
+        payload.author = document.getElementById('contentAuthor').value;
+        endpoint = id ? '/api/news/' + id : '/api/news';
+    } else if (type === 'article') {
+        payload.content = document.getElementById('contentBody').value;
+        payload.summary = document.getElementById('contentSummary').value;
+        payload.author = document.getElementById('contentAuthor').value;
+        endpoint = id ? '/api/articles/' + id : '/api/articles';
+    } else if (type === 'event') {
+        payload.location = document.getElementById('contentLocation').value;
+        payload.eventDate = document.getElementById('contentEventDate').value;
+        endpoint = id ? '/api/events/' + id : '/api/events';
+    }
+
+    try {
+        await api(endpoint, { method, headers: headers(), body: JSON.stringify(payload) });
+        showToast((id ? 'Actualizado' : 'Creado') + ' correctamente', 'success');
+        closeModal();
+        await loadContentSection();
+    } catch (e) {
+        showToast('Error al guardar: ' + (e.message || ''), 'error');
+    }
+}
+
+async function editContentItem(type, id) {
+    openContentEditor(type, id);
+}
+
+async function deleteContentItem(type, id) {
+    openConfirmModal('Confirmar eliminación', '¿Eliminar este ' + typeLabel(type) + '? Esta acción no se puede deshacer.', async () => {
+        let endpoint = '';
+        if (type === 'news') endpoint = '/api/news/' + id;
+        else if (type === 'event') endpoint = '/api/events/' + id;
+        else if (type === 'article') endpoint = '/api/articles/' + id;
+        try {
+            await api(endpoint, { method: 'DELETE' });
+            showToast('Eliminado correctamente', 'success');
+            await loadContentSection();
+        } catch (e) {
+            showToast('Error al eliminar: ' + (e.message || ''), 'error');
+        }
+    }, 'Eliminar');
 }
 
 init();

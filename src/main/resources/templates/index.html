@@ -96,107 +96,33 @@
         </div>
         <h2 class="section-title">Mantente informado<br>y conectado</h2>
     </div>
-    <div class="comm-grid">
-        <div class="comm-card reveal reveal-delay-1">
-            <div class="comm-card-top">
-                <div class="comm-card-meta">
-                    <div class="comm-card-type">Foros</div>
-                    <div class="comm-card-count" id="forum-count">—</div>
-                </div>
-                <div class="comm-icon-wrap">
-                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                </div>
-            </div>
-            <div class="comm-card-body">
-                <div class="comm-card-title">Foros de Discusión</div>
-                <p class="comm-card-desc">Espacios colaborativos para el intercambio académico y el debate institucional.</p>
-                <div class="comm-items-list" id="forums-list">
-                    <div class="loading-text">Cargando foros...</div>
-                </div>
-            </div>
+    <div class="comm-grid" id="comm-grid">
+        <!-- Noticias -->
+        <div class="comm-category-header reveal" id="news-header" style="display:none">
+            <div class="comm-category-line"></div>
+            <div class="comm-category-title">Noticias Institucionales</div>
+            <div class="comm-card-count" id="news-count">—</div>
         </div>
+        <div id="news-items"></div>
+        <button class="load-more-btn reveal" id="news-load-more" style="display:none">Leer más noticias</button>
 
-        <div class="comm-card reveal reveal-delay-2">
-            <div class="comm-card-top">
-                <div class="comm-card-meta">
-                    <div class="comm-card-type">Noticias</div>
-                    <div class="comm-card-count" id="news-count">—</div>
-                </div>
-                <div class="comm-icon-wrap">
-                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10l4 4v10a2 2 0 01-2 2z"/><path d="M17 20V14H7v6M7 4v4h8"/></svg>
-                </div>
-            </div>
-            <div class="comm-card-body">
-                <div class="comm-card-title">Noticias Institucionales</div>
-                <p class="comm-card-desc">Mantente al día con los últimos comunicados y novedades de la institución.</p>
-                <div class="comm-items-list" id="news-list">
-                    <div class="loading-text">Cargando noticias...</div>
-                </div>
-            </div>
+        <!-- Artículos -->
+        <div class="comm-category-header reveal" id="articles-header" style="display:none">
+            <div class="comm-category-line"></div>
+            <div class="comm-category-title">Artículos Académicos</div>
+            <div class="comm-card-count" id="articles-count">—</div>
         </div>
+        <div id="articles-items"></div>
+        <button class="load-more-btn reveal" id="articles-load-more" style="display:none">Leer más artículos</button>
 
-        <div class="comm-card reveal reveal-delay-3">
-            <div class="comm-card-top">
-                <div class="comm-card-meta">
-                    <div class="comm-card-type">Artículos</div>
-                    <div class="comm-card-count">3</div>
-                </div>
-                <div class="comm-icon-wrap">
-                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-                </div>
-            </div>
-            <div class="comm-card-body">
-                <div class="comm-card-title">Artículos Académicos</div>
-                <p class="comm-card-desc">Recursos educativos y publicaciones elaboradas por nuestra comunidad docente.</p>
-                <div class="comm-items-list">
-                    <div class="comm-item">
-                        <div class="comm-item-dot"></div>
-                        <span class="comm-item-text">Guía de metodologías activas de aprendizaje</span>
-                    </div>
-                    <div class="comm-item">
-                        <div class="comm-item-dot"></div>
-                        <span class="comm-item-text">Tendencias en educación digital 2025</span>
-                    </div>
-                    <div class="comm-item">
-                        <div class="comm-item-dot"></div>
-                        <span class="comm-item-text">Competencias del siglo XXI</span>
-                    </div>
-                </div>
-            </div>
+        <!-- Eventos -->
+        <div class="comm-category-header reveal" id="events-header" style="display:none">
+            <div class="comm-category-line"></div>
+            <div class="comm-category-title">Eventos Institucionales</div>
+            <div class="comm-card-count" id="events-count">—</div>
         </div>
-
-        <div class="comm-card reveal reveal-delay-4">
-            <div class="comm-card-top">
-                <div class="comm-card-meta">
-                    <div class="comm-card-type">Eventos</div>
-                    <div class="comm-card-count">3</div>
-                </div>
-                <div class="comm-icon-wrap">
-                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                </div>
-            </div>
-            <div class="comm-card-body">
-                <div class="comm-card-title">Eventos Institucionales</div>
-                <p class="comm-card-desc">Calendario de actividades académicas, culturales y extracurriculares.</p>
-                <div class="comm-items-list">
-                    <div class="comm-item">
-                        <div class="comm-item-dot"></div>
-                        <span class="comm-item-text">Semana de la Ciencia y la Tecnología</span>
-                        <span class="comm-item-date">May 12</span>
-                    </div>
-                    <div class="comm-item">
-                        <div class="comm-item-dot"></div>
-                        <span class="comm-item-text">Feria de Proyectos Académicos</span>
-                        <span class="comm-item-date">Jun 3</span>
-                    </div>
-                    <div class="comm-item">
-                        <div class="comm-item-dot"></div>
-                        <span class="comm-item-text">Ceremonia de Grados</span>
-                        <span class="comm-item-date">Jul 15</span>
-                    </div>
-                </div>
-            </div>
-        </div>
+        <div id="events-items"></div>
+        <button class="load-more-btn reveal" id="events-load-more" style="display:none">Ver más eventos</button>
     </div>
 </section>
 
@@ -207,24 +133,24 @@
             <div class="section-kicker-line"></div>
             <span>Información Institucional</span>
         </div>
-        <h2 class="section-title light">Quiénes somos</h2>
+        <h2 class="section-title light" id="instSectionTitle">Quiénes somos</h2>
     </div>
-    <div class="inst-grid">
-        <div class="inst-card reveal reveal-delay-1">
+    <div class="inst-grid" id="instGrid">
+        <div class="inst-card reveal reveal-delay-1" id="instMissionCard">
             <div class="inst-card-label">Misión</div>
-            <div class="inst-card-title">Formación con excelencia</div>
-            <p class="inst-card-text">Formar profesionales íntegros con excelencia académica, valores humanos sólidos y capacidad de transformar positivamente su entorno social y profesional mediante una educación innovadora y pertinente.</p>
+            <div class="inst-card-title" id="instMissionTitle">Formación con excelencia</div>
+            <p class="inst-card-text" id="instMissionText">Formar profesionales íntegros con excelencia académica, valores humanos sólidos y capacidad de transformar positivamente su entorno social y profesional mediante una educación innovadora y pertinente.</p>
         </div>
-        <div class="inst-card reveal reveal-delay-2">
+        <div class="inst-card reveal reveal-delay-2" id="instVisionCard">
             <div class="inst-card-label">Visión</div>
-            <div class="inst-card-title">Líderes en innovación</div>
-            <p class="inst-card-text">Ser reconocida en el año 2030 como la institución educativa líder en innovación pedagógica y formación de competencias digitales, referente de calidad y transformación educativa en la región.</p>
+            <div class="inst-card-title" id="instVisionTitle">Líderes en innovación</div>
+            <p class="inst-card-text" id="instVisionText">Ser reconocida en el año 2030 como la institución educativa líder en innovación pedagógica y formación de competencias digitales, referente de calidad y transformación educativa en la región.</p>
         </div>
-        <div class="inst-card reveal reveal-delay-3">
+        <div class="inst-card reveal reveal-delay-3" id="instValuesCard">
             <div class="inst-card-label">Valores</div>
-            <div class="inst-card-title">Principios que nos guían</div>
-            <p class="inst-card-text">Nuestros valores orientan cada decisión e iniciativa institucional.</p>
-            <div class="inst-values">
+            <div class="inst-card-title" id="instValuesTitle">Principios que nos guían</div>
+            <p class="inst-card-text" id="instValuesText">Nuestros valores orientan cada decisión e iniciativa institucional.</p>
+            <div class="inst-values" id="instValuesTags">
                 <span class="inst-value-tag">Excelencia</span>
                 <span class="inst-value-tag">Integridad</span>
                 <span class="inst-value-tag">Innovación</span>
@@ -233,7 +159,7 @@
                 <span class="inst-value-tag">Compromiso</span>
             </div>
         </div>
-        <div class="inst-card full reveal">
+        <div class="inst-card full reveal" id="instContactCard">
             <div>
                 <div class="inst-card-label">Ubicación</div>
                 <div class="inst-card-title">Encuéntranos</div>
@@ -243,13 +169,13 @@
                         <div class="inst-contact-icon">
                             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
                         </div>
-                        <span class="inst-contact-text">Carrera 45 #76-103, Barranquilla, Atlántico, Colombia</span>
+                        <span class="inst-contact-text" id="instAddress">Carrera 45 #76-103, Barranquilla, Atlántico, Colombia</span>
                     </div>
                     <div class="inst-contact-item">
                         <div class="inst-contact-icon">
                             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                         </div>
-                        <span class="inst-contact-text">Lun–Vie 7:00 AM – 6:00 PM &nbsp;·&nbsp; Sáb 8:00 AM – 12:00 PM</span>
+                        <span class="inst-contact-text" id="instSchedule">Lun–Vie 7:00 AM – 6:00 PM &nbsp;·&nbsp; Sáb 8:00 AM – 12:00 PM</span>
                     </div>
                 </div>
             </div>
@@ -261,19 +187,19 @@
                         <div class="inst-contact-icon">
                             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
                         </div>
-                        <span class="inst-contact-text">+57 (5) 360-0000</span>
+                        <span class="inst-contact-text" id="instPhone">+57 (5) 360-0000</span>
                     </div>
                     <div class="inst-contact-item">
                         <div class="inst-contact-icon">
                             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
                         </div>
-                        <span class="inst-contact-text">info@educat.edu.co</span>
+                        <span class="inst-contact-text" id="instEmail">info@educat.edu.co</span>
                     </div>
                     <div class="inst-contact-item">
                         <div class="inst-contact-icon">
                             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
                         </div>
-                        <span class="inst-contact-text">www.educat.edu.co</span>
+                        <span class="inst-contact-text" id="instWebsite">www.educat.edu.co</span>
                     </div>
                 </div>
             </div>
@@ -392,6 +318,360 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="/js/index.js"></script>
+<script>
+const API = '';
+console.log('>>> EDUCAT INDEX JS INLINE CARGADO <<<');
+
+function showToast(msg, type) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast' + (type ? ' ' + type : '') + ' show';
+    setTimeout(() => { t.className = 'toast'; }, 3500);
+}
+
+function animateCount(el, target, suffix) {
+    let current = 0;
+    const duration = 1400;
+    const step = target / 60;
+    const timer = setInterval(() => {
+        current = Math.min(current + step, target);
+        el.textContent = Math.floor(current) + (suffix || '');
+        if (current >= target) clearInterval(timer);
+    }, duration / 60);
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d)) return '';
+    return d.toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function formatDateTime(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d)) return '';
+    return d.toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' }) + ' · ' +
+           d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+}
+
+function renderContentCard(item, type) {
+    const t = type === 'articles' ? 'article' : type === 'events' ? 'event' : type;
+    const cover = item.coverImage || '';
+    const title = escapeHtml(item.title || 'Sin título');
+    const date = t === 'event'
+        ? formatDateTime(item.eventDate || item.createdAt)
+        : formatDate(item.publishedAt || item.createdAt);
+    const location = escapeHtml(item.location || '');
+    const summary = escapeHtml((item.summary || '').substring(0, 90));
+
+    const btnStyle = 'margin-top:auto;padding:10px 18px;font-size:13px;font-weight:600;letter-spacing:0.3px;color:#fff;background:#0b2138;border:none;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;align-self:flex-start;';
+
+    let meta = '';
+    let locationHtml = '';
+    let actionHtml = '';
+    if (t === 'news') {
+        meta = `<div class="comm-card-date">${date}</div>`;
+        actionHtml = `<button style="${btnStyle}" class="comm-card-btn" data-id="${item.id}" data-type="${t}">Leer más
+            <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>`;
+    } else if (t === 'article') {
+        meta = `<div class="comm-card-date">${date}</div>`;
+        actionHtml = `<button style="${btnStyle}" class="comm-card-btn" data-id="${item.id}" data-type="${t}">Leer más
+            <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>`;
+    } else if (t === 'event') {
+        meta = `<div class="comm-card-date">${date}</div>`;
+        if (location) {
+            locationHtml = `<div class="comm-card-meta" style="text-align:left;"><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="display:inline-block;vertical-align:middle;margin-right:4px;"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>${location}</div>`;
+        }
+        actionHtml = `<button style="${btnStyle}" class="comm-card-btn" data-id="${item.id}" data-type="${t}">Ver detalles
+            <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>`;
+    }
+
+    const imgHtml = cover
+        ? `<img class="comm-card-img" src="${escapeHtml(cover)}" alt="${title}" loading="lazy" onerror="this.style.display='none'">`
+        : `<div class="comm-card-img" style="background:linear-gradient(135deg,#eef4fb,#dbeafe)"></div>`;
+
+    return `<div class="comm-card comm-card--content reveal">
+        ${imgHtml}
+        <div class="comm-card-body">
+            ${meta}
+            <div class="comm-card-title">${title}</div>
+            ${locationHtml}
+            ${t !== 'event' && summary ? `<div class="comm-card-meta">${summary}...</div>` : ''}
+            ${actionHtml}
+        </div>
+    </div>`;
+}
+
+function bindContentCardButtons() {
+    document.querySelectorAll('.comm-card-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = btn.dataset.id;
+            const type = btn.dataset.type;
+            openContentModal(type, id);
+        });
+    });
+}
+
+function openContentModal(type, id) {
+    let endpoint = '';
+    if (type === 'news') endpoint = `/api/news/${id}`;
+    else if (type === 'article') endpoint = `/api/articles/${id}`;
+    else if (type === 'event') endpoint = `/api/events/${id}`;
+
+    fetch(API + endpoint, { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            if (!data) return showToast('No se pudo cargar el contenido', 'error');
+
+            const title = escapeHtml(data.title || '');
+            const cover = data.coverImage
+                ? `<div style="text-align:center;margin-bottom:20px"><img src="${escapeHtml(data.coverImage)}" style="max-width:100%;height:auto;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1)" onerror="this.style.display='none'"></div>`
+                : '';
+
+            if (type === 'event') {
+                const location = escapeHtml(data.location || '');
+                const eventDateTime = formatDateTime(data.eventDate);
+                const body = (data.content || '').replace(/\n/g, '<br>');
+                const modalHtml = `<div style="max-width:720px">
+                    ${cover}
+                    <h2 style="font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:700;margin-bottom:14px;color:var(--text-dark)">${title}</h2>
+                    <div style="font-size:14px;color:var(--text-body);line-height:1.75;margin-bottom:10px">
+                        <strong>Lugar:</strong> ${location || 'Por definir'}<br>
+                        <strong>Fecha y hora:</strong> ${eventDateTime || 'Por definir'}
+                    </div>
+                    ${body ? `<div style="font-size:14px;color:var(--text-body);line-height:1.75;margin-top:14px;border-top:1px solid #eee;padding-top:14px">${body}</div>` : ''}
+                    <div style="display:flex;justify-content:flex-end;margin-top:20px">
+                        <button class="btn btn-outline" onclick="closeContentModal()" style="padding:8px 18px;font-size:13px">Cerrar</button>
+                    </div>
+                </div>`;
+                openModal(title, modalHtml);
+                return;
+            }
+
+            const body = (data.content || '').replace(/\n/g, '<br>');
+            const date = formatDate(data.publishedAt || data.createdAt);
+            const author = escapeHtml(data.author || '');
+            const modalHtml = `<div style="max-width:720px">
+                ${cover}
+                <div style="font-size:12px;color:var(--text-light);margin-bottom:6px">${date}${author ? ' · Por ' + author : ''}</div>
+                <h2 style="font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:700;margin-bottom:14px;color:var(--text-dark)">${title}</h2>
+                <div style="font-size:14px;color:var(--text-body);line-height:1.75">${body}</div>
+                <div style="display:flex;justify-content:flex-end;margin-top:20px">
+                    <button class="btn btn-outline" onclick="closeContentModal()" style="padding:8px 18px;font-size:13px">Cerrar</button>
+                </div>
+            </div>`;
+            openModal(title, modalHtml);
+        })
+        .catch(() => showToast('Error de conexión', 'error'));
+}
+
+function openModal(title, bodyHtml) {
+    let backdrop = document.getElementById('contentModalBackdrop');
+    if (!backdrop) {
+        backdrop = document.createElement('div');
+        backdrop.id = 'contentModalBackdrop';
+        backdrop.innerHTML = `<div id="contentModalDialog" style="background:#fff;padding:28px;border-radius:12px;max-width:760px;width:90%;max-height:90vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,0.25);position:relative">
+            <button onclick="closeContentModal()" style="position:absolute;top:14px;right:14px;background:none;border:none;cursor:pointer;font-size:20px;color:var(--text-light)">&times;</button>
+            <div id="contentModalBody"></div>
+        </div>`;
+        backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(11,31,58,0.55);display:flex;align-items:center;justify-content:center;z-index:10000;opacity:0;transition:opacity 0.25s ease';
+        document.body.appendChild(backdrop);
+    }
+    document.getElementById('contentModalBody').innerHTML = bodyHtml;
+    requestAnimationFrame(() => backdrop.style.opacity = '1');
+    backdrop.style.display = 'flex';
+    backdrop.onclick = (e) => { if (e.target === backdrop) closeContentModal(); };
+}
+
+function closeContentModal() {
+    const backdrop = document.getElementById('contentModalBackdrop');
+    if (!backdrop) return;
+    backdrop.style.opacity = '0';
+    setTimeout(() => { backdrop.style.display = 'none'; }, 250);
+}
+
+const contentState = {
+    news: { items: [], visible: 3 },
+    events: { items: [], visible: 3 },
+    articles: { items: [], visible: 3 }
+};
+
+function renderSection(type, itemsContainerId, headerId, countId, moreBtnId) {
+    const itemsContainer = document.getElementById(itemsContainerId);
+    const header = document.getElementById(headerId);
+    const countEl = document.getElementById(countId);
+    const moreBtn = document.getElementById(moreBtnId);
+    const state = contentState[type];
+    if (!itemsContainer) return;
+
+    itemsContainer.innerHTML = '';
+
+    if (!state.items.length) {
+        if (header) header.style.display = 'none';
+        if (moreBtn) moreBtn.style.display = 'none';
+        if (countEl) countEl.textContent = '0';
+        return;
+    }
+
+    if (header) header.style.display = '';
+    if (countEl) countEl.textContent = state.items.length;
+
+    const toShow = state.items.slice(0, state.visible);
+    itemsContainer.innerHTML = toShow.map(item => renderContentCard(item, type)).join('');
+    bindContentCardButtons();
+
+    if (moreBtn) {
+        moreBtn.style.display = state.items.length > state.visible ? '' : 'none';
+        moreBtn.onclick = () => {
+            state.visible = state.items.length;
+            renderSection(type, itemsContainerId, headerId, countId, moreBtnId);
+            checkReveal();
+        };
+    }
+}
+
+async function loadInstitutionalContent() {
+    try {
+        const res = await fetch(API + '/api/config/about-content', { credentials: 'include' });
+        console.log('About-content status:', res.status);
+        if (!res.ok) return;
+        const data = await res.json();
+        console.log('About-content data:', data);
+        if (!data.value) { console.warn('About-content value is empty'); return; }
+        const content = JSON.parse(data.value);
+        console.log('About-content parsed:', content);
+        const setText = (id, text) => {
+            const el = document.getElementById(id);
+            if (el && text !== undefined && text !== null) el.textContent = text;
+        };
+        setText('instSectionTitle', content.sectionTitle);
+        setText('instMissionTitle', content.mission?.title);
+        setText('instMissionText', content.mission?.text);
+        setText('instVisionTitle', content.vision?.title);
+        setText('instVisionText', content.vision?.text);
+        setText('instValuesTitle', content.values?.title);
+        setText('instValuesText', content.values?.text);
+        const tagsContainer = document.getElementById('instValuesTags');
+        if (tagsContainer && content.values?.tags?.length) {
+            tagsContainer.innerHTML = content.values.tags.map(t => `<span class="inst-value-tag">${escapeHtml(t)}</span>`).join('');
+        }
+        setText('instAddress', content.location?.address);
+        setText('instSchedule', content.location?.schedule);
+        setText('instPhone', content.contact?.phone);
+        setText('instEmail', content.contact?.email);
+        setText('instWebsite', content.contact?.website);
+    } catch (e) {
+        console.error('Error cargando contenido institucional', e);
+    }
+}
+
+async function loadPublicData() {
+    try {
+        const [newsRes, eventsRes, articlesRes] = await Promise.allSettled([
+            fetch(API + '/api/news', { credentials: 'include' }),
+            fetch(API + '/api/events', { credentials: 'include' }),
+            fetch(API + '/api/articles', { credentials: 'include' })
+        ]);
+
+        if (newsRes.status === 'fulfilled' && newsRes.value.ok) {
+            contentState.news.items = await newsRes.value.json();
+        }
+        if (eventsRes.status === 'fulfilled' && eventsRes.value.ok) {
+            contentState.events.items = await eventsRes.value.json();
+        }
+        if (articlesRes.status === 'fulfilled' && articlesRes.value.ok) {
+            contentState.articles.items = await articlesRes.value.json();
+        }
+
+        renderSection('news', 'news-items', 'news-header', 'news-count', 'news-load-more');
+        renderSection('events', 'events-items', 'events-header', 'events-count', 'events-load-more');
+        renderSection('articles', 'articles-items', 'articles-header', 'articles-count', 'articles-load-more');
+
+        setTimeout(checkReveal, 100);
+    } catch (e) {
+        document.getElementById('news-items').innerHTML = '<div class="loading-text">Sin conexión al servidor</div>';
+        document.getElementById('events-items').innerHTML = '<div class="loading-text">Sin conexión al servidor</div>';
+        document.getElementById('articles-items').innerHTML = '<div class="loading-text">Sin conexión al servidor</div>';
+    }
+}
+
+function checkReveal() {
+    document.querySelectorAll('.reveal').forEach(el => {
+        const rect = el.getBoundingClientRect();
+        if (rect.top < window.innerHeight - 80) el.classList.add('visible');
+    });
+}
+
+function getStoredAuth() {
+    return localStorage.getItem('educat_auth') || sessionStorage.getItem('educat_auth') || '';
+}
+
+function resolveAccessTarget(roleValue, dashboardValue) {
+    const role = String(roleValue || '').toLowerCase();
+    const dashboard = String(dashboardValue || '').trim();
+    const targetDashboard = dashboard || ({
+        teacher: '/teacher-dashboard',
+        student: '/student-dashboard',
+        staff: '/admin-dashboard'
+    }[role] || '/');
+    return {
+        role,
+        dashboard: targetDashboard,
+        login: '/login?role=' + encodeURIComponent(role) + '&redirect=' + encodeURIComponent(targetDashboard)
+    };
+}
+
+function handleAccessCardClick(ev) {
+    const card = ev.currentTarget;
+    const target = resolveAccessTarget(card.dataset.role, card.dataset.dashboard);
+    if (getStoredAuth()) {
+        ev.preventDefault();
+        window.location.href = target.dashboard;
+        return;
+    }
+    card.setAttribute('href', target.login);
+}
+
+window.addEventListener('scroll', () => {
+    document.getElementById('navbar').classList.toggle('scrolled', window.scrollY > 40);
+    checkReveal();
+});
+
+document.getElementById('hamburger').addEventListener('click', () => {
+    document.getElementById('mobileMenu').classList.toggle('open');
+});
+
+document.querySelectorAll('.mobile-menu a').forEach(a => {
+    a.addEventListener('click', () => {
+        document.getElementById('mobileMenu').classList.remove('open');
+    });
+});
+
+window.addEventListener('load', () => {
+    checkReveal();
+    loadPublicData();
+    loadInstitutionalContent();
+    setTimeout(() => {
+        animateCount(document.getElementById('countStudents'), 1240, '+');
+        animateCount(document.getElementById('countCourses'), 87, '');
+        animateCount(document.getElementById('countTeachers'), 64, '');
+    }, 1000);
+});
+
+document.querySelectorAll('.access-card[data-role]').forEach(card => {
+    card.addEventListener('click', handleAccessCardClick);
+});
+</script>
 </body>
 </html>

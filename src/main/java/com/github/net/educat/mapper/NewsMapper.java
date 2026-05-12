@@ -12,6 +12,10 @@ public class NewsMapper {
                 .id(news.getId())
                 .title(news.getTitle())
                 .content(news.getContent())
+                .summary(news.getSummary())
+                .coverImage(news.getCoverImage())
+                .author(news.getAuthor())
+                .publishedAt(news.getPublishedAt())
                 .createdAt(news.getCreatedAt())
                 .build();
     }
@@ -19,6 +23,9 @@ public class NewsMapper {
         return News.builder()
                 .title(request.getTitle())
                 .content(request.getContent())
+                .summary(request.getSummary())
+                .coverImage(request.getCoverImage())
+                .author(request.getAuthor())
                 .build();
     }
 }

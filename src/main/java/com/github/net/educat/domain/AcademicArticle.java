@@ -5,9 +5,9 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "news")
+@Table(name = "academic_articles")
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
-public class News {
+public class AcademicArticle {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
     @Column(nullable = false)

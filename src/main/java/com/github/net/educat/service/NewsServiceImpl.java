@@ -32,6 +32,7 @@ public class NewsServiceImpl implements NewsService {
     @Override
     public NewsResponse save(NewsRequest request) {
         News news = newsMapper.toEntity(request);
+        news.setPublishedAt(LocalDateTime.now());
         news.setCreatedAt(LocalDateTime.now());
         return newsMapper.toResponse(newsRepository.save(news));
     }
@@ -41,6 +42,9 @@ public class NewsServiceImpl implements NewsService {
                 .orElseThrow(() -> new EntityNotFoundException("News not found: " + id));
         news.setTitle(request.getTitle());
         news.setContent(request.getContent());
+        news.setSummary(request.getSummary());
+        news.setCoverImage(request.getCoverImage());
+        news.setAuthor(request.getAuthor());
         return newsMapper.toResponse(newsRepository.save(news));
     }
     @Override

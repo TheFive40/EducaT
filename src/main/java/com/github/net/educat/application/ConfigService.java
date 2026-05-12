@@ -17,4 +17,6 @@ public interface ConfigService {
     ConfigResponse saveCourseGrades(String courseGrades);
     ConfigResponse getStudentGrades();
     ConfigResponse saveStudentGrades(String studentGrades);
+    ConfigResponse getAboutContent();
+    ConfigResponse saveAboutContent(String aboutContent);
 }

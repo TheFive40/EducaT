@@ -35,4 +35,6 @@ public class InstitutionSettings {
     private String studentGradesJson;
     @Column(name = "storage_settings_json", columnDefinition = "TEXT")
     private String storageSettingsJson;
+    @Column(name = "about_content_json", columnDefinition = "TEXT")
+    private String aboutContentJson;
 }

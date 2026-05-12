@@ -81,4 +81,14 @@ public class ConfigController {
     public ResponseEntity<ConfigResponse> saveStudentGrades(@RequestBody String studentGrades) {
         return ResponseEntity.ok(configService.saveStudentGrades(studentGrades));
     }
+
+    @GetMapping("/about-content")
+    public ResponseEntity<ConfigResponse> getAboutContent() {
+        return ResponseEntity.ok(configService.getAboutContent());
+    }
+
+    @PutMapping("/about-content")
+    public ResponseEntity<ConfigResponse> saveAboutContent(@RequestBody String aboutContent) {
+        return ResponseEntity.ok(configService.saveAboutContent(aboutContent));
+    }
 }

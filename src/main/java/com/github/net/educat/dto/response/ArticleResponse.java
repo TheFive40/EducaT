@@ -4,7 +4,7 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
-public class NewsResponse {
+public class ArticleResponse {
     private Integer id;
     private String title;
     private String content;

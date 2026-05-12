@@ -2,14 +2,14 @@ package com.github.net.educat.dto.request;
 
 import jakarta.validation.constraints.*;
 import lombok.*;
+import java.time.LocalDateTime;
 
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
-public class NewsRequest {
+public class EventRequest {
     @NotBlank
     private String title;
-    @NotBlank
-    private String content;
-    private String summary;
     private String coverImage;
-    private String author;
+    private String location;
+    @NotNull
+    private LocalDateTime eventDate;
 }

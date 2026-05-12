@@ -82,6 +82,15 @@ public class AccessControlServiceImpl implements AccessControlService {
         labels.put("bienestar.psicologia.ver-citas", "Bienestar Psicologia - Ver citas agendadas");
         labels.put("evaluacion.ver-reporte-docente", "Evaluacion - Ver reporte profesoral propio");
         labels.put("evaluacion.ver-reporte-admin", "Evaluacion - Ver reporte general (admin/coordinador)");
+        labels.put("news.create", "Noticias - Crear");
+        labels.put("news.edit", "Noticias - Editar");
+        labels.put("news.delete", "Noticias - Eliminar");
+        labels.put("events.create", "Eventos - Crear");
+        labels.put("events.edit", "Eventos - Editar");
+        labels.put("events.delete", "Eventos - Eliminar");
+        labels.put("articles.create", "Articulos - Crear");
+        labels.put("articles.edit", "Articulos - Editar");
+        labels.put("articles.delete", "Articulos - Eliminar");
         labels.put(P_ADMIN, "Acceso a Portal Administrador");
         labels.put(P_TEACHER, "Acceso a Portal Docente");
         labels.put(P_STUDENT, "Acceso a Portal Estudiante");

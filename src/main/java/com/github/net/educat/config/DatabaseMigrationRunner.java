@@ -65,5 +65,22 @@ public class DatabaseMigrationRunner implements CommandLineRunner {
         } catch (Exception e) {
             // Ignorar si ya existe o la tabla no existe aún
         }
+        try {
+            String sqlAboutContent = """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'institution_settings'
+                          AND column_name = 'about_content_json'
+                    ) THEN
+                        ALTER TABLE institution_settings ADD COLUMN about_content_json TEXT;
+                    END IF;
+                END $$;
+                """;
+            jdbcTemplate.execute(sqlAboutContent);
+        } catch (Exception e) {
+            // Ignorar si ya existe o la tabla no existe aún
+        }
     }
 }

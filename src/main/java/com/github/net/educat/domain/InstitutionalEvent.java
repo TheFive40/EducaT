@@ -5,21 +5,17 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "news")
+@Table(name = "institutional_events")
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
-public class News {
+public class InstitutionalEvent {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
     @Column(nullable = false)
     private String title;
-    @Column(columnDefinition = "TEXT")
-    private String content;
-    @Column(columnDefinition = "TEXT")
-    private String summary;
     private String coverImage;
-    private String author;
-    @Column(name = "published_at")
-    private LocalDateTime publishedAt;
+    private String location;
+    @Column(name = "event_date")
+    private LocalDateTime eventDate;
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 }

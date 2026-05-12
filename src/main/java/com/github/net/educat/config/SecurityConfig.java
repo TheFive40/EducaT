@@ -44,7 +44,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/news/**", "/api/forums/**", "/api/academic-levels/**", "/api/academic-grades/**", "/api/config/enrollment-form-config").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/news/**", "/api/events/**", "/api/articles/**", "/api/forums/**", "/api/academic-levels/**", "/api/academic-grades/**", "/api/config/enrollment-form-config", "/api/config/about-content").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/files/view/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/files/download/**").authenticated()
                         .requestMatchers("/api/files/upload").authenticated()
                         .requestMatchers("/api/admin/storage/**").hasAnyAuthority("ROLE_ADMIN", "ROLE_ADMINISTRADOR", "PORTAL_ADMIN")

@@ -50,4 +50,13 @@ public class FileController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + sf.getFileName() + "\"")
                 .body(resource);
     }
+
+    @GetMapping("/view/{storedFileId}")
+    public ResponseEntity<Resource> viewFile(@PathVariable Integer storedFileId) {
+        StoredFile sf = storageService.getStoredFile(storedFileId);
+        Resource resource = storageService.downloadFile(storedFileId);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(sf.getContentType() != null ? sf.getContentType() : "application/octet-stream"))
+                .body(resource);
+    }
 }

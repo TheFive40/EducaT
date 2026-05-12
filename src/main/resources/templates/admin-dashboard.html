@@ -176,6 +176,10 @@
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/></svg>
                 Auditoria
             </button>
+            <button class="nav-item" data-section="contenido">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+                Contenido
+            </button>
         </div>
     </nav>
     <div class="sidebar-footer">
@@ -1265,6 +1269,113 @@
                         <div id="auditTableWrap" class="table-wrap"></div>
                         <div class="pager" id="auditPager" style="margin-top:10px"></div>
                     </div>
+                </div>
+            </section>
+
+            <section class="section-panel" id="panel-contenido">
+                <div class="admin-section-banner">
+                    <span class="admin-section-badge">Bloque E</span>
+                    <strong>Gestión de contenido institucional</strong>
+                    <span>Noticias, eventos y artículos académicos para el portal</span>
+                </div>
+                <div class="card">
+                    <div class="card-header"><span class="card-title">Quiénes somos (Página de inicio)</span></div>
+                    <div class="card-body">
+                        <div class="alert alert-info" style="margin-bottom:12px">
+                            Edita los textos que aparecen en la sección institucional del portal público.
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Título de la sección</label>
+                                <input class="form-input" id="aboutSectionTitle" placeholder="Ej: Quiénes somos">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Misión - Título</label>
+                                <input class="form-input" id="aboutMissionTitle" placeholder="Ej: Formación con excelencia">
+                            </div>
+                            <div class="form-group" style="flex:2">
+                                <label class="form-label">Misión - Texto</label>
+                                <textarea class="form-input" id="aboutMissionText" style="min-height:60px"></textarea>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Visión - Título</label>
+                                <input class="form-input" id="aboutVisionTitle" placeholder="Ej: Líderes en innovación">
+                            </div>
+                            <div class="form-group" style="flex:2">
+                                <label class="form-label">Visión - Texto</label>
+                                <textarea class="form-input" id="aboutVisionText" style="min-height:60px"></textarea>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Valores - Título</label>
+                                <input class="form-input" id="aboutValuesTitle" placeholder="Ej: Principios que nos guían">
+                            </div>
+                            <div class="form-group" style="flex:2">
+                                <label class="form-label">Valores - Texto</label>
+                                <textarea class="form-input" id="aboutValuesText" style="min-height:60px"></textarea>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group" style="flex:2">
+                                <label class="form-label">Valores (etiquetas separadas por coma)</label>
+                                <input class="form-input" id="aboutValuesTags" placeholder="Ej: Excelencia, Integridad, Innovación, Inclusión, Responsabilidad, Compromiso">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group" style="flex:2">
+                                <label class="form-label">Dirección</label>
+                                <input class="form-input" id="aboutAddress" placeholder="Ej: Carrera 45 #76-103, Barranquilla, Atlántico, Colombia">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Horario</label>
+                                <input class="form-input" id="aboutSchedule" placeholder="Ej: Lun–Vie 7:00 AM – 6:00 PM · Sáb 8:00 AM – 12:00 PM">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Teléfono</label>
+                                <input class="form-input" id="aboutPhone" placeholder="Ej: +57 (5) 360-0000">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Correo</label>
+                                <input class="form-input" id="aboutEmail" placeholder="Ej: info@educat.edu.co">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Sitio web</label>
+                                <input class="form-input" id="aboutWebsite" placeholder="Ej: www.educat.edu.co">
+                            </div>
+                        </div>
+                        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+                            <button class="btn btn-outline" id="btnResetAboutContent">Restaurar por defecto</button>
+                            <button class="btn btn-teal" id="btnSaveAboutContent">Guardar cambios</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                        <span class="card-title">Noticias Institucionales</span>
+                        <button class="btn btn-teal btn-sm" id="btnCreateNews" onclick="openContentEditor('news')">+ Crear noticia</button>
+                    </div>
+                    <div class="card-body" id="adminNewsList"><div class="loading"><div class="spinner"></div>Cargando noticias...</div></div>
+                </div>
+                <div class="card" style="margin-top:14px">
+                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                        <span class="card-title">Eventos Institucionales</span>
+                        <button class="btn btn-teal btn-sm" id="btnCreateEvent" onclick="openContentEditor('event')">+ Crear evento</button>
+                    </div>
+                    <div class="card-body" id="adminEventsList"><div class="loading"><div class="spinner"></div>Cargando eventos...</div></div>
+                </div>
+                <div class="card" style="margin-top:14px">
+                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                        <span class="card-title">Artículos Académicos</span>
+                        <button class="btn btn-teal btn-sm" id="btnCreateArticle" onclick="openContentEditor('article')">+ Crear artículo</button>
+                    </div>
+                    <div class="card-body" id="adminArticlesList"><div class="loading"><div class="spinner"></div>Cargando artículos...</div></div>
                 </div>
             </section>
         </div>

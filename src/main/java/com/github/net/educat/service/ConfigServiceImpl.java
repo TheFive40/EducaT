@@ -119,4 +119,19 @@ public class ConfigServiceImpl implements ConfigService {
         institutionSettingsRepository.save(settings);
         return ConfigResponse.builder().key("studentGrades").value(settings.getStudentGradesJson()).build();
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ConfigResponse getAboutContent() {
+        InstitutionSettings settings = getOrCreateSettings();
+        return ConfigResponse.builder().key("aboutContent").value(settings.getAboutContentJson()).build();
+    }
+
+    @Override
+    public ConfigResponse saveAboutContent(String aboutContent) {
+        InstitutionSettings settings = getOrCreateSettings();
+        settings.setAboutContentJson(aboutContent);
+        institutionSettingsRepository.save(settings);
+        return ConfigResponse.builder().key("aboutContent").value(settings.getAboutContentJson()).build();
+    }
 }
